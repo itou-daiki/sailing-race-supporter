@@ -1742,6 +1742,31 @@ select:focus-visible {
   background: var(--sky-100);
 }
 
+.message-target-picker {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  color: var(--muted);
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.message-target-picker select {
+  height: 34px;
+  min-width: 0;
+  padding: 0 9px;
+  color: var(--navy);
+  background: var(--sky-100);
+  border: 1px solid #c8deeb;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 800;
+}
+
 .drawer-messages {
   overflow: auto;
   padding: 12px;
@@ -1773,6 +1798,15 @@ select:focus-visible {
 .drawer-message small {
   color: var(--muted);
   font-size: 9px;
+}
+
+.drawer-message .message-receipt-status,
+.message-receipt-status {
+  display: block;
+  margin-top: 4px;
+  color: #28739d;
+  font-size: 9px;
+  font-weight: 800;
 }
 
 .drawer-message p {

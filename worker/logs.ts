@@ -1,4 +1,4 @@
-import { eventAccess, requirePermission } from './authorization.js'
+import { eventAccess, requirePermission, type EventAccess } from './authorization.js'
 import { json } from './http.js'
 import type { AppEnv } from './index.js'
 import { requireSession } from './security.js'
@@ -75,8 +75,10 @@ async function rows(env: AppEnv, sql: string, values: Array<string | number | nu
   return (await env.DB.prepare(sql).bind(...values).all<Row>()).results
 }
 
-async function collectLogs(env: AppEnv, regattaId: string, raceId: string | null, limit: number): Promise<EventLogEntry[]> {
+async function collectLogs(env: AppEnv, access: EventAccess, raceId: string | null, limit: number): Promise<EventLogEntry[]> {
+  const regattaId = access.eventId
   const values = [regattaId, raceId, raceId, limit]
+  const messageValues = [access.memberId, regattaId, raceId, raceId, access.memberId, access.isOwner ? 1 : 0, limit]
   const [audit, marks, wind, signals, passages, tasks, messages, positions] = await Promise.all([
     rows(env, `SELECT audit.id, audit.race_id, race.race_number, audit.sequence, audit.action,
                       audit.entity_type, audit.reason, audit.server_time AS occurred_at,
@@ -143,13 +145,20 @@ async function collectLogs(env: AppEnv, regattaId: string, raceId: string | null
     rows(env, `SELECT message.id, message.race_id, race.race_number,
                       message.sent_at AS occurred_at, message.priority, message.body,
                       message.body_hash, message.deleted_at,
-                      member.display_name AS actor
+                      member.display_name AS actor, target.label AS target_label,
+                      (SELECT COUNT(*) FROM message_receipts receipt WHERE receipt.message_id = message.id) AS target_count,
+                      (SELECT COUNT(*) FROM message_receipts receipt WHERE receipt.message_id = message.id AND receipt.read_at IS NOT NULL) AS read_count,
+                      (SELECT COUNT(*) FROM message_receipts receipt WHERE receipt.message_id = message.id AND receipt.acknowledged_at IS NOT NULL) AS acknowledged_count
                FROM messages message
                LEFT JOIN races race ON race.id = message.race_id
                JOIN event_members member ON member.id = message.sender_member_id
+               LEFT JOIN message_targets target ON target.message_id = message.id
+               LEFT JOIN message_receipts permitted
+                 ON permitted.message_id = message.id AND permitted.member_id = ?
                WHERE message.regatta_id = ?
                  AND (? IS NULL OR message.race_id = ?)
-               ORDER BY message.sent_at DESC LIMIT ?`, values),
+                 AND (message.sender_member_id = ? OR permitted.message_id IS NOT NULL OR ? = 1)
+               ORDER BY message.sent_at DESC LIMIT ?`, messageValues),
     rows(env, `SELECT sample.id, sample.race_id, race.race_number, sample.sampled_at AS occurred_at,
                       sample.lng, sample.lat, sample.speed_knots, sample.course_degrees,
                       boat.name AS actor
@@ -202,7 +211,7 @@ async function collectLogs(env: AppEnv, regattaId: string, raceId: string | null
       id: text(row.id), raceId: nullableText(row.race_id), raceNumber: nullableText(row.race_number),
       sequence: null, occurredAt: text(row.occurred_at), category: 'message' as const,
       title: text(row.body), actor: text(row.actor, '不明'),
-      detail: `${row.deleted_at ? `本文削除 ${text(row.deleted_at)}・` : ''}優先度 ${text(row.priority)}${row.body_hash ? `・本文ハッシュ ${text(row.body_hash)}` : ''}`,
+      detail: `${row.deleted_at ? `本文削除 ${text(row.deleted_at)}・` : ''}宛先 ${text(row.target_label, '大会全体')}・優先度 ${text(row.priority)}・既読 ${row.read_count}/${row.target_count}・確認 ${row.acknowledged_count}/${row.target_count}${row.body_hash ? `・本文ハッシュ ${text(row.body_hash)}` : ''}`,
       eventHash: null,
     })),
     ...positions.map((row) => ({
@@ -237,7 +246,7 @@ export async function handleLogRequest(request: Request, env: AppEnv): Promise<R
   const limit = exportMode
     ? 2_500
     : Number.isFinite(requestedLimit) ? Math.min(500, Math.max(25, Math.trunc(requestedLimit))) : 250
-  const entries = await collectLogs(env, access.eventId, raceId, limit)
+  const entries = await collectLogs(env, access, raceId, limit)
   const filename = `${access.eventSlug}-${raceId ? 'race' : 'event'}-log`
   if (format === 'csv') {
     return new Response(eventLogsToCsv(entries), {

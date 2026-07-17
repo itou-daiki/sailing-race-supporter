@@ -217,8 +217,13 @@ export class EventRoom extends DurableObject<AppEnv> {
       const mutatesFinalizedState = new Set<RoomMessage['type']>([
         'wind', 'mark', 'leading-passage', 'task', 'signal',
       ])
-      const ownerPassageRevision = access.isOwner && parsed.type === 'leading-passage'
-      if (race.status === 'finalized' && mutatesFinalizedState.has(parsed.type) && !ownerPassageRevision) {
+      const messageAction = parsed.type === 'message' && parsed.payload && typeof parsed.payload === 'object'
+        ? String((parsed.payload as { action?: unknown }).action ?? 'send')
+        : ''
+      const messageReceiptOnly = parsed.type === 'message' && ['read', 'acknowledge'].includes(messageAction)
+      const finalizedMutation = mutatesFinalizedState.has(parsed.type) || parsed.type === 'message' && !messageReceiptOnly
+      const ownerAppendOnlyRevision = access.isOwner && ['leading-passage', 'message'].includes(parsed.type)
+      if (race.status === 'finalized' && finalizedMutation && !ownerAppendOnlyRevision) {
         socket.send(JSON.stringify({ type: 'error', code: 'RACE_FINALIZED' }))
         return
       }
@@ -337,7 +342,16 @@ export class EventRoom extends DurableObject<AppEnv> {
       )
     }
 
-    this.broadcast({ type: 'event', event: sequenced })
+    if (sequenced.type === 'message' && (sequenced.payload as { body?: unknown }).body) {
+      const messagePayload = sequenced.payload as { recipientMemberIds?: string[]; senderMemberId?: string }
+      this.broadcastMessage(
+        { type: 'event', event: sequenced },
+        new Set(messagePayload.recipientMemberIds ?? []),
+        messagePayload.senderMemberId ?? attachment.memberId,
+      )
+    } else {
+      this.broadcast({ type: 'event', event: sequenced })
+    }
   }
 
   webSocketClose(socket: WebSocket): void {
@@ -359,6 +373,16 @@ export class EventRoom extends DurableObject<AppEnv> {
     const encoded = JSON.stringify(data)
     for (const socket of this.ctx.getWebSockets()) {
       if (socket !== except) socket.send(encoded)
+    }
+  }
+
+  private broadcastMessage(data: unknown, recipients: ReadonlySet<string>, senderMemberId: string): void {
+    const encoded = JSON.stringify(data)
+    for (const socket of this.ctx.getWebSockets()) {
+      const attachment = socket.deserializeAttachment() as ClientAttachment | null
+      if (attachment?.isOwner || attachment?.memberId === senderMemberId || recipients.has(attachment?.memberId ?? '')) {
+        socket.send(encoded)
+      }
     }
   }
 
@@ -437,12 +461,22 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
 
     const messages = await env.DB.prepare(
       `SELECT msg.id, msg.race_id, msg.channel_key, msg.priority, msg.body, msg.sent_at,
-              member.display_name AS sender
+              msg.sender_member_id, member.display_name AS sender,
+              target.target_type, target.target_id, target.label AS target_label,
+              (SELECT COUNT(*) FROM message_receipts receipt WHERE receipt.message_id = msg.id) AS target_count,
+              (SELECT COUNT(*) FROM message_receipts receipt WHERE receipt.message_id = msg.id AND receipt.delivered_at IS NOT NULL) AS delivered_count,
+              (SELECT COUNT(*) FROM message_receipts receipt WHERE receipt.message_id = msg.id AND receipt.read_at IS NOT NULL) AS read_count,
+              (SELECT COUNT(*) FROM message_receipts receipt WHERE receipt.message_id = msg.id AND receipt.acknowledged_at IS NOT NULL) AS acknowledged_count,
+              own.message_id AS own_receipt_message_id,
+              own.read_at AS own_read_at, own.acknowledged_at AS own_acknowledged_at
        FROM messages msg
        JOIN event_members member ON member.id = msg.sender_member_id
+       LEFT JOIN message_targets target ON target.message_id = msg.id
+       LEFT JOIN message_receipts own ON own.message_id = msg.id AND own.member_id = ?
        WHERE msg.regatta_id = ? AND msg.deleted_at IS NULL
+         AND (msg.sender_member_id = ? OR own.message_id IS NOT NULL OR ? = 1)
        ORDER BY msg.sent_at DESC LIMIT 100`,
-    ).bind(regatta.id).all()
+    ).bind(access.memberId, regatta.id, access.memberId, access.isOwner ? 1 : 0).all()
 
     const tasks = await env.DB.prepare(
       `SELECT task.id, task.race_id, task.title, task.status, task.priority, task.due_at,
@@ -486,6 +520,12 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
       'SELECT id, label, mark_type FROM marks WHERE regatta_id = ? ORDER BY label',
     ).bind(regatta.id).all()
 
+    const availableMembers = await env.DB.prepare(
+      `SELECT id, display_name, role, assignment
+       FROM event_members WHERE regatta_id = ? AND status = 'active'
+       ORDER BY role, display_name`,
+    ).bind(regatta.id).all()
+
     const raceCorrections = await env.DB.prepare(
       `SELECT revision.race_id, revision.revision, revision.patch_json, revision.reason,
               revision.state_hash, revision.created_at
@@ -517,6 +557,7 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
       leadingPassages: leadingPassages.results,
       memberCount: memberCount?.count ?? 0,
       availableMarks: availableMarks.results,
+      availableMembers: availableMembers.results,
       raceCorrections: raceCorrections.results,
     })
   } catch (error) {

@@ -98,6 +98,46 @@ function formatClock(iso: string): string {
   }).format(new Date(iso))
 }
 
+function messageTargetPayload(value: string, raceId: string): { targetType: NonNullable<OperationalMessage['target']>['type']; targetId?: string } {
+  if (value === 'event') return { targetType: 'event' }
+  if (value === 'race') return { targetType: 'race', targetId: raceId }
+  const separator = value.indexOf(':')
+  const targetType = value.slice(0, separator) as NonNullable<OperationalMessage['target']>['type']
+  return { targetType, targetId: value.slice(separator + 1) }
+}
+
+function messageReceiptLabel(message: OperationalMessage): string | undefined {
+  if (!message.receipts || message.receipts.targetCount === 0) return undefined
+  const receipt = message.receipts
+  if (message.priority === 'normal') return `既読 ${receipt.readCount}/${receipt.targetCount}`
+  return `確認 ${receipt.acknowledgedCount}/${receipt.targetCount}・既読 ${receipt.readCount}`
+}
+
+function operationRoleLabel(role: string): string {
+  const labels: Record<string, string> = {
+    owner: '大会管理者', pro: 'PRO', ro: 'RO', 'course-setter': 'コースセッター',
+    'signal-boat': 'シグナルボート', 'mark-boat': 'マークボート', 'safety-boat': '安全ボート',
+    timekeeper: 'タイムキーパー', 'record-keeper': '記録員', jury: 'ジュリー', protest: 'プロテスト', viewer: '閲覧者',
+  }
+  return labels[role] ?? role
+}
+
+function messageTargetLabel(value: string, raceNumber: string, resources: EventResources): string {
+  if (value === 'event') return '大会全体'
+  if (value === 'race') return `${raceNumber}・全運営`
+  const separator = value.indexOf(':')
+  const type = value.slice(0, separator)
+  const id = value.slice(separator + 1)
+  if (type === 'boat') return resources.boats.find((boat) => boat.id === id)?.assignment ?? '運営ボート'
+  if (type === 'mark') return resources.marks.find((mark) => mark.id === id)?.label ?? 'マーク'
+  if (type === 'role') return `${operationRoleLabel(id)}担当`
+  if (type === 'member') {
+    const member = resources.members.find((candidate) => candidate.id === id)
+    return member ? `${member.displayName}（${member.assignment}）` : '運営メンバー'
+  }
+  return raceNumber
+}
+
 export default function App() {
   const [eventId] = useState(eventSlugFromLocation)
   const [eventName, setEventName] = useState('2026 江の島サマーレガッタ')
@@ -118,7 +158,7 @@ export default function App() {
   const [recoveryOpen, setRecoveryOpen] = useState(false)
   const [session, setSession] = useState<SessionState>({ mode: 'checking' })
   const [eventAccess, setEventAccess] = useState<EventAccessSummary>()
-  const [eventResources, setEventResources] = useState<EventResources>({ boats: [], marks: [] })
+  const [eventResources, setEventResources] = useState<EventResources>({ boats: [], marks: [], members: [] })
   const [postponed, setPostponed] = useState(false)
   const [confirmFinalize, setConfirmFinalize] = useState(false)
   const [revisionOpen, setRevisionOpen] = useState(false)
@@ -145,8 +185,15 @@ export default function App() {
   const [preparatoryFlag, setPreparatoryFlag] = useState('P旗')
   const [messageDraft, setMessageDraft] = useState('')
   const [messagePriority, setMessagePriority] = useState<OperationalMessage['priority']>('normal')
+  const [messageTarget, setMessageTarget] = useState('race')
   const [leadingPassages, setLeadingPassages] = useState<Record<string, LeadingPassageVisit>>({})
   const draggingSplit = useRef(false)
+  const memberIdRef = useRef(memberId)
+  const messageReadsRequested = useRef(new Set<string>())
+
+  useEffect(() => {
+    memberIdRef.current = memberId
+  }, [memberId])
 
   const applyRemoteEvent = useCallback((event: SequencedOperation) => {
     if (event.type === 'position') {
@@ -223,22 +270,41 @@ export default function App() {
     if (event.type === 'message') {
       const payload = event.payload as {
         action?: string; messageId?: string; body?: string; sender?: string; channel?: string
-        priority?: OperationalMessage['priority']; sentAt?: string
+        priority?: OperationalMessage['priority']; sentAt?: string; senderMemberId?: string
+        memberId?: string; target?: OperationalMessage['target']; receipts?: OperationalMessage['receipts']
+        recipientMemberIds?: string[]
       }
-      if (payload.action === 'acknowledge' && payload.messageId) {
+      if ((payload.action === 'acknowledge' || payload.action === 'read') && payload.messageId) {
         setMessages((current) => current.map((message) => (
-          message.id === payload.messageId ? { ...message, acknowledgement: 'acknowledged' as const } : message
+          message.id === payload.messageId ? {
+            ...message,
+            receipts: payload.receipts ?? message.receipts,
+            ownReceipt: payload.memberId === memberIdRef.current
+              ? payload.action === 'acknowledge' ? 'acknowledged' as const : 'read' as const
+              : message.ownReceipt,
+            acknowledgement: payload.memberId === memberIdRef.current && payload.action === 'acknowledge'
+              ? 'acknowledged' as const
+              : message.acknowledgement,
+          } : message
         )))
       } else if (payload.body) {
-        setMessages((current) => current.some((message) => message.id === event.id) ? current : [...current, {
+        const received: OperationalMessage = {
           id: event.id,
+          raceId: event.raceId,
           sender: payload.sender ?? '運営メンバー',
+          senderMemberId: payload.senderMemberId,
           channel: payload.channel ?? event.raceId ?? 'event',
           text: payload.body as string,
           sentAt: payload.sentAt ?? event.serverTime,
           priority: payload.priority ?? 'normal',
-          acknowledgement: payload.priority === 'confirm' || payload.priority === 'urgent' ? 'pending' : undefined,
-        }])
+          target: payload.target,
+          receipts: payload.receipts,
+          ownReceipt: payload.recipientMemberIds?.includes(memberIdRef.current) ? 'unread' : undefined,
+          acknowledgement: payload.recipientMemberIds?.includes(memberIdRef.current) && (payload.priority === 'confirm' || payload.priority === 'urgent') ? 'pending' : undefined,
+        }
+        setMessages((current) => current.some((message) => message.id === event.id)
+          ? current.map((message) => message.id === event.id ? { ...message, ...received } : message)
+          : [...current, received])
       }
     }
 
@@ -288,12 +354,27 @@ export default function App() {
   const locked = activeRace.status === 'finalized'
   const canControlSignals = !eventAccess || eventAccess.isOwner || ['pro', 'ro', 'signal-boat'].includes(eventAccess.role)
   const canAdoptLeadingPassage = !eventAccess || eventAccess.isOwner || ['pro', 'ro', 'timekeeper', 'record-keeper', 'signal-boat'].includes(eventAccess.role)
+  const messageRoles = useMemo(
+    () => [...new Set(eventResources.members.map((member) => member.role))].sort((left, right) => left.localeCompare(right, 'ja')),
+    [eventResources.members],
+  )
   const officialAudio = useOfficialAudioDevice({
     eventSlug: eventId,
     raceId: activeRace.id,
     enabled: session.mode === 'authenticated' && Boolean(eventAccess) && canControlSignals,
     serverOffsetMs: realtime.serverOffsetMs,
   })
+
+  useEffect(() => {
+    if (!messagesOpen) return
+    const unreadMessages = messages
+      .filter((message) => message.ownReceipt === 'unread' && !messageReadsRequested.current.has(message.id))
+    if (!unreadMessages.length) return
+    unreadMessages.forEach((message) => {
+      messageReadsRequested.current.add(message.id)
+      void sendRealtimeOperation('message', { action: 'read', messageId: message.id }, message.raceId ?? activeRace.id)
+    })
+  }, [activeRace.id, messages, messagesOpen, sendRealtimeOperation])
 
   useEffect(() => window.localStorage.setItem(SCALE_KEY, String(boardScale)), [boardScale])
   useEffect(() => window.localStorage.setItem(DETAIL_KEY, boardDetail), [boardDetail])
@@ -403,10 +484,11 @@ export default function App() {
   }
 
   const acknowledgeMessage = (messageId: string) => {
+    const message = messages.find((candidate) => candidate.id === messageId)
     setMessages((current) => current.map((message) => (
-      message.id === messageId ? { ...message, acknowledgement: 'acknowledged' as const } : message
+      message.id === messageId ? { ...message, acknowledgement: 'acknowledged' as const, ownReceipt: 'acknowledged' as const } : message
     )))
-    void sendRealtimeOperation('message', { action: 'acknowledge', messageId }, activeRace.id)
+    void sendRealtimeOperation('message', { action: 'acknowledge', messageId }, message?.raceId ?? activeRace.id)
   }
 
   const advanceTask = (taskId: string) => {
@@ -540,16 +622,20 @@ export default function App() {
     const id = await sendRealtimeOperation('message', {
       body,
       priority: messagePriority,
-      channel: `race:${activeRace.id}`,
+      ...messageTargetPayload(messageTarget, activeRace.id),
     }, activeRace.id)
+    const targetPayload = messageTargetPayload(messageTarget, activeRace.id)
+    const selectedTargetLabel = messageTargetLabel(messageTarget, activeRace.number, eventResources)
     setMessages((current) => current.some((message) => message.id === id) ? current : [...current, {
       id,
+      raceId: activeRace.id,
       sender: eventAccess?.displayName ?? (session.mode === 'authenticated' ? session.user.displayName : '自分'),
-      channel: `${activeRace.number}・全運営`,
+      channel: targetPayload.targetType === 'race' ? `race:${activeRace.id}` : `${targetPayload.targetType}:${targetPayload.targetId ?? ''}`,
       text: body,
       sentAt: new Date().toISOString(),
       priority: messagePriority,
-      acknowledgement: messagePriority === 'confirm' || messagePriority === 'urgent' ? 'pending' : undefined,
+      target: { type: targetPayload.targetType, id: targetPayload.targetId, label: selectedTargetLabel },
+      receipts: { targetCount: 0, deliveredCount: 0, readCount: 0, acknowledgedCount: 0 },
     }])
     setMessageDraft('')
     setMessagePriority('normal')
@@ -845,14 +931,37 @@ export default function App() {
               <div><span className="eyebrow">{eventName}</span><strong>運営メッセージ</strong></div>
               <button type="button" onClick={() => setMessagesOpen(false)} aria-label="閉じる"><X size={20} /></button>
             </header>
-            <div className="channel-tabs"><button className="is-active">{activeRace.number}</button><button>海面A</button><button>自分の艇</button></div>
+            <label className="message-target-picker">
+              <span>宛先</span>
+              <select value={messageTarget} onChange={(event) => setMessageTarget(event.target.value)}>
+                <option value="event">大会全体</option>
+                <option value="race">{activeRace.number}・全運営</option>
+                {eventResources.boats.length > 0 && <optgroup label="運営ボート">
+                  {eventResources.boats.map((boat) => <option key={boat.id} value={`boat:${boat.id}`}>{boat.assignment}</option>)}
+                </optgroup>}
+                {eventResources.marks.length > 0 && <optgroup label="マーク">
+                  {eventResources.marks.map((mark) => <option key={mark.id} value={`mark:${mark.id}`}>{mark.label}</option>)}
+                </optgroup>}
+                {messageRoles.length > 0 && <optgroup label="役割">
+                  {messageRoles.map((role) => <option key={role} value={`role:${role}`}>{operationRoleLabel(role)}担当</option>)}
+                </optgroup>}
+                {eventResources.members.length > 1 && <optgroup label="個人">
+                  {eventResources.members.filter((member) => member.id !== memberId).map((member) => (
+                    <option key={member.id} value={`member:${member.id}`}>{member.displayName}（{member.assignment}）</option>
+                  ))}
+                </optgroup>}
+              </select>
+            </label>
             <div className="drawer-messages">
               {messages.map((message) => (
                 <article className={`drawer-message priority-${message.priority}`} key={message.id}>
                   <div><strong>{message.sender}</strong><time>{formatClock(message.sentAt)}</time></div>
                   <p>{message.text}</p>
-                  <small>{message.channel}</small>
-                  {message.acknowledgement === 'pending' && <button type="button" onClick={() => acknowledgeMessage(message.id)}>了解</button>}
+                  <small>{message.target?.label ?? message.channel}</small>
+                  {messageReceiptLabel(message) && <small className="message-receipt-status">{messageReceiptLabel(message)}</small>}
+                  {((message.ownReceipt && message.ownReceipt !== 'acknowledged') || (!message.target && message.acknowledgement === 'pending')) && message.priority !== 'normal' && (
+                    <button type="button" onClick={() => acknowledgeMessage(message.id)}>了解</button>
+                  )}
                 </article>
               ))}
             </div>

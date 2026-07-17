@@ -245,9 +245,16 @@ export function OperationsBoard({
                       {message.priority === 'urgent' ? <ShieldAlert size={16} /> : message.priority === 'confirm' ? <BellRing size={16} /> : <MessageSquareText size={16} />}
                     </span>
                     <div>
-                      <span><strong>{message.sender}</strong><small>{message.channel}</small></span>
+                      <span><strong>{message.sender}</strong><small>{message.target?.label ?? message.channel}</small></span>
                       <p>{message.text}</p>
-                      {message.acknowledgement === 'pending' && (
+                      {message.receipts && message.receipts.targetCount > 0 && (
+                        <small className="message-receipt-status">
+                          {message.priority === 'normal'
+                            ? `既読 ${message.receipts.readCount}/${message.receipts.targetCount}`
+                            : `確認 ${message.receipts.acknowledgedCount}/${message.receipts.targetCount}・既読 ${message.receipts.readCount}`}
+                        </small>
+                      )}
+                      {((message.ownReceipt && message.ownReceipt !== 'acknowledged') || (!message.target && message.acknowledgement === 'pending')) && message.priority !== 'normal' && (
                         <button type="button" onClick={() => onAcknowledgeMessage(message.id)}>了解として確認</button>
                       )}
                     </div>

@@ -44,6 +44,7 @@ export interface EventBootstrap {
 export interface EventResources {
   boats: Array<{ id: string; name: string; assignment: string; role: string }>
   marks: Array<{ id: string; label: string }>
+  members: Array<{ id: string; displayName: string; role: string; assignment: string }>
 }
 
 export interface CreateEventInput {
@@ -93,7 +94,11 @@ interface BootstrapResponse {
   } | null
   messages: Array<{
     id: string; race_id: string | null; channel_key: string; priority: OperationalMessage['priority']
-    body: string; sent_at: string; sender: string
+    body: string; sent_at: string; sender: string; sender_member_id: string
+    target_type: 'event' | 'race' | 'boat' | 'mark' | 'role' | 'member' | null
+    target_id: string | null; target_label: string | null
+    target_count: number; delivered_count: number; read_count: number; acknowledged_count: number
+    own_receipt_message_id: string | null; own_read_at: string | null; own_acknowledged_at: string | null
   }>
   tasks: Array<{
     id: string; race_id: string; title: string; status: OperationalTask['status']
@@ -110,6 +115,7 @@ interface BootstrapResponse {
     race_id: string; revision: number; patch_json: string; reason: string; state_hash: string; created_at: string
   }>
   availableMarks: Array<{ id: string; label: string; mark_type: string }>
+  availableMembers: Array<{ id: string; display_name: string; role: string; assignment: string }>
 }
 
 class EventApiError extends Error {}
@@ -273,11 +279,30 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
       }),
     messages: response.messages.map((message) => ({
       id: message.id,
+      raceId: message.race_id ?? undefined,
       sender: message.sender,
+      senderMemberId: message.sender_member_id,
       channel: message.channel_key,
       text: message.body,
       sentAt: message.sent_at,
       priority: message.priority,
+      target: {
+        type: message.target_type ?? (message.race_id ? 'race' : 'event'),
+        id: message.target_id ?? undefined,
+        label: message.target_label ?? message.channel_key,
+      },
+      receipts: {
+        targetCount: message.target_count ?? 0,
+        deliveredCount: message.delivered_count ?? 0,
+        readCount: message.read_count ?? 0,
+        acknowledgedCount: message.acknowledged_count ?? 0,
+      },
+      ownReceipt: message.own_receipt_message_id
+        ? message.own_acknowledged_at ? 'acknowledged' : message.own_read_at ? 'read' : 'unread'
+        : undefined,
+      acknowledgement: message.own_receipt_message_id
+        ? message.own_acknowledged_at ? 'acknowledged' : 'pending'
+        : undefined,
     })),
     tasks: (response.tasks ?? []).map((task) => ({
       id: task.id,
@@ -301,6 +326,12 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
         .filter((node) => node.mark_id)
         .map((node) => [node.mark_id as string, { id: node.mark_id as string, label: node.label, mark_type: node.mark_type ?? 'rounding' }])).values()])
         .map((mark) => ({ id: mark.id, label: mark.label })),
+      members: (response.availableMembers ?? []).map((member) => ({
+        id: member.id,
+        displayName: member.display_name,
+        role: member.role,
+        assignment: member.assignment,
+      })),
     },
     wind: response.wind ? {
       directionDegrees: response.wind.direction_degrees,

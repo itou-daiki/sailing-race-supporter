@@ -365,47 +365,211 @@ async function persistLeadingPassage(env: AppEnv, access: EventAccess, operation
   }
 }
 
+type MessageTargetType = 'event' | 'race' | 'boat' | 'mark' | 'role' | 'member'
+
+interface ResolvedMessageTarget {
+  type: MessageTargetType
+  id: string | null
+  label: string
+  channelKey: string
+  recipientIds: string[]
+}
+
+function messageRoleLabel(role: string): string {
+  const labels: Record<string, string> = {
+    owner: '大会管理者', pro: 'PRO', ro: 'RO', 'course-setter': 'コースセッター',
+    'signal-boat': 'シグナルボート', 'mark-boat': 'マークボート', 'safety-boat': '安全ボート',
+    timekeeper: 'タイムキーパー', 'record-keeper': '記録員', jury: 'ジュリー', protest: 'プロテスト', viewer: '閲覧者',
+  }
+  return labels[role] ?? role
+}
+
+async function messageReceiptSummary(env: AppEnv, messageId: string): Promise<{
+  targetCount: number; deliveredCount: number; readCount: number; acknowledgedCount: number
+}> {
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS target_count,
+            SUM(CASE WHEN delivered_at IS NOT NULL THEN 1 ELSE 0 END) AS delivered_count,
+            SUM(CASE WHEN read_at IS NOT NULL THEN 1 ELSE 0 END) AS read_count,
+            SUM(CASE WHEN acknowledged_at IS NOT NULL THEN 1 ELSE 0 END) AS acknowledged_count
+     FROM message_receipts WHERE message_id = ?`,
+  ).bind(messageId).first<{
+    target_count: number; delivered_count: number | null; read_count: number | null; acknowledged_count: number | null
+  }>()
+  return {
+    targetCount: row?.target_count ?? 0,
+    deliveredCount: row?.delivered_count ?? 0,
+    readCount: row?.read_count ?? 0,
+    acknowledgedCount: row?.acknowledged_count ?? 0,
+  }
+}
+
+async function resolveMessageTarget(
+  env: AppEnv,
+  access: EventAccess,
+  operation: RealtimeOperation,
+  payload: Record<string, unknown>,
+  senderMemberId: string,
+): Promise<ResolvedMessageTarget> {
+  const type = ['event', 'race', 'boat', 'mark', 'role', 'member'].includes(String(payload.targetType))
+    ? String(payload.targetType) as MessageTargetType
+    : operation.raceId ? 'race' : 'event'
+  const requestedId = typeof payload.targetId === 'string' && payload.targetId.trim()
+    ? payload.targetId.trim().slice(0, 160)
+    : null
+  let id = requestedId
+  let label = '大会全体'
+  let channelKey = 'event'
+  let rows: { id: string }[]
+
+  if (type === 'event') {
+    rows = (await env.DB.prepare(
+      `SELECT id FROM event_members
+       WHERE regatta_id = ? AND status = 'active' AND id <> ? ORDER BY id`,
+    ).bind(access.eventId, senderMemberId).all<{ id: string }>()).results
+  } else if (type === 'race') {
+    id = requestedId ?? operation.raceId ?? null
+    if (!id) throw new Response('Race message target required', { status: 400 })
+    if (operation.raceId && id !== operation.raceId) throw new Response('Message target race mismatch', { status: 400 })
+    const race = await env.DB.prepare(
+      'SELECT race_number FROM races WHERE id = ? AND regatta_id = ? LIMIT 1',
+    ).bind(id, access.eventId).first<{ race_number: string }>()
+    if (!race) throw new Response('Message race not found', { status: 404 })
+    label = `${race.race_number}・全運営`
+    channelKey = `race:${id}`
+    rows = (await env.DB.prepare(
+      `SELECT id FROM event_members
+       WHERE regatta_id = ? AND status = 'active' AND id <> ? ORDER BY id`,
+    ).bind(access.eventId, senderMemberId).all<{ id: string }>()).results
+  } else if (type === 'boat') {
+    if (!id) throw new Response('Operating boat message target required', { status: 400 })
+    const boat = await env.DB.prepare(
+      'SELECT name, call_sign FROM committee_boats WHERE id = ? AND regatta_id = ? LIMIT 1',
+    ).bind(id, access.eventId).first<{ name: string; call_sign: string | null }>()
+    if (!boat) throw new Response('Operating boat not found', { status: 404 })
+    label = boat.call_sign ?? boat.name
+    channelKey = `boat:${id}`
+    rows = (await env.DB.prepare(
+      `SELECT DISTINCT member.id
+       FROM event_members member
+       LEFT JOIN event_member_scopes scope
+         ON scope.event_member_id = member.id AND scope.committee_boat_id = ?
+       WHERE member.regatta_id = ? AND member.status = 'active' AND member.id <> ?
+         AND (scope.id IS NOT NULL OR member.assignment = ? OR member.assignment = ?)
+       ORDER BY member.id`,
+    ).bind(id, access.eventId, senderMemberId, boat.name, boat.call_sign ?? '').all<{ id: string }>()).results
+  } else if (type === 'mark') {
+    if (!id) throw new Response('Mark message target required', { status: 400 })
+    const mark = await env.DB.prepare(
+      'SELECT label FROM marks WHERE id = ? AND regatta_id = ? LIMIT 1',
+    ).bind(id, access.eventId).first<{ label: string }>()
+    if (!mark) throw new Response('Mark not found', { status: 404 })
+    label = mark.label
+    channelKey = `mark:${id}`
+    const assignmentPrefix = mark.label.includes('ゲート')
+      ? mark.label.replace(/\s+\d+[SP]?$/u, '')
+      : mark.label.replace('マーク', '')
+    rows = (await env.DB.prepare(
+      `SELECT DISTINCT member.id
+       FROM event_members member
+       LEFT JOIN event_member_scopes scope
+         ON scope.event_member_id = member.id AND scope.mark_id = ?
+       WHERE member.regatta_id = ? AND member.status = 'active' AND member.id <> ?
+         AND (scope.id IS NOT NULL OR member.assignment = ? OR member.assignment LIKE ?)
+       ORDER BY member.id`,
+    ).bind(id, access.eventId, senderMemberId, mark.label, `${assignmentPrefix}%`).all<{ id: string }>()).results
+  } else if (type === 'role') {
+    if (!id) throw new Response('Role message target required', { status: 400 })
+    label = `${messageRoleLabel(id)}担当`
+    channelKey = `role:${id}`
+    rows = (await env.DB.prepare(
+      `SELECT id FROM event_members
+       WHERE regatta_id = ? AND status = 'active' AND id <> ? AND role = ? ORDER BY id`,
+    ).bind(access.eventId, senderMemberId, id).all<{ id: string }>()).results
+  } else {
+    if (!id) throw new Response('Member message target required', { status: 400 })
+    const member = await env.DB.prepare(
+      `SELECT id, display_name FROM event_members
+       WHERE id = ? AND regatta_id = ? AND status = 'active' LIMIT 1`,
+    ).bind(id, access.eventId).first<{ id: string; display_name: string }>()
+    if (!member) throw new Response('Message member not found', { status: 404 })
+    label = member.display_name
+    channelKey = `member:${id}`
+    rows = member.id === senderMemberId ? [] : [{ id: member.id }]
+  }
+
+  return { type, id, label, channelKey, recipientIds: rows.map((row) => row.id) }
+}
+
 async function persistMessage(env: AppEnv, access: EventAccess, operation: RealtimeOperation): Promise<Record<string, unknown>> {
   const payload = objectPayload(operation.payload)
   const memberId = await requireMemberId(env, access)
-  if (payload.action === 'acknowledge') {
+  if (payload.action === 'acknowledge' || payload.action === 'read') {
     const messageId = stringValue(payload.messageId, 'messageId')
-    const exists = await env.DB.prepare(
-      'SELECT id FROM messages WHERE id = ? AND regatta_id = ? LIMIT 1',
-    ).bind(messageId, access.eventId).first<{ id: string }>()
-    if (!exists) throw new Response('Message not found', { status: 404 })
+    const receipt = await env.DB.prepare(
+      `SELECT receipt.message_id FROM message_receipts receipt
+       JOIN messages message ON message.id = receipt.message_id
+       WHERE receipt.message_id = ? AND receipt.member_id = ? AND message.regatta_id = ? LIMIT 1`,
+    ).bind(messageId, memberId, access.eventId).first<{ message_id: string }>()
+    if (!receipt) throw new Response('Message receipt not found for this member', { status: 403 })
     const now = new Date().toISOString()
+    const acknowledge = payload.action === 'acknowledge'
     await env.DB.prepare(
-      `INSERT INTO message_receipts (message_id, member_id, delivered_at, read_at, acknowledged_at)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(message_id, member_id) DO UPDATE SET
-         read_at = excluded.read_at, acknowledged_at = excluded.acknowledged_at`,
-    ).bind(messageId, memberId, now, now, now).run()
-    return { action: 'acknowledge', messageId, memberId, acknowledgedAt: now }
+      `UPDATE message_receipts
+       SET read_at = COALESCE(read_at, ?),
+           acknowledged_at = CASE WHEN ? = 1 THEN COALESCE(acknowledged_at, ?) ELSE acknowledged_at END
+       WHERE message_id = ? AND member_id = ?`,
+    ).bind(now, acknowledge ? 1 : 0, now, messageId, memberId).run()
+    return {
+      action: payload.action,
+      messageId,
+      memberId,
+      readAt: now,
+      acknowledgedAt: acknowledge ? now : null,
+      receipts: await messageReceiptSummary(env, messageId),
+    }
   }
 
   const body = stringValue(payload.body, 'message body', 1_000)
   const priority = payload.priority === 'urgent' || payload.priority === 'confirm' ? payload.priority : 'normal'
-  const channelKey = typeof payload.channel === 'string' && payload.channel.trim()
-    ? payload.channel.trim().slice(0, 120)
-    : operation.raceId ? `race:${operation.raceId}` : 'event'
+  const target = await resolveMessageTarget(env, access, operation, payload, memberId)
   const sentAt = isoTime(operation.clientTime, new Date().toISOString())
-  await env.DB.prepare(
-    `INSERT INTO messages
-     (id, regatta_id, race_id, channel_key, sender_member_id, priority, body, corrects_message_id, sent_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).bind(
-    operation.id,
-    access.eventId,
-    operation.raceId ?? null,
-    channelKey,
-    memberId,
-    priority,
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO messages
+       (id, regatta_id, race_id, channel_key, sender_member_id, priority, body, corrects_message_id, sent_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      operation.id,
+      access.eventId,
+      operation.raceId ?? null,
+      target.channelKey,
+      memberId,
+      priority,
+      body,
+      typeof payload.correctsMessageId === 'string' ? payload.correctsMessageId : null,
+      sentAt,
+    ),
+    env.DB.prepare(
+      `INSERT INTO message_targets (message_id, target_type, target_id, label, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).bind(operation.id, target.type, target.id, target.label, sentAt),
+    ...target.recipientIds.map((recipientId) => env.DB.prepare(
+      `INSERT INTO message_receipts (message_id, member_id, delivered_at)
+       VALUES (?, ?, ?)`,
+    ).bind(operation.id, recipientId, sentAt)),
+  ])
+  return {
     body,
-    typeof payload.correctsMessageId === 'string' ? payload.correctsMessageId : null,
+    priority,
+    channel: target.channelKey,
+    sender: access.displayName,
+    senderMemberId: memberId,
     sentAt,
-  ).run()
-  return { body, priority, channel: channelKey, sender: access.displayName, sentAt }
+    target: { type: target.type, id: target.id, label: target.label },
+    receipts: await messageReceiptSummary(env, operation.id),
+    recipientMemberIds: target.recipientIds,
+  }
 }
 
 async function persistSignal(env: AppEnv, access: EventAccess, operation: RealtimeOperation): Promise<Record<string, unknown>> {

@@ -71,12 +71,26 @@ export interface OperationalTask {
 
 export interface OperationalMessage {
   id: string
+  raceId?: string
   sender: string
   channel: string
   text: string
   sentAt: string
   priority: 'normal' | 'confirm' | 'urgent'
   acknowledgement?: 'pending' | 'acknowledged' | 'done'
+  senderMemberId?: string
+  target?: {
+    type: 'event' | 'race' | 'boat' | 'mark' | 'role' | 'member'
+    id?: string
+    label: string
+  }
+  receipts?: {
+    targetCount: number
+    deliveredCount: number
+    readCount: number
+    acknowledgedCount: number
+  }
+  ownReceipt?: 'unread' | 'read' | 'acknowledged'
 }
 
 export interface LeadingPassageObservation {
@@ -312,20 +326,28 @@ export const DEMO_TASKS: readonly OperationalTask[] = [
 export const DEMO_MESSAGES: readonly OperationalMessage[] = [
   {
     id: 'message-1',
+    raceId: 'race-1',
     sender: 'マークボートB',
     channel: '1R・海面A',
     text: '2マークへ移動中。あと約2分です。',
     sentAt: new Date(Date.now() - 75_000).toISOString(),
     priority: 'normal',
+    target: { type: 'race', id: 'race-1', label: '1R・全運営' },
+    receipts: { targetCount: 18, deliveredCount: 18, readCount: 15, acknowledgedCount: 0 },
+    ownReceipt: 'read',
   },
   {
     id: 'message-2',
+    raceId: 'race-1',
     sender: 'PRO',
     channel: '1R・全運営',
     text: '風向350°で安定。コースO2を継続します。',
     sentAt: new Date(Date.now() - 34_000).toISOString(),
     priority: 'confirm',
     acknowledgement: 'pending',
+    target: { type: 'race', id: 'race-1', label: '1R・全運営' },
+    receipts: { targetCount: 18, deliveredCount: 18, readCount: 14, acknowledgedCount: 11 },
+    ownReceipt: 'unread',
   },
 ] as const
 
