@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { can, type EventAccess } from '../worker/authorization'
-import { assertSameOrigin, randomToken, sha256Base64Url } from '../worker/security'
+import { assertSameOrigin, hasRecentAuthentication, randomToken, sha256Base64Url } from '../worker/security'
 
 function access(role: string, isOwner = false): EventAccess {
   return {
@@ -62,5 +62,11 @@ describe('request security', () => {
     const second = await sha256Base64Url('recovery-secret')
     expect(first).toBe(second)
     expect(first).not.toContain('recovery-secret')
+  })
+
+  it('requires a newly authenticated session for destructive retention operations', () => {
+    const base = { tokenHash: 'token', userId: 'user-a', displayName: '管理者', expiresAt: new Date(Date.now() + 60_000).toISOString() }
+    expect(hasRecentAuthentication({ ...base, createdAt: new Date(Date.now() - 14 * 60_000).toISOString() })).toBe(true)
+    expect(hasRecentAuthentication({ ...base, createdAt: new Date(Date.now() - 16 * 60_000).toISOString() })).toBe(false)
   })
 })

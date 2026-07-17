@@ -1,7 +1,7 @@
 import type { AppEnv } from './index.js'
 import { sha256Base64Url } from './security.js'
 
-interface RetentionPolicy {
+export interface RetentionPolicy {
   finalizedRecordsDays: number
   observationsDays: number
   sampledPositionsDays: number
@@ -10,6 +10,25 @@ interface RetentionPolicy {
   memberProfilesDays: number
   authSecretsAfterEventDays: number
   securityLogsDays: number
+}
+
+export interface RetentionPreviewItem {
+  key: keyof RetentionPolicy
+  label: string
+  expiresAt: string
+  expired: boolean
+  count: number
+  operation: string
+}
+
+export interface RetentionPreview {
+  eventId: string
+  eventEndsOn: string
+  generatedAt: string
+  hold: { active: boolean; until: string | null; reason: string | null; indefinite: boolean }
+  lastBackupAt: string | null
+  items: RetentionPreviewItem[]
+  expiredCount: number
 }
 
 interface EventRetentionRow {
@@ -43,6 +62,10 @@ function hasExpired(end: number, days: number, now: number): boolean {
   return now >= end + days * DAY
 }
 
+function expiryTime(end: number, days: number): string {
+  return new Date(end + days * DAY).toISOString()
+}
+
 function changes(result: D1Result): number {
   return result.meta.changes ?? 0
 }
@@ -55,6 +78,96 @@ async function eventRow(env: AppEnv, eventId: string): Promise<EventRetentionRow
      JOIN regatta_settings settings ON settings.regatta_id = regatta.id
      WHERE regatta.id = ? LIMIT 1`,
   ).bind(eventId).first<EventRetentionRow>()
+}
+
+async function count(env: AppEnv, sql: string, ...values: string[]): Promise<number> {
+  return (await env.DB.prepare(sql).bind(...values).first<{ count: number }>())?.count ?? 0
+}
+
+export async function previewRetentionForEvent(
+  env: AppEnv,
+  eventId: string,
+  now = new Date(),
+): Promise<RetentionPreview> {
+  const row = await eventRow(env, eventId)
+  if (!row) throw new Error('Retention event not found')
+  const policy = JSON.parse(row.retention_json) as RetentionPolicy
+  const end = eventEnd(row.ends_on)
+  const nowTime = now.getTime()
+  const [
+    finalizedRecords,
+    observations,
+    sampledPositions,
+    regularMessages,
+    memberProfiles,
+    recoveryCredentials,
+    inviteSecrets,
+    securityLogs,
+    latestBackup,
+  ] = await Promise.all([
+    count(env, `SELECT (
+      (SELECT COUNT(*) FROM audit_events WHERE regatta_id = ?) +
+      (SELECT COUNT(*) FROM signal_events signal JOIN races race ON race.id = signal.race_id WHERE race.regatta_id = ?) +
+      (SELECT COUNT(*) FROM mark_events event JOIN races race ON race.id = event.race_id WHERE race.regatta_id = ?) +
+      (SELECT COUNT(*) FROM leading_passage_observations observation JOIN races race ON race.id = observation.race_id WHERE race.regatta_id = ?) +
+      (SELECT COUNT(*) FROM race_finalizations finalization JOIN races race ON race.id = finalization.race_id WHERE race.regatta_id = ?)
+    ) AS count`, eventId, eventId, eventId, eventId, eventId),
+    count(env, 'SELECT COUNT(*) AS count FROM wind_observations WHERE regatta_id = ?', eventId),
+    count(env, 'SELECT COUNT(*) AS count FROM position_samples WHERE regatta_id = ?', eventId),
+    count(env, `SELECT COUNT(*) AS count FROM messages
+                WHERE regatta_id = ? AND priority = 'normal' AND deleted_at IS NULL`, eventId),
+    count(env, `SELECT COUNT(*) AS count FROM event_members
+                WHERE regatta_id = ? AND role <> 'owner' AND display_name NOT LIKE '匿名メンバー-%'`, eventId),
+    count(env, `SELECT COUNT(*) AS count FROM member_recovery_credentials
+                WHERE event_member_id IN (SELECT id FROM event_members WHERE regatta_id = ?)`, eventId),
+    count(env, `SELECT COUNT(*) AS count FROM invites
+                WHERE regatta_id = ? AND token_hash NOT LIKE 'purged:%'`, eventId),
+    count(env, `SELECT COUNT(*) AS count FROM recovery_attempts
+                WHERE regatta_id = ? AND network_hash IS NOT NULL`, eventId),
+    env.DB.prepare(
+      'SELECT created_at FROM backup_records WHERE regatta_id = ? ORDER BY created_at DESC LIMIT 1',
+    ).bind(eventId).first<{ created_at: string }>(),
+  ])
+
+  const item = (
+    key: keyof RetentionPolicy,
+    label: string,
+    recordCount: number,
+    operation: string,
+  ): RetentionPreviewItem => ({
+    key,
+    label,
+    expiresAt: expiryTime(end, policy[key]),
+    expired: hasExpired(end, policy[key], nowTime),
+    count: recordCount,
+    operation,
+  })
+  const items: RetentionPreviewItem[] = [
+    item('finalizedRecordsDays', '確定版・信号・監査記録', finalizedRecords, '自動削除せず、管理者の個別承認対象'),
+    item('observationsDays', '風・海面観測', observations, '期限到来時に詳細観測を削除'),
+    item('sampledPositionsDays', '運営ボート位置サンプル', sampledPositions, '期限到来時に位置点を削除'),
+    item('localHighFrequencyTrackDays', '端末内の高頻度航跡', 0, '各端末で期限到来時に削除'),
+    item('regularMessagesDays', '通常メッセージ本文', regularMessages, '本文をハッシュ付き墓標へ置換'),
+    item('memberProfilesDays', '名前・担当', memberProfiles, '管理者以外を匿名化'),
+    item('authSecretsAfterEventDays', '招待・参加復元秘密', recoveryCredentials + inviteSecrets, '秘密を失効・削除'),
+    item('securityLogsDays', '復元失敗のネットワーク識別子', securityLogs, '識別用ハッシュを匿名化'),
+  ]
+  const holdUntil = row.retention_hold_until
+  const holdActive = Boolean(holdUntil && Date.parse(holdUntil) > nowTime)
+  return {
+    eventId,
+    eventEndsOn: row.ends_on,
+    generatedAt: now.toISOString(),
+    hold: {
+      active: holdActive,
+      until: holdUntil,
+      reason: row.retention_hold_reason,
+      indefinite: holdUntil?.startsWith('9999-12-31') ?? false,
+    },
+    lastBackupAt: latestBackup?.created_at ?? null,
+    items,
+    expiredCount: items.filter((entry) => entry.expired).reduce((sum, entry) => sum + entry.count, 0),
+  }
 }
 
 async function tombstoneMessages(env: AppEnv, eventId: string, deletedAt: string): Promise<number> {

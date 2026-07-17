@@ -1,8 +1,8 @@
-import { eventAccess, type EventAccess } from './authorization.js'
+import { eventAccess } from './authorization.js'
 import { appendAuditEvent, canonical } from './audit.js'
 import { json, readJson } from './http.js'
 import type { AppEnv } from './index.js'
-import { assertSameOrigin, requireSession, sha256Base64Url } from './security.js'
+import { assertSameOrigin, hasRecentAuthentication, requireSession, sha256Base64Url } from './security.js'
 
 interface ServerBackup {
   format: 'srs-server-backup'
@@ -20,11 +20,11 @@ interface ServerBackup {
   data: Record<string, unknown[]>
 }
 
-async function ownerAccess(request: Request, env: AppEnv, eventReference: string): Promise<EventAccess> {
+async function ownerContext(request: Request, env: AppEnv, eventReference: string) {
   const session = await requireSession(request, env)
   const access = await eventAccess(env, eventReference, session.userId, session.displayName)
   if (!access || !access.isOwner) throw new Response('大会管理者のみ操作できます', { status: 403 })
-  return access
+  return { access, session }
 }
 
 async function all(env: AppEnv, sql: string, eventId: string): Promise<unknown[]> {
@@ -33,7 +33,7 @@ async function all(env: AppEnv, sql: string, eventId: string): Promise<unknown[]
 
 async function createBackup(request: Request, env: AppEnv, eventReference: string): Promise<Response> {
   assertSameOrigin(request)
-  const access = await ownerAccess(request, env, eventReference)
+  const { access } = await ownerContext(request, env, eventReference)
   const [
     regattas,
     settings,
@@ -65,6 +65,7 @@ async function createBackup(request: Request, env: AppEnv, eventReference: strin
     auditEvents,
     retentionRuns,
     retentionTombstones,
+    retentionHoldEvents,
     invites,
   ] = await Promise.all([
     all(env, 'SELECT id, slug, name, owner_user_id, starts_on, ends_on, status, default_locale, created_at, updated_at FROM regattas WHERE id = ?', access.eventId),
@@ -97,6 +98,7 @@ async function createBackup(request: Request, env: AppEnv, eventReference: strin
     all(env, 'SELECT * FROM audit_events WHERE regatta_id = ? ORDER BY sequence', access.eventId),
     all(env, 'SELECT * FROM retention_runs WHERE regatta_id = ? ORDER BY started_at', access.eventId),
     all(env, 'SELECT * FROM retention_tombstones WHERE regatta_id = ? ORDER BY deleted_at', access.eventId),
+    all(env, 'SELECT * FROM retention_hold_events WHERE regatta_id = ? ORDER BY created_at', access.eventId),
     all(env, `SELECT id, regatta_id, role, assignment_scope_json, race_area_id, committee_boat_id,
                     mark_id, max_uses, use_count, expires_at, revoked_at, created_by, created_at
              FROM invites WHERE regatta_id = ?`, access.eventId),
@@ -132,6 +134,7 @@ async function createBackup(request: Request, env: AppEnv, eventReference: strin
     auditEvents,
     retentionRuns,
     retentionTombstones,
+    retentionHoldEvents,
     invites,
   }
   const dataHash = await sha256Base64Url(JSON.stringify(canonical(data)))
@@ -176,7 +179,13 @@ function records<T extends Record<string, unknown>>(backup: ServerBackup, key: s
 
 async function restoreBackup(request: Request, env: AppEnv, eventReference: string): Promise<Response> {
   assertSameOrigin(request)
-  const access = await ownerAccess(request, env, eventReference)
+  const { access, session } = await ownerContext(request, env, eventReference)
+  if (!hasRecentAuthentication(session)) {
+    return json({
+      error: 'バックアップ復元にはパスキーでの再認証が必要です。再認証後15分以内にもう一度実行してください',
+      code: 'REAUTHENTICATION_REQUIRED',
+    }, { status: 428 })
+  }
   const body = await readJson<{ backup?: ServerBackup; reason?: string }>(request, 5 * 1_024 * 1_024)
   const backup = body.backup
   const reason = body.reason?.trim()

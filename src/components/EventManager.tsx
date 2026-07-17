@@ -24,12 +24,16 @@ import { CLASS_PROFILES, type SailingClass } from '../domain'
 import {
   createEvent,
   listEvents,
-  loadRetentionPolicy,
+  loadRetentionPreview,
+  loadRetentionSettings,
+  saveRetentionHold,
   saveRetentionPolicy,
   runRetentionNow,
   type EventResources,
   type EventSummary,
   type RetentionPolicy,
+  type RetentionHold,
+  type RetentionPreview,
 } from '../eventClient'
 import { createInvite, listInvites, revokeInvite, type InviteRecord } from '../inviteClient'
 import {
@@ -62,6 +66,12 @@ function localDate(date: Date): string {
 
 function localDateTime(date: Date): string {
   return `${localDate(date)}T${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+
+function formatTimestamp(value: string): string {
+  return new Intl.DateTimeFormat('ja-JP', {
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  }).format(new Date(value))
 }
 
 export function EventManager({
@@ -113,6 +123,13 @@ export function EventManager({
     securityLogsDays: 365,
   })
   const [retentionWorking, setRetentionWorking] = useState(false)
+  const [retentionHold, setRetentionHold] = useState<RetentionHold>({ active: false, until: null, reason: null, indefinite: false })
+  const [holdDesiredActive, setHoldDesiredActive] = useState(false)
+  const [holdIndefinite, setHoldIndefinite] = useState(true)
+  const [holdUntilDate, setHoldUntilDate] = useState(localDate(new Date(today.getTime() + 365 * 86_400_000)))
+  const [holdReason, setHoldReason] = useState('抗議・審問・事故調査に関する記録を保全するため')
+  const [retentionPreview, setRetentionPreview] = useState<RetentionPreview>()
+  const [latestBackupAt, setLatestBackupAt] = useState<string>()
 
   useEffect(() => {
     if (session.mode !== 'authenticated') return
@@ -130,8 +147,17 @@ export function EventManager({
     void listInvites(currentEventSlug)
       .then((loaded) => { if (active) setInvites(loaded) })
       .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : '招待一覧を取得できません') })
-    void loadRetentionPolicy(currentEventSlug)
-      .then((loaded) => { if (active) setRetention(loaded) })
+    void loadRetentionSettings(currentEventSlug)
+      .then((loaded) => {
+        if (!active) return
+        setRetention(loaded.policy)
+        setRetentionHold(loaded.hold)
+        setHoldDesiredActive(loaded.hold.active)
+        setHoldIndefinite(loaded.hold.indefinite)
+        if (loaded.hold.reason) setHoldReason(loaded.hold.reason)
+        if (loaded.hold.until && !loaded.hold.indefinite) setHoldUntilDate(localDate(new Date(loaded.hold.until)))
+        setLatestBackupAt(loaded.latestBackup?.created_at)
+      })
       .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : '保存期間を取得できません') })
     return () => { active = false }
   }, [currentEventSlug, isCurrentEventOwner, session.mode])
@@ -267,7 +293,9 @@ export function EventManager({
       setBackupReport(`${report.restored.length}レースに復元版を作成しました。確定済みスキップ: ${report.finalizedSkipped.length}件`)
       setVerifiedBackup(undefined)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'バックアップを復元できません')
+      const message = reason instanceof Error ? reason.message : 'バックアップを復元できません'
+      setError(message)
+      if (message.includes('再認証')) onRequestAuthentication()
     } finally {
       setBackupWorking(false)
     }
@@ -278,23 +306,73 @@ export function EventManager({
     setError(undefined)
     try {
       setRetention(await saveRetentionPolicy(currentEventSlug, retention))
+      setRetentionPreview(undefined)
       setBackupReport('大会の保存期間ポリシーを監査ログ付きで更新しました')
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '保存期間を更新できません')
+      const message = reason instanceof Error ? reason.message : '保存期間を更新できません'
+      setError(message)
+      if (message.includes('再認証')) onRequestAuthentication()
+    } finally {
+      setRetentionWorking(false)
+    }
+  }
+
+  const saveHold = async () => {
+    setRetentionWorking(true)
+    setError(undefined)
+    try {
+      const hold = await saveRetentionHold(currentEventSlug, {
+        active: holdDesiredActive,
+        until: holdDesiredActive && !holdIndefinite ? new Date(`${holdUntilDate}T23:59:59.999`).toISOString() : null,
+        reason: holdReason,
+      })
+      setRetentionHold(hold)
+      setRetentionPreview(undefined)
+      setBackupReport(hold.active ? `保存ホールドを設定しました（${hold.indefinite ? '解除まで無期限' : hold.until}）` : '保存ホールドを解除し、履歴へ記録しました')
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : '保存ホールドを更新できません'
+      setError(message)
+      if (message.includes('再認証')) onRequestAuthentication()
+    } finally {
+      setRetentionWorking(false)
+    }
+  }
+
+  const previewRetention = async () => {
+    setRetentionWorking(true)
+    setError(undefined)
+    try {
+      const preview = await loadRetentionPreview(currentEventSlug)
+      setRetentionPreview(preview)
+      setLatestBackupAt(preview.lastBackupAt ?? undefined)
+      setBackupReport(preview.hold.active
+        ? `保存ホールド中です。削除候補 ${preview.expiredCount}件は処理されません`
+        : `現在の保存期間による期限到来候補は ${preview.expiredCount}件です`)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '削除候補を確認できません')
     } finally {
       setRetentionWorking(false)
     }
   }
 
   const runRetention = async () => {
+    if (!retentionPreview) {
+      await previewRetention()
+      return
+    }
+    const destructive = retentionPreview.items.filter((item) => item.expired && item.count > 0 && item.key !== 'finalizedRecordsDays' && item.key !== 'localHighFrequencyTrackDays')
+    if (!window.confirm(`${destructive.reduce((sum, item) => sum + item.count, 0)}件を保存期間に従って削除・匿名化します。最終バックアップ: ${latestBackupAt ? formatTimestamp(latestBackupAt) : '記録なし'}。続けますか？`)) return
     setRetentionWorking(true)
     setError(undefined)
     try {
       const report = await runRetentionNow(currentEventSlug)
       const affected = Object.values(report.counts).reduce((sum, count) => sum + count, 0)
       setBackupReport(`${report.detail}（処理 ${affected}件）`)
+      setRetentionPreview(undefined)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '保存期間処理を実行できません')
+      const message = reason instanceof Error ? reason.message : '保存期間処理を実行できません'
+      setError(message)
+      if (message.includes('再認証')) onRequestAuthentication()
     } finally {
       setRetentionWorking(false)
     }
@@ -404,9 +482,47 @@ export function EventManager({
                     <label className="event-field"><span>招待・復元秘密（日）</span><input type="number" min="1" max="36500" value={retention.authSecretsAfterEventDays} onChange={(event) => setRetention((current) => ({ ...current, authSecretsAfterEventDays: Number(event.target.value) }))} /></label>
                   </div>
                   <p>初期推奨は確定・監査5年、観測1年、位置・通常メッセージ90日、名前・担当1年、招待・復元秘密30日です。短縮前に暗号化バックアップを保存してください。</p>
+                  <div className={`retention-hold ${retentionHold.active ? 'is-active' : ''}`}>
+                    <div className="retention-hold__status">
+                      <ShieldCheck size={19} />
+                      <span>
+                        <strong>{retentionHold.active ? '保存ホールド中' : '保存ホールドなし'}</strong>
+                        <small>{retentionHold.active ? `${retentionHold.indefinite ? '解除まで無期限' : retentionHold.until ? formatTimestamp(retentionHold.until) : '期限未設定'}・${retentionHold.reason}` : '抗議、審問、事故調査中の自動削除を停止できます'}</small>
+                      </span>
+                    </div>
+                    <label className="retention-hold__toggle"><input type="checkbox" checked={holdDesiredActive} onChange={(event) => {
+                      const active = event.target.checked
+                      setHoldDesiredActive(active)
+                      if (!active && retentionHold.active) setHoldReason('調査・審問が完了したため保存ホールドを解除')
+                      if (active && !retentionHold.active) setHoldReason('抗議・審問・事故調査に関する記録を保全するため')
+                    }} /><span>{holdDesiredActive ? 'ホールドを有効にする' : 'ホールドを使用しない'}</span></label>
+                    <label className="event-field"><span>{retentionHold.active && !holdDesiredActive ? '解除理由' : '保全理由'}（監査ログに保存）</span><textarea value={holdReason} onChange={(event) => setHoldReason(event.target.value)} minLength={5} maxLength={500} rows={2} /></label>
+                    {holdDesiredActive && (
+                      <div className="retention-hold__period">
+                        <label><input type="checkbox" checked={holdIndefinite} onChange={(event) => setHoldIndefinite(event.target.checked)} />解除操作まで無期限</label>
+                        {!holdIndefinite && <label className="event-field"><span>ホールド終了日</span><input type="date" min={localDate(new Date(today.getTime() + 86_400_000))} value={holdUntilDate} onChange={(event) => setHoldUntilDate(event.target.value)} /></label>}
+                      </div>
+                    )}
+                    <button type="button" className="retention-hold__save" onClick={() => void saveHold()} disabled={retentionWorking || holdReason.trim().length < 5 || !retentionHold.active && !holdDesiredActive}>{retentionHold.active && !holdDesiredActive ? '保存ホールドを解除' : !retentionHold.active && !holdDesiredActive ? 'ホールドを有効にすると記録できます' : '保存ホールドを記録'}</button>
+                  </div>
+                  {retentionPreview && (
+                    <div className="retention-preview">
+                      <header><strong>削除・匿名化プレビュー</strong><small>大会終了 {retentionPreview.eventEndsOn}・{retentionPreview.hold.active ? 'ホールド中' : '実行可能'}</small></header>
+                      <div className="retention-preview__list">
+                        {retentionPreview.items.map((item) => (
+                          <div className={item.expired ? 'is-expired' : ''} key={item.key}>
+                            <span><strong>{item.label}</strong><small>{item.operation}・期限 {formatTimestamp(item.expiresAt)}</small></span>
+                            <b>{item.expired ? `${item.count}件` : '未到来'}</b>
+                          </div>
+                        ))}
+                      </div>
+                      <p>最終バックアップ: {retentionPreview.lastBackupAt ? formatTimestamp(retentionPreview.lastBackupAt) : '記録なし'}</p>
+                    </div>
+                  )}
                   <div className="retention-actions">
                     <button type="button" onClick={() => void saveRetention()} disabled={retentionWorking}>{retentionWorking ? <LoaderCircle className="is-spinning" size={17} /> : <Archive size={17} />}保存期間を更新</button>
-                    <button type="button" onClick={() => void runRetention()} disabled={retentionWorking}><Trash2 size={17} />期限到来分を今すぐ処理</button>
+                    <button type="button" onClick={() => void previewRetention()} disabled={retentionWorking}><Check size={17} />削除対象を確認</button>
+                    <button type="button" className="is-danger" onClick={() => void runRetention()} disabled={retentionWorking || retentionHold.active}><Trash2 size={17} />{retentionPreview ? '確認した対象を処理' : '期限到来分を今すぐ処理'}</button>
                   </div>
                 </div>
               </section>

@@ -71,6 +71,49 @@ export interface RetentionPolicy {
   securityLogsDays: number
 }
 
+export interface RetentionHold {
+  active: boolean
+  until: string | null
+  reason: string | null
+  indefinite: boolean
+  updatedAt?: string
+}
+
+export interface RetentionSettings {
+  policy: RetentionPolicy
+  updatedAt: string
+  hold: RetentionHold
+  latestRun: {
+    id: string
+    trigger_type: string
+    status: string
+    counts_json: string
+    detail: string | null
+    started_at: string
+    completed_at: string | null
+  } | null
+  latestBackup: { created_at: string; data_hash: string; event_sequence: number } | null
+}
+
+export interface RetentionPreviewItem {
+  key: keyof RetentionPolicy
+  label: string
+  expiresAt: string
+  expired: boolean
+  count: number
+  operation: string
+}
+
+export interface RetentionPreview {
+  eventId: string
+  eventEndsOn: string
+  generatedAt: string
+  hold: RetentionHold
+  lastBackupAt: string | null
+  items: RetentionPreviewItem[]
+  expiredCount: number
+}
+
 interface BootstrapResponse {
   access: EventAccessSummary
   regatta: { id: string; slug: string; name: string; starts_on: string; ends_on: string; status: string }
@@ -411,10 +454,14 @@ export async function saveCourseRevision(
 }
 
 export async function loadRetentionPolicy(eventSlug: string): Promise<RetentionPolicy> {
-  return (await apiJson<{ policy: RetentionPolicy }>(
+  return (await loadRetentionSettings(eventSlug)).policy
+}
+
+export async function loadRetentionSettings(eventSlug: string): Promise<RetentionSettings> {
+  return apiJson<RetentionSettings>(
     `/api/events/${encodeURIComponent(eventSlug)}/settings/retention`,
     { method: 'GET', headers: {} },
-  )).policy
+  )
 }
 
 export async function saveRetentionPolicy(eventSlug: string, policy: RetentionPolicy): Promise<RetentionPolicy> {
@@ -422,6 +469,23 @@ export async function saveRetentionPolicy(eventSlug: string, policy: RetentionPo
     `/api/events/${encodeURIComponent(eventSlug)}/settings/retention`,
     { method: 'PATCH', body: JSON.stringify({ policy }) },
   )).policy
+}
+
+export async function saveRetentionHold(
+  eventSlug: string,
+  input: { active: boolean; until?: string | null; reason: string },
+): Promise<RetentionHold> {
+  return (await apiJson<{ hold: RetentionHold }>(
+    `/api/events/${encodeURIComponent(eventSlug)}/settings/retention/hold`,
+    { method: 'PATCH', body: JSON.stringify(input) },
+  )).hold
+}
+
+export async function loadRetentionPreview(eventSlug: string): Promise<RetentionPreview> {
+  return (await apiJson<{ preview: RetentionPreview }>(
+    `/api/events/${encodeURIComponent(eventSlug)}/settings/retention/preview`,
+    { method: 'GET', headers: {} },
+  )).preview
 }
 
 export interface RetentionRunReport {

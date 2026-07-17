@@ -8,6 +8,7 @@ export interface AuthenticatedSession {
   userId: string
   displayName: string
   expiresAt: string
+  createdAt: string
 }
 
 interface SessionRow {
@@ -15,6 +16,7 @@ interface SessionRow {
   user_id: string
   display_name: string
   expires_at: string
+  created_at: string
 }
 
 function base64Url(bytes: Uint8Array): string {
@@ -87,7 +89,7 @@ export async function createSession(
   ).bind(tokenHash, userId, createdAt, expiresAt, createdAt, userAgentHash).run()
 
   return {
-    session: { tokenHash, userId, displayName: user.display_name, expiresAt },
+    session: { tokenHash, userId, displayName: user.display_name, expiresAt, createdAt },
     cookie: `${SESSION_COOKIE}=${encodeURIComponent(rawToken)}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${Math.floor(SESSION_DURATION_MS / 1_000)}`,
   }
 }
@@ -98,7 +100,7 @@ export async function getSession(request: Request, env: AppEnv): Promise<Authent
   const tokenHash = await sha256Base64Url(rawToken)
   const now = new Date().toISOString()
   const row = await env.DB.prepare(
-    `SELECT s.token_hash, s.user_id, s.expires_at, u.display_name
+    `SELECT s.token_hash, s.user_id, s.expires_at, s.created_at, u.display_name
      FROM auth_sessions s
      JOIN users u ON u.id = s.user_id
      WHERE s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > ?
@@ -114,7 +116,13 @@ export async function getSession(request: Request, env: AppEnv): Promise<Authent
     userId: row.user_id,
     displayName: row.display_name,
     expiresAt: row.expires_at,
+    createdAt: row.created_at,
   }
+}
+
+export function hasRecentAuthentication(session: AuthenticatedSession, maximumAgeMinutes = 15): boolean {
+  const createdAt = Date.parse(session.createdAt)
+  return Number.isFinite(createdAt) && Date.now() - createdAt <= maximumAgeMinutes * 60_000
 }
 
 export async function requireSession(request: Request, env: AppEnv): Promise<AuthenticatedSession> {
