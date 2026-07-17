@@ -82,10 +82,13 @@ function initialTargets(center: readonly [number, number]): Record<string, reado
   const mark1 = pointAt(center, 1_000, 350)
   return {
     'mark-1': mark1,
+    'mark-1s': pointAt(mark1, 60, 260),
+    'mark-1p': pointAt(mark1, 60, 80),
     'mark-1a': pointAt(mark1, 180, 80),
     'mark-2': pointAt(center, 780, 35),
     'mark-3s': pointAt(gateCenter, 65, 260),
     'mark-3p': pointAt(gateCenter, 65, 80),
+    'mark-3': gateCenter,
     'start-pin': pointAt(center, 240, 260),
     'start-rc': pointAt(center, 240, 80),
   }
@@ -170,10 +173,13 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
 
   const markDefinitions = [
     ['mark-1', '1マーク', 'rounding'],
+    ['mark-1s', '上ゲート 1S', 'gate'],
+    ['mark-1p', '上ゲート 1P', 'gate'],
     ['mark-1a', 'オフセット 1A', 'offset'],
     ['mark-2', '2マーク', 'rounding'],
     ['mark-3s', '下ゲート 3S', 'gate'],
     ['mark-3p', '下ゲート 3P', 'gate'],
+    ['mark-3', '3マーク', 'rounding'],
     ['start-pin', 'スタート・ピン', 'pin'],
     ['start-rc', 'シグナルボート', 'signal'],
   ] as const
@@ -233,6 +239,28 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(crypto.randomUUID(), revisionId, markIds.get(key), nodeIndex + 1, label, nodeType, key.includes('3') ? 'gate' : 'port', target[0], target[1]))
     })
+    const taskDefinitions = [
+      ['採用コースを承認', 'blocked', 'required', -20],
+      ['全必須マークを確認', 'blocked', 'required', -10],
+      ['5分平均風を更新', 'waiting', 'required', -7],
+      ['スタートライン方位を確認', 'waiting', 'required', -6],
+      ['公式音響端末を準備', 'waiting', 'required', -5],
+      ['予備マークと通信手段を確認', 'waiting', 'reference', -15],
+    ] as const
+    for (const [title, taskStatus, priority, dueOffsetMinutes] of taskDefinitions) {
+      statements.push(env.DB.prepare(
+        `INSERT INTO operational_tasks
+         (id, race_id, title, status, priority, due_at, revision)
+         VALUES (?, ?, ?, ?, ?, ?, 1)`,
+      ).bind(
+        crypto.randomUUID(),
+        raceId,
+        title,
+        taskStatus,
+        priority,
+        new Date(Date.parse(raceWarning) + dueOffsetMinutes * 60_000).toISOString(),
+      ))
+    }
   }
 
   await env.DB.batch(statements)

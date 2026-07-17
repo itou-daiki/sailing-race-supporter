@@ -4,6 +4,7 @@ import {
   ChevronDown,
   CircleUserRound,
   CloudOff,
+  FilePenLine,
   LockKeyhole,
   Menu,
   MessageSquareText,
@@ -14,7 +15,7 @@ import {
   X,
 } from 'lucide-react'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { recommendedCourseLength } from './course'
+import { generateCoursePlan, recommendedCourseLength, type CourseTemplate } from './course'
 import {
   CLASS_PROFILES,
   DEMO_BOATS,
@@ -26,14 +27,14 @@ import {
   type CommitteeBoat,
   type LngLat,
   type OperationalMessage,
+  type OperationalTask,
   type RaceDefinition,
   type SailingClass,
 } from './domain'
-import { MapView } from './components/MapView'
 import { OperationsBoard } from './components/OperationsBoard'
 import { StartSequence } from './components/StartSequence'
 import { loadSession, type SessionState } from './authClient'
-import { loadEventBootstrap } from './eventClient'
+import { createPostFinalizationRevision, loadEventBootstrap, saveCourseRevision } from './eventClient'
 import type { EventAccessSummary, EventResources } from './eventClient'
 import { saveEventSnapshot } from './offlineStore'
 import { useEventRoom, type SequencedOperation } from './realtime'
@@ -45,6 +46,7 @@ const SPLIT_KEY = 'srs-map-split'
 const AuthPanel = lazy(() => import('./components/AuthPanel').then((module) => ({ default: module.AuthPanel })))
 const EventManager = lazy(() => import('./components/EventManager').then((module) => ({ default: module.EventManager })))
 const JoinRecoveryPanel = lazy(() => import('./components/JoinRecoveryPanel').then((module) => ({ default: module.JoinRecoveryPanel })))
+const MapView = lazy(() => import('./components/MapView').then((module) => ({ default: module.MapView })))
 
 function storedNumber(key: string, fallback: number): number {
   const value = Number(window.localStorage.getItem(key))
@@ -89,6 +91,8 @@ export default function App() {
   const [boats, setBoats] = useState<readonly CommitteeBoat[]>(DEMO_BOATS)
   const [selectedMarkId, setSelectedMarkId] = useState<string>()
   const [messages, setMessages] = useState<readonly OperationalMessage[]>(DEMO_MESSAGES)
+  const [tasks, setTasks] = useState<readonly OperationalTask[]>(DEMO_TASKS)
+  const [memberCount, setMemberCount] = useState(18)
   const [messagesOpen, setMessagesOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
@@ -100,6 +104,13 @@ export default function App() {
   const [eventResources, setEventResources] = useState<EventResources>({ boats: [], marks: [] })
   const [postponed, setPostponed] = useState(false)
   const [confirmFinalize, setConfirmFinalize] = useState(false)
+  const [revisionOpen, setRevisionOpen] = useState(false)
+  const [revisionCourseCode, setRevisionCourseCode] = useState('')
+  const [revisionTargetMinutes, setRevisionTargetMinutes] = useState(50)
+  const [revisionReason, setRevisionReason] = useState('確定後に判明した運営記録の訂正')
+  const [revisionNote, setRevisionNote] = useState('')
+  const [revisionWorking, setRevisionWorking] = useState(false)
+  const [revisionError, setRevisionError] = useState<string>()
   const [boardScale, setBoardScale] = useState(() => storedNumber(SCALE_KEY, 100))
   const [boardDetail, setBoardDetail] = useState<BoardDetail>(() => {
     const stored = window.localStorage.getItem(DETAIL_KEY)
@@ -109,6 +120,12 @@ export default function App() {
   const [selectedClass, setSelectedClass] = useState<SailingClass>('470')
   const [windSpeed, setWindSpeed] = useState(INITIAL_WIND.speedKnots)
   const [windDirection, setWindDirection] = useState(INITIAL_WIND.directionDegrees)
+  const [courseTemplate, setCourseTemplate] = useState<CourseTemplate>('O2')
+  const [lowerGate, setLowerGate] = useState(true)
+  const [upperGate, setUpperGate] = useState(false)
+  const [courseSaving, setCourseSaving] = useState(false)
+  const [courseSaveError, setCourseSaveError] = useState<string>()
+  const [preparatoryFlag, setPreparatoryFlag] = useState('P旗')
   const [messageDraft, setMessageDraft] = useState('')
   const [messagePriority, setMessagePriority] = useState<OperationalMessage['priority']>('normal')
   const [leadingPassages, setLeadingPassages] = useState<Record<string, string>>({})
@@ -155,6 +172,14 @@ export default function App() {
         ...current,
         [`${event.raceId}:${payload.markId}`]: payload.passedAt as string,
       }))
+    }
+
+    if (event.type === 'task') {
+      const payload = event.payload as { taskId?: string; status?: OperationalTask['status'] }
+      if (!payload.taskId || !payload.status) return
+      setTasks((current) => current.map((task) => (
+        task.id === payload.taskId ? { ...task, status: payload.status as OperationalTask['status'] } : task
+      )))
     }
 
     if (event.type === 'wind') {
@@ -211,6 +236,7 @@ export default function App() {
     enabled: session.mode === 'authenticated',
     onEvent: applyRemoteEvent,
   })
+  const sendRealtimeOperation = realtime.send
 
   const activeRace = races.find((race) => race.id === activeRaceId) ?? races[0]
   const marks = useMemo(() => {
@@ -223,7 +249,12 @@ export default function App() {
     }))
   }, [activeRace, races])
   const recommendation = recommendedCourseLength(selectedClass, windSpeed)
+  const activeTasks = useMemo(
+    () => tasks.filter((task) => !task.raceId || task.raceId === activeRace.id),
+    [activeRace.id, tasks],
+  )
   const locked = activeRace.status === 'finalized'
+  const canControlSignals = !eventAccess || eventAccess.isOwner || ['pro', 'ro', 'signal-boat'].includes(eventAccess.role)
 
   useEffect(() => window.localStorage.setItem(SCALE_KEY, String(boardScale)), [boardScale])
   useEffect(() => window.localStorage.setItem(DETAIL_KEY, boardDetail), [boardDetail])
@@ -254,6 +285,9 @@ export default function App() {
         }
         setBoats(bootstrap.boats)
         setMessages(bootstrap.messages)
+        setTasks(bootstrap.tasks)
+        setLeadingPassages(bootstrap.leadingPassages)
+        setMemberCount(bootstrap.memberCount)
         if (bootstrap.wind) {
           setWindSpeed(bootstrap.wind.speedKnots)
           setWindDirection(bootstrap.wind.directionDegrees)
@@ -292,17 +326,25 @@ export default function App() {
     }
   }, [])
 
-  const updateSelfLocation = (position: LngLat) => {
+  const updateSelfLocation = (position: LngLat, motion: { speedKnots?: number; courseDegrees?: number; accuracyMetres?: number }) => {
     const selfBoat = boats.find((boat) => boat.isSelf)
     setBoats((current) => current.map((boat) => (
-      boat.isSelf ? { ...boat, position, freshnessSeconds: 0 } : boat
+      boat.isSelf ? {
+        ...boat,
+        position,
+        speedKnots: motion.speedKnots ?? boat.speedKnots,
+        courseDegrees: motion.courseDegrees ?? boat.courseDegrees,
+        freshnessSeconds: 0,
+        status: 'moving' as const,
+      } : boat
     )))
     if (selfBoat) {
-      void realtime.send('position', {
+      void sendRealtimeOperation('position', {
         committeeBoatId: selfBoat.id,
         position,
-        speedKnots: selfBoat.speedKnots,
-        courseDegrees: selfBoat.courseDegrees,
+        speedKnots: motion.speedKnots ?? selfBoat.speedKnots,
+        courseDegrees: motion.courseDegrees ?? selfBoat.courseDegrees,
+        accuracyMetres: motion.accuracyMetres,
       }, activeRace.id)
     }
   }
@@ -311,7 +353,20 @@ export default function App() {
     setMessages((current) => current.map((message) => (
       message.id === messageId ? { ...message, acknowledgement: 'acknowledged' as const } : message
     )))
-    void realtime.send('message', { action: 'acknowledge', messageId }, activeRace.id)
+    void sendRealtimeOperation('message', { action: 'acknowledge', messageId }, activeRace.id)
+  }
+
+  const advanceTask = (taskId: string) => {
+    if (locked) return
+    const task = tasks.find((candidate) => candidate.id === taskId)
+    if (!task) return
+    const nextStatus: OperationalTask['status'] = task.status === 'done'
+      ? 'waiting'
+      : task.status === 'doing' ? 'done' : 'doing'
+    setTasks((current) => current.map((candidate) => (
+      candidate.id === taskId ? { ...candidate, status: nextStatus } : candidate
+    )))
+    void sendRealtimeOperation('task', { taskId, status: nextStatus }, task.raceId ?? activeRace.id)
   }
 
   const recordMarkDrop = (markId: string) => {
@@ -330,7 +385,7 @@ export default function App() {
         )),
       }
     }))
-    void realtime.send('mark', {
+    void sendRealtimeOperation('mark', {
       markId,
       actual: selfBoat.position,
       status: 'deployed',
@@ -343,14 +398,14 @@ export default function App() {
     if (locked) return
     const passedAt = new Date().toISOString()
     setLeadingPassages((current) => ({ ...current, [`${activeRace.id}:${markId}`]: passedAt }))
-    void realtime.send('leading-passage', { markId, passedAt, lapNumber: 1 }, activeRace.id)
+    void sendRealtimeOperation('leading-passage', { markId, passedAt, lapNumber: 1 }, activeRace.id)
   }
 
   const finalizeRace = () => {
     setRaces((current) => current.map((race) => (
       race.id === activeRace.id ? { ...race, status: 'finalized' as const } : race
     )))
-    void realtime.send('finalize', {
+    void sendRealtimeOperation('finalize', {
       finalizedAt: new Date().toISOString(),
       reason: '大会管理者による確定',
     }, activeRace.id)
@@ -363,16 +418,20 @@ export default function App() {
       race.id === activeRace.id ? { ...race, warningAt: nextWarningAt } : race
     )))
     setPostponed(false)
-    void realtime.send('signal', { action: 'resume', warningAt: nextWarningAt }, activeRace.id)
+    void sendRealtimeOperation('signal', { action: 'resume', warningAt: nextWarningAt }, activeRace.id)
   }
 
   const postponeRace = () => {
     setPostponed(true)
-    void realtime.send('signal', { action: 'postpone', executedAt: new Date().toISOString() }, activeRace.id)
+    void sendRealtimeOperation('signal', { action: 'postpone', executedAt: new Date().toISOString() }, activeRace.id)
   }
 
+  const recordSignal = useCallback((signal: { action: string; label: string; flag: string; sound: string; executedAt: string }) => {
+    void sendRealtimeOperation('signal', signal, activeRace.id)
+  }, [activeRace.id, sendRealtimeOperation])
+
   const shareWind = () => {
-    void realtime.send('wind', {
+    void sendRealtimeOperation('wind', {
       directionDegrees: windDirection,
       speedKnots: windSpeed,
       gustKnots: Math.max(windSpeed, INITIAL_WIND.gustKnots),
@@ -386,7 +445,7 @@ export default function App() {
     event.preventDefault()
     const body = messageDraft.trim()
     if (!body) return
-    const id = await realtime.send('message', {
+    const id = await sendRealtimeOperation('message', {
       body,
       priority: messagePriority,
       channel: `race:${activeRace.id}`,
@@ -402,6 +461,123 @@ export default function App() {
     }])
     setMessageDraft('')
     setMessagePriority('normal')
+  }
+
+  const openCourseSettings = () => {
+    const supported = ['O2', 'I2', 'L2', 'L3', 'W2', 'トライアングル'].includes(activeRace.courseCode)
+      ? activeRace.courseCode as CourseTemplate
+      : 'O2'
+    setCourseTemplate(supported)
+    setLowerGate(activeRace.marks.some((mark) => mark.label.startsWith('下ゲート')) || activeRace.courseCode.includes('ゲート'))
+    setUpperGate(activeRace.marks.some((mark) => mark.label.startsWith('上ゲート')))
+    setCourseSaveError(undefined)
+    setSettingsOpen(true)
+  }
+
+  const saveCourse = async () => {
+    if (locked) return
+    setCourseSaving(true)
+    setCourseSaveError(undefined)
+    const pin = marks.find((mark) => mark.label === 'スタート・ピン')
+    const signal = marks.find((mark) => mark.label === 'シグナルボート')
+    const center: LngLat = pin && signal
+      ? [(pin.target[0] + signal.target[0]) / 2, (pin.target[1] + signal.target[1]) / 2]
+      : marks[0]?.target ?? [139.4638, 35.283]
+    const plan = generateCoursePlan({
+      center,
+      windDirection,
+      totalLengthMetres: recommendation.kilometres * 1_000,
+      courseCode: courseTemplate,
+      lowerGate,
+      upperGate,
+    })
+    const allPhysicalMarks = new Map<string, { id: string; label: string }>()
+    marks.forEach((mark) => allPhysicalMarks.set(mark.label, mark))
+    eventResources.marks.forEach((mark) => allPhysicalMarks.set(mark.label, mark))
+    const plannedMarks = plan.flatMap((node) => {
+      const physical = allPhysicalMarks.get(node.label)
+      if (!physical) return []
+      const existing = marks.find((mark) => mark.id === physical.id)
+      return [{
+        id: physical.id,
+        label: node.label,
+        shortLabel: node.label === 'スタート・ピン' ? 'PIN' : node.label === 'シグナルボート' ? 'RC' : node.label.replace('オフセット ', '').replace('下ゲート ', '').replace('上ゲート ', '').replace('マーク', '').trim(),
+        target: node.target,
+        actual: existing?.actual,
+        status: existing?.status ?? 'planned' as const,
+        assignedBoatId: existing?.assignedBoatId,
+        isGate: node.nodeType === 'gate',
+        gateSide: node.label.endsWith('S') ? 'S' as const : node.label.endsWith('P') ? 'P' as const : undefined,
+      }]
+    })
+    if (plannedMarks.length < 3) {
+      setCourseSaveError('この大会には選択したコース用の物理マークが不足しています')
+      setCourseSaving(false)
+      return
+    }
+    try {
+      if (eventAccess) {
+        await saveCourseRevision(eventId, activeRace.id, {
+          courseCode: courseTemplate,
+          windDirection,
+          windSpeed,
+          targetLengthMetres: recommendation.kilometres * 1_000,
+          lowerGate,
+          upperGate,
+          nodes: plannedMarks.map((mark) => ({
+            markId: mark.id,
+            label: mark.label,
+            nodeType: mark.label === 'スタート・ピン' || mark.label === 'シグナルボート'
+              ? 'start'
+              : mark.label.includes('オフセット') ? 'offset' : mark.isGate ? 'gate' : 'single',
+            rounding: mark.isGate ? 'gate' : 'port',
+            target: mark.target,
+          })),
+        })
+      }
+      setRaces((current) => current.map((race) => race.id === activeRace.id ? {
+        ...race,
+        courseCode: courseTemplate,
+        marks: plannedMarks,
+      } : race))
+      setSettingsOpen(false)
+    } catch (reason) {
+      setCourseSaveError(reason instanceof Error ? reason.message : 'コース案を保存できません')
+    } finally {
+      setCourseSaving(false)
+    }
+  }
+
+  const openAdminRevision = () => {
+    setRevisionCourseCode(activeRace.courseCode)
+    setRevisionTargetMinutes(activeRace.targetMinutes)
+    setRevisionReason('確定後に判明した運営記録の訂正')
+    setRevisionNote('')
+    setRevisionError(undefined)
+    setRevisionOpen(true)
+  }
+
+  const submitAdminRevision = async (event: React.FormEvent) => {
+    event.preventDefault()
+    setRevisionWorking(true)
+    setRevisionError(undefined)
+    try {
+      await createPostFinalizationRevision(eventId, activeRace.id, revisionReason, {
+        courseCode: revisionCourseCode,
+        targetMinutes: revisionTargetMinutes,
+        note: revisionNote,
+      })
+      setRaces((current) => current.map((race) => race.id === activeRace.id ? {
+        ...race,
+        courseCode: revisionCourseCode,
+        targetMinutes: revisionTargetMinutes,
+      } : race))
+      setRevisionOpen(false)
+    } catch (reason) {
+      setRevisionError(reason instanceof Error ? reason.message : '管理者修正版を作成できません')
+    } finally {
+      setRevisionWorking(false)
+    }
   }
 
   return (
@@ -454,15 +630,19 @@ export default function App() {
               <small>{session.mode === 'authenticated' ? '認証済み管理者' : session.mode === 'offline-demo' ? 'オフラインデモ' : '本人確認が必要'}</small>
             </span>
           </button>
-          <button type="button" className="mobile-menu" onClick={() => setSettingsOpen(true)} aria-label="メニュー"><Menu size={21} /></button>
+          <button type="button" className="mobile-menu" onClick={openCourseSettings} aria-label="メニュー"><Menu size={21} /></button>
         </div>
       </header>
 
       <StartSequence
         warningAt={activeRace.warningAt}
         postponed={postponed}
+        serverOffsetMs={realtime.serverOffsetMs}
+        canControlSignals={canControlSignals}
+        preparatoryFlag={preparatoryFlag}
         onPostpone={postponeRace}
         onResume={resumeAfterPostponement}
+        onSignalExecuted={recordSignal}
       />
 
       <main
@@ -470,19 +650,21 @@ export default function App() {
         style={{ '--map-split': `${mapSplit}%` } as React.CSSProperties}
       >
         <div className="map-column">
-          <MapView
-            marks={marks}
-            boats={boats}
-            wind={{ ...INITIAL_WIND, directionDegrees: windDirection, speedKnots: windSpeed }}
-            selectedMarkId={selectedMarkId}
-            onSelectMark={setSelectedMarkId}
-            onUseCurrentLocation={updateSelfLocation}
-            onRecordDrop={recordMarkDrop}
-            onRecordLeadingPassage={recordLeadingPassage}
-            leadingPassages={leadingPassages}
-            raceId={activeRace.id}
-            locked={locked}
-          />
+          <Suspense fallback={<div className="map-loading"><RadioTower size={24} /><strong>海面地図を準備中…</strong></div>}>
+            <MapView
+              marks={marks}
+              boats={boats}
+              wind={{ ...INITIAL_WIND, directionDegrees: windDirection, speedKnots: windSpeed }}
+              selectedMarkId={selectedMarkId}
+              onSelectMark={setSelectedMarkId}
+              onUseCurrentLocation={updateSelfLocation}
+              onRecordDrop={recordMarkDrop}
+              onRecordLeadingPassage={recordLeadingPassage}
+              leadingPassages={leadingPassages}
+              raceId={activeRace.id}
+              locked={locked}
+            />
+          </Suspense>
           <div className="course-advisor glass-panel">
             <div className="course-advisor__title">
               <SlidersHorizontal size={16} />
@@ -502,7 +684,7 @@ export default function App() {
               <strong>{recommendation.kilometres.toFixed(1)} km</strong>
               <span>{recommendation.nauticalMiles.toFixed(2)} NM・暫定/低信頼</span>
             </div>
-            <button type="button" onClick={() => setSettingsOpen(true)}><Settings2 size={16} /> 詳細設定</button>
+            <button type="button" onClick={openCourseSettings}><Settings2 size={16} /> 詳細設定</button>
           </div>
         </div>
 
@@ -520,7 +702,7 @@ export default function App() {
           race={activeRace}
           marks={marks}
           boats={boats}
-          tasks={DEMO_TASKS}
+          tasks={activeTasks}
           messages={messages}
           wind={{ ...INITIAL_WIND, directionDegrees: windDirection, speedKnots: windSpeed }}
           scale={boardScale}
@@ -529,11 +711,13 @@ export default function App() {
           locked={locked}
           socketStatus={realtime.status}
           pendingCount={realtime.pendingCount}
+          memberCount={memberCount}
           onScaleChange={setBoardScale}
           onDetailChange={setBoardDetail}
           onSelectMark={setSelectedMarkId}
           onAcknowledgeMessage={acknowledgeMessage}
           onOpenMessages={() => setMessagesOpen(true)}
+          onTaskStatusChange={advanceTask}
         />
       </main>
 
@@ -541,6 +725,11 @@ export default function App() {
         {!locked && (!eventAccess || eventAccess.isOwner || eventAccess.role === 'pro' || eventAccess.role === 'ro') && (
           <button type="button" className="finalize-button" onClick={() => setConfirmFinalize(true)}>
             <ShieldCheck size={17} /> {activeRace.number}を確定
+          </button>
+        )}
+        {locked && eventAccess?.isOwner && (
+          <button type="button" className="revision-button" onClick={openAdminRevision}>
+            <FilePenLine size={17} /> 管理者修正版を作成
           </button>
         )}
       </div>
@@ -582,11 +771,14 @@ export default function App() {
           <aside className="settings-sheet" aria-label="コース設定" onMouseDown={(event) => event.stopPropagation()}>
             <header><div><span className="eyebrow">{activeRace.number}</span><strong>コース・表示設定</strong></div><button type="button" onClick={() => setSettingsOpen(false)}><X size={20} /></button></header>
             <label><span>競技ヨットクラス</span><select value={selectedClass} onChange={(event) => setSelectedClass(event.target.value as SailingClass)}>{CLASS_PROFILES.map((profile) => <option key={profile.className}>{profile.className}</option>)}</select></label>
-            <label><span>コース</span><select defaultValue="O2"><option>O2</option><option>I2</option><option>L2</option><option>L3</option><option>W2</option></select></label>
-            <label className="switch-row"><span><strong>下ゲート</strong><small>3S / 3Pを使用</small></span><input type="checkbox" defaultChecked /></label>
-            <label className="switch-row"><span><strong>上ゲート</strong><small>1マークを左右2点にする</small></span><input type="checkbox" /></label>
+            <label><span>コース</span><select value={courseTemplate} onChange={(event) => setCourseTemplate(event.target.value as CourseTemplate)}><option>O2</option><option>I2</option><option>L2</option><option>L3</option><option>W2</option><option>トライアングル</option></select></label>
+            <label><span>風向（真方位）</span><input type="number" min="0" max="360" value={windDirection} onChange={(event) => setWindDirection(Number(event.target.value))} /></label>
+            <label><span>準備信号</span><select value={preparatoryFlag} onChange={(event) => setPreparatoryFlag(event.target.value)}><option>P旗</option><option>I旗</option><option>Z旗</option><option>Z旗 + I旗</option><option>U旗</option><option>黒旗</option></select></label>
+            <label className="switch-row"><span><strong>下ゲート</strong><small>3S / 3Pを使用</small></span><input type="checkbox" checked={lowerGate} onChange={(event) => setLowerGate(event.target.checked)} /></label>
+            <label className="switch-row"><span><strong>上ゲート</strong><small>1S / 1Pを使用</small></span><input type="checkbox" checked={upperGate} onChange={(event) => setUpperGate(event.target.checked)} /></label>
+            {courseSaveError && <div className="auth-error" role="alert">{courseSaveError}</div>}
             <button type="button" className="sheet-secondary" onClick={() => { setSettingsOpen(false); setAuthOpen(true) }}><ShieldCheck size={17} /> 本人確認・パスキー</button>
-            <button type="button" className="sheet-primary" onClick={() => setSettingsOpen(false)}>設定案を保存</button>
+            <button type="button" className="sheet-primary" onClick={() => void saveCourse()} disabled={courseSaving || locked}>{courseSaving ? '座標を計算・保存中…' : '設定案を保存'}</button>
           </aside>
         </div>
       )}
@@ -600,6 +792,26 @@ export default function App() {
             <p>確定後、通常メンバーは編集できません。管理者の修正は旧版を残した新しい版として記録されます。</p>
             <div><button type="button" onClick={() => setConfirmFinalize(false)}>キャンセル</button><button type="button" className="danger-confirm" onClick={finalizeRace}>確定してロック</button></div>
           </section>
+        </div>
+      )}
+
+      {revisionOpen && (
+        <div className="modal-backdrop revision-backdrop" role="presentation">
+          <form className="revision-modal" role="dialog" aria-modal="true" aria-labelledby="revision-title" onSubmit={(event) => void submitAdminRevision(event)}>
+            <button type="button" className="revision-close" onClick={() => setRevisionOpen(false)}><X size={19} /></button>
+            <div className="confirm-icon"><FilePenLine size={24} /></div>
+            <span className="eyebrow">大会作成者のみ・旧確定版を保持</span>
+            <h2 id="revision-title">{activeRace.number} 管理者修正版</h2>
+            <p>元の確定版は変更しません。以下の訂正を新しい確定版として追記し、差分・理由・時刻・ハッシュを監査ログへ残します。</p>
+            <div className="revision-grid">
+              <label><span>コース記号</span><input value={revisionCourseCode} onChange={(event) => setRevisionCourseCode(event.target.value)} maxLength={80} required /></label>
+              <label><span>目標時間（分）</span><input type="number" min="5" max="360" value={revisionTargetMinutes} onChange={(event) => setRevisionTargetMinutes(Number(event.target.value))} required /></label>
+            </div>
+            <label><span>修正理由（必須）</span><textarea value={revisionReason} onChange={(event) => setRevisionReason(event.target.value)} minLength={5} maxLength={500} required /></label>
+            <label><span>修正メモ</span><textarea value={revisionNote} onChange={(event) => setRevisionNote(event.target.value)} maxLength={2_000} placeholder="元記録との差異、確認者、根拠など" /></label>
+            {revisionError && <div className="auth-error" role="alert">{revisionError}</div>}
+            <div className="revision-actions"><button type="button" onClick={() => setRevisionOpen(false)}>キャンセル</button><button type="submit" disabled={revisionWorking || revisionReason.trim().length < 5}>{revisionWorking ? '作成中…' : '新しい確定版を追記'}</button></div>
+          </form>
         </div>
       )}
 

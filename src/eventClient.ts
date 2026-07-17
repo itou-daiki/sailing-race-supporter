@@ -2,6 +2,7 @@ import type {
   CommitteeBoat,
   CourseMark,
   OperationalMessage,
+  OperationalTask,
   RaceDefinition,
   SailingClass,
 } from './domain'
@@ -32,6 +33,9 @@ export interface EventBootstrap {
   races: RaceDefinition[]
   boats: CommitteeBoat[]
   messages: OperationalMessage[]
+  tasks: OperationalTask[]
+  leadingPassages: Record<string, string>
+  memberCount: number
   resources: EventResources
   wind?: { directionDegrees: number; speedKnots: number; gustKnots: number; observedAt: string; source: string }
 }
@@ -52,6 +56,17 @@ export interface CreateEventInput {
   center?: { longitude: number; latitude: number }
 }
 
+export interface RetentionPolicy {
+  finalizedRecordsDays: number
+  observationsDays: number
+  sampledPositionsDays: number
+  localHighFrequencyTrackDays: number
+  regularMessagesDays: number
+  memberProfilesDays: number
+  authSecretsAfterEventDays: number
+  securityLogsDays: number
+}
+
 interface BootstrapResponse {
   access: EventAccessSummary
   regatta: { id: string; slug: string; name: string; starts_on: string; ends_on: string; status: string }
@@ -59,6 +74,7 @@ interface BootstrapResponse {
     id: string; race_number: string; class_name: SailingClass; course_code: string
     status: RaceDefinition['status']; warning_at: string; target_minutes: number
   }>
+  raceAreas: Array<{ id: string; name: string; center_lng: number | null; center_lat: number | null }>
   courseNodes: Array<{
     race_id: string; node_id: string; mark_id: string | null; node_order: number; label: string
     node_type: string; target_lng: number; target_lat: number; mark_type: string | null
@@ -78,6 +94,18 @@ interface BootstrapResponse {
     id: string; race_id: string | null; channel_key: string; priority: OperationalMessage['priority']
     body: string; sent_at: string; sender: string
   }>
+  tasks: Array<{
+    id: string; race_id: string; title: string; status: OperationalTask['status']
+    priority: OperationalTask['priority']; due_at: string; owner: string
+  }>
+  leadingPassages: Array<{
+    race_id: string; mark_id: string; lap_number: number; passed_at: string; recorded_by: string
+  }>
+  memberCount: number
+  raceCorrections: Array<{
+    race_id: string; revision: number; patch_json: string; reason: string; state_hash: string; created_at: string
+  }>
+  availableMarks: Array<{ id: string; label: string; mark_type: string }>
 }
 
 class EventApiError extends Error {}
@@ -104,6 +132,13 @@ function shortLabel(label: string): string {
     .replace('上ゲート ', '')
     .replace('マーク', '')
     .trim()
+}
+
+function formatClock(iso: string): string {
+  return new Intl.DateTimeFormat('ja-JP', {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(iso))
 }
 
 function bootstrapMarks(response: BootstrapResponse, raceId: string): CourseMark[] {
@@ -139,6 +174,7 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
     `/api/events/${encodeURIComponent(eventReference)}/bootstrap`,
     { method: 'GET', headers: {} },
   )
+  const center = response.raceAreas?.find((area) => area.center_lng != null && area.center_lat != null)
   return {
     event: {
       id: response.regatta.id,
@@ -149,29 +185,45 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
       status: response.regatta.status,
     },
     access: response.access,
-    races: response.races.map((race) => ({
-      id: race.id,
-      number: race.race_number,
-      className: race.class_name,
-      courseCode: race.course_code,
-      status: race.status,
-      warningAt: race.warning_at,
-      targetMinutes: race.target_minutes,
-      marks: bootstrapMarks(response, race.id),
-    })),
+    races: response.races.map((race) => {
+      const latest = (response.raceCorrections ?? []).find((correction) => correction.race_id === race.id)
+      let corrections: { courseCode?: string; warningAt?: string; targetMinutes?: number } = {}
+      try {
+        if (latest) corrections = JSON.parse(latest.patch_json) as typeof corrections
+      } catch { /* Invalid historical patches do not replace the finalized base record. */ }
+      return {
+        id: race.id,
+        number: race.race_number,
+        className: race.class_name,
+        courseCode: corrections.courseCode ?? race.course_code,
+        status: race.status,
+        warningAt: corrections.warningAt ?? race.warning_at,
+        targetMinutes: corrections.targetMinutes ?? race.target_minutes,
+        marks: bootstrapMarks(response, race.id),
+      }
+    }),
     boats: response.boats
-      .filter((boat) => boat.lng != null && boat.lat != null)
-      .map((boat) => ({
-        id: boat.id,
-        name: boat.name,
-        assignment: boat.call_sign ?? boat.role,
-        position: [boat.lng as number, boat.lat as number],
-        speedKnots: boat.speed_knots ?? 0,
-        courseDegrees: boat.course_degrees ?? undefined,
-        freshnessSeconds: boat.sampled_at ? Math.max(0, (Date.now() - Date.parse(boat.sampled_at)) / 1_000) : 9_999,
-        isSelf: response.access.assignment === boat.call_sign || response.access.assignment === boat.name,
-        status: boat.status === 'active' ? 'stationed' : 'offline',
-      })),
+      .filter((boat) => {
+        const isSelf = response.access.assignment === boat.call_sign || response.access.assignment === boat.name
+        return boat.lng != null && boat.lat != null || Boolean(isSelf && center)
+      })
+      .map((boat) => {
+        const isSelf = response.access.assignment === boat.call_sign || response.access.assignment === boat.name
+        const hasPosition = boat.lng != null && boat.lat != null
+        return {
+          id: boat.id,
+          name: boat.name,
+          assignment: isSelf ? `${boat.call_sign ?? boat.name}（自分）` : boat.call_sign ?? boat.role,
+          position: hasPosition
+            ? [boat.lng as number, boat.lat as number]
+            : [center?.center_lng as number, center?.center_lat as number],
+          speedKnots: boat.speed_knots ?? 0,
+          courseDegrees: boat.course_degrees ?? undefined,
+          freshnessSeconds: boat.sampled_at ? Math.max(0, (Date.now() - Date.parse(boat.sampled_at)) / 1_000) : 9_999,
+          isSelf,
+          status: hasPosition && boat.status === 'active' ? 'stationed' : 'offline',
+        }
+      }),
     messages: response.messages.map((message) => ({
       id: message.id,
       sender: message.sender,
@@ -180,6 +232,20 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
       sentAt: message.sent_at,
       priority: message.priority,
     })),
+    tasks: (response.tasks ?? []).map((task) => ({
+      id: task.id,
+      raceId: task.race_id,
+      title: task.title,
+      owner: task.owner,
+      status: task.status,
+      dueLabel: `${formatClock(task.due_at)}まで`,
+      priority: task.priority,
+    })),
+    leadingPassages: Object.fromEntries((response.leadingPassages ?? []).map((passage) => [
+      `${passage.race_id}:${passage.mark_id}`,
+      passage.passed_at,
+    ])),
+    memberCount: response.memberCount ?? 0,
     resources: {
       boats: response.boats.map((boat) => ({
         id: boat.id,
@@ -187,9 +253,10 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
         assignment: boat.call_sign ?? boat.name,
         role: boat.role,
       })),
-      marks: [...new Map(response.courseNodes
+      marks: (response.availableMarks ?? [...new Map(response.courseNodes
         .filter((node) => node.mark_id)
-        .map((node) => [node.mark_id as string, { id: node.mark_id as string, label: node.label }])).values()],
+        .map((node) => [node.mark_id as string, { id: node.mark_id as string, label: node.label, mark_type: node.mark_type ?? 'rounding' }])).values()])
+        .map((mark) => ({ id: mark.id, label: mark.label })),
     },
     wind: response.wind ? {
       directionDegrees: response.wind.direction_degrees,
@@ -207,4 +274,49 @@ export async function listEvents(): Promise<EventSummary[]> {
 
 export async function createEvent(input: CreateEventInput): Promise<{ event: EventBootstrap['event']; url: string }> {
   return apiJson('/api/events', { method: 'POST', body: JSON.stringify(input) })
+}
+
+export async function createPostFinalizationRevision(
+  eventSlug: string,
+  raceId: string,
+  reason: string,
+  corrections: { courseCode?: string; targetMinutes?: number; warningAt?: string; note?: string },
+): Promise<{ revision: number; createdAt: string; stateHash: string; corrections: typeof corrections; reason: string }> {
+  return apiJson(`/api/events/${encodeURIComponent(eventSlug)}/races/${encodeURIComponent(raceId)}/post-finalization-revisions`, {
+    method: 'POST',
+    body: JSON.stringify({ reason, corrections }),
+  })
+}
+
+export async function saveCourseRevision(
+  eventSlug: string,
+  raceId: string,
+  input: {
+    courseCode: string
+    windDirection: number
+    windSpeed: number
+    targetLengthMetres: number
+    lowerGate: boolean
+    upperGate: boolean
+    nodes: Array<{ markId: string; label: string; nodeType: string; rounding?: string; target: readonly [number, number] }>
+  },
+): Promise<{ revisionId: string; revision: number; createdAt: string }> {
+  return apiJson(`/api/events/${encodeURIComponent(eventSlug)}/races/${encodeURIComponent(raceId)}/course-revisions`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+}
+
+export async function loadRetentionPolicy(eventSlug: string): Promise<RetentionPolicy> {
+  return (await apiJson<{ policy: RetentionPolicy }>(
+    `/api/events/${encodeURIComponent(eventSlug)}/settings/retention`,
+    { method: 'GET', headers: {} },
+  )).policy
+}
+
+export async function saveRetentionPolicy(eventSlug: string, policy: RetentionPolicy): Promise<RetentionPolicy> {
+  return (await apiJson<{ policy: RetentionPolicy }>(
+    `/api/events/${encodeURIComponent(eventSlug)}/settings/retention`,
+    { method: 'PATCH', body: JSON.stringify({ policy }) },
+  )).policy
 }

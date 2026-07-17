@@ -21,7 +21,7 @@ interface MapViewProps {
   wind: WindObservation
   selectedMarkId?: string
   onSelectMark: (markId?: string) => void
-  onUseCurrentLocation: (position: LngLat) => void
+  onUseCurrentLocation: (position: LngLat, motion: { speedKnots?: number; courseDegrees?: number; accuracyMetres?: number }) => void
   onRecordDrop: (markId: string) => void
   onRecordLeadingPassage: (markId: string) => void
   leadingPassages: Readonly<Record<string, string>>
@@ -128,8 +128,11 @@ export function MapView({
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const markerRefs = useRef<maplibregl.Marker[]>([])
+  const watchRef = useRef<number | undefined>(undefined)
+  const firstTrackingFix = useRef(true)
   const [mapReady, setMapReady] = useState(false)
   const [locationError, setLocationError] = useState<string>()
+  const [tracking, setTracking] = useState(false)
   const features = useMemo(() => buildCourseFeatures(marks), [marks])
   const initialFeaturesRef = useRef(features)
   const selectedMark = marks.find((mark) => mark.id === selectedMarkId)
@@ -245,6 +248,10 @@ export function MapView({
     mapRef.current.flyTo({ center: [...(selectedMark.actual ?? selectedMark.target)], zoom: 15.3 })
   }, [selectedMark])
 
+  useEffect(() => () => {
+    if (watchRef.current != null) navigator.geolocation.clearWatch(watchRef.current)
+  }, [])
+
   const fitCourse = () => {
     const map = mapRef.current
     if (!map || marks.length === 0) return
@@ -262,16 +269,31 @@ export function MapView({
       setLocationError('この端末では位置情報を利用できません')
       return
     }
-    navigator.geolocation.getCurrentPosition(
+    if (watchRef.current != null) {
+      navigator.geolocation.clearWatch(watchRef.current)
+      watchRef.current = undefined
+      setTracking(false)
+      return
+    }
+    firstTrackingFix.current = true
+    watchRef.current = navigator.geolocation.watchPosition(
       (position) => {
         const next: LngLat = [position.coords.longitude, position.coords.latitude]
         setLocationError(undefined)
-        onUseCurrentLocation(next)
-        mapRef.current?.flyTo({ center: [...next], zoom: 15.5 })
+        onUseCurrentLocation(next, {
+          speedKnots: position.coords.speed == null ? undefined : position.coords.speed * 1.943844,
+          courseDegrees: position.coords.heading == null || (position.coords.speed ?? 0) < 0.5 ? undefined : position.coords.heading,
+          accuracyMetres: position.coords.accuracy,
+        })
+        if (firstTrackingFix.current) {
+          firstTrackingFix.current = false
+          mapRef.current?.flyTo({ center: [...next], zoom: 15.5 })
+        }
       },
       () => setLocationError('位置情報を取得できません。端末の許可を確認してください'),
       { enableHighAccuracy: true, maximumAge: 5_000, timeout: 12_000 },
     )
+    setTracking(true)
   }
 
   return (
@@ -294,9 +316,9 @@ export function MapView({
           <Crosshair size={18} />
           <span>全体</span>
         </button>
-        <button type="button" className="map-action map-action--primary" onClick={locate}>
+        <button type="button" className={`map-action map-action--primary ${tracking ? 'is-tracking' : ''}`} onClick={locate}>
           <LocateFixed size={18} />
-          <span>現在地</span>
+          <span>{tracking ? '共有停止' : '位置共有'}</span>
         </button>
       </div>
 

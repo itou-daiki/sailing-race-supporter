@@ -47,6 +47,7 @@ export function useEventRoom({ eventId, memberId, enabled = true, onEvent }: Use
   const [status, setStatus] = useState<RealtimeStatus>(enabled ? 'connecting' : 'offline')
   const [pendingCount, setPendingCount] = useState(0)
   const [lastSequence, setLastSequence] = useState(0)
+  const [serverOffsetMs, setServerOffsetMs] = useState(0)
   const socketRef = useRef<WebSocket | undefined>(undefined)
   const eventHandlerRef = useRef(onEvent)
 
@@ -105,7 +106,12 @@ export function useEventRoom({ eventId, memberId, enabled = true, onEvent }: Use
       socket.addEventListener('message', (message) => {
         if (typeof message.data !== 'string') return
         try {
-          const envelope = JSON.parse(message.data) as Partial<RoomEnvelope> & { sequence?: number }
+          const envelope = JSON.parse(message.data) as Partial<RoomEnvelope> & { sequence?: number; serverTime?: string }
+          const serverTime = envelope.type === 'event' ? envelope.event?.serverTime : envelope.serverTime
+          if (serverTime) {
+            const measuredOffset = Date.parse(serverTime) - Date.now()
+            if (Number.isFinite(measuredOffset)) setServerOffsetMs((current) => current === 0 ? measuredOffset : current * 0.75 + measuredOffset * 0.25)
+          }
           if (envelope.type === 'event' && envelope.event) {
             setLastSequence(envelope.event.sequence)
             void removeQueuedOperation(envelope.event.id).then(refreshPendingCount)
@@ -160,5 +166,5 @@ export function useEventRoom({ eventId, memberId, enabled = true, onEvent }: Use
     return operation.id
   }, [eventId, refreshPendingCount, transmit])
 
-  return { status: enabled ? status : 'offline' as RealtimeStatus, pendingCount, lastSequence, send }
+  return { status: enabled ? status : 'offline' as RealtimeStatus, pendingCount, lastSequence, serverOffsetMs, send }
 }

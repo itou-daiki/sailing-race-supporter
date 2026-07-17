@@ -60,6 +60,7 @@ export type BoardDetail = 'overview' | 'standard' | 'detail'
 
 export interface OperationalTask {
   id: string
+  raceId?: string
   title: string
   owner: string
   status: 'blocked' | 'waiting' | 'doing' | 'done'

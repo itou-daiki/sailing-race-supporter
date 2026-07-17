@@ -42,11 +42,13 @@ interface OperationsBoardProps {
   locked: boolean
   socketStatus: 'connecting' | 'live' | 'offline'
   pendingCount: number
+  memberCount: number
   onScaleChange: (scale: number) => void
   onDetailChange: (detail: BoardDetail) => void
   onSelectMark: (markId: string) => void
   onAcknowledgeMessage: (messageId: string) => void
   onOpenMessages: () => void
+  onTaskStatusChange: (taskId: string) => void
 }
 
 const taskStatusLabel: Record<OperationalTask['status'], string> = {
@@ -75,16 +77,20 @@ export function OperationsBoard({
   locked,
   socketStatus,
   pendingCount,
+  memberCount,
   onScaleChange,
   onDetailChange,
   onSelectMark,
   onAcknowledgeMessage,
   onOpenMessages,
+  onTaskStatusChange,
 }: OperationsBoardProps) {
   const confirmedMarks = marks.filter((mark) => mark.status === 'confirmed').length
   const liveBoats = boats.filter((boat) => boat.status !== 'offline').length
   const blockers = tasks.filter((task) => task.status === 'blocked')
-  const completion = Math.round((tasks.filter((task) => task.status === 'done').length / tasks.length) * 100)
+  const completion = tasks.length
+    ? Math.round((tasks.filter((task) => task.status === 'done').length / tasks.length) * 100)
+    : 0
 
   const setScale = (next: number) => onScaleChange(Math.min(200, Math.max(75, next)))
 
@@ -181,7 +187,12 @@ export function OperationsBoard({
               <button
                 type="button"
                 className={`task-row task-row--${task.status}`}
-                onClick={() => task.markId && onSelectMark(task.markId)}
+                onClick={() => {
+                  if (locked) return
+                  onTaskStatusChange(task.id)
+                  if (task.markId) onSelectMark(task.markId)
+                }}
+                disabled={locked}
                 key={task.id}
               >
                 <span className="task-status-icon">
@@ -265,7 +276,7 @@ export function OperationsBoard({
       </div>
 
       <footer className="board-footer">
-        <span><Users size={14} /> 18人参加中</span>
+        <span><Users size={14} /> {memberCount}人参加中</span>
         <span><RadioTower size={14} /> {socketStatus === 'live' ? '同期済み' : `端末保存中${pendingCount ? `・未同期${pendingCount}` : ''}`}</span>
       </footer>
     </section>

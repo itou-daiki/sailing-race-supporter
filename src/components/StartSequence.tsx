@@ -12,8 +12,12 @@ import { useEffect, useRef, useState } from 'react'
 interface StartSequenceProps {
   warningAt: string
   postponed: boolean
+  serverOffsetMs: number
+  canControlSignals: boolean
+  preparatoryFlag: string
   onPostpone: () => void
   onResume: () => void
+  onSignalExecuted: (signal: { action: string; label: string; flag: string; sound: string; executedAt: string }) => void
 }
 
 interface SignalStage {
@@ -54,15 +58,28 @@ function playSignal(long: boolean) {
   oscillator.addEventListener('ended', () => void context.close())
 }
 
-export function StartSequence({ warningAt, postponed, onPostpone, onResume }: StartSequenceProps) {
+export function StartSequence({
+  warningAt,
+  postponed,
+  serverOffsetMs,
+  canControlSignals,
+  preparatoryFlag,
+  onPostpone,
+  onResume,
+  onSignalExecuted,
+}: StartSequenceProps) {
   const [now, setNow] = useState(() => new Date(warningAt).getTime())
   const [audioArmed, setAudioArmed] = useState(false)
   const playedRef = useRef(new Set<number>())
 
   useEffect(() => {
-    const interval = window.setInterval(() => setNow(Date.now()), 250)
+    const interval = window.setInterval(() => setNow(Date.now() + serverOffsetMs), 250)
     return () => window.clearInterval(interval)
-  }, [])
+  }, [serverOffsetMs])
+
+  useEffect(() => {
+    playedRef.current.clear()
+  }, [warningAt])
 
   const startAt = new Date(warningAt).getTime() + 300_000
   const remainingSeconds = Math.ceil((startAt - now) / 1_000)
@@ -77,7 +94,14 @@ export function StartSequence({ warningAt, postponed, onPostpone, onResume }: St
     if (!stage || playedRef.current.has(stage.offsetSeconds)) return
     playedRef.current.add(stage.offsetSeconds)
     playSignal(stage.sound === '長音1回')
-  }, [audioArmed, postponed, remainingSeconds])
+    onSignalExecuted({
+      action: stage.offsetSeconds === 300 ? 'warning' : stage.offsetSeconds === 240 ? 'preparatory' : stage.offsetSeconds === 60 ? 'one-minute' : 'start',
+      label: stage.label,
+      flag: stage.offsetSeconds === 240 ? preparatoryFlag : stage.flag,
+      sound: stage.sound,
+      executedAt: new Date(Date.now() + serverOffsetMs).toISOString(),
+    })
+  }, [audioArmed, onSignalExecuted, postponed, preparatoryFlag, remainingSeconds, serverOffsetMs])
 
   const toggleAudio = () => {
     if (!audioArmed) playSignal(false)
@@ -93,7 +117,7 @@ export function StartSequence({ warningAt, postponed, onPostpone, onResume }: St
       <div className="start-sequence__signal">
         {postponed ? <CirclePause size={19} /> : <Flag size={19} />}
         <div>
-          <strong>{postponed ? 'シグナルボートの再設定待ち' : activeStage.flag}</strong>
+          <strong>{postponed ? 'シグナルボートの再設定待ち' : activeStage.offsetSeconds === 240 ? preparatoryFlag : activeStage.flag}</strong>
           <small>{postponed ? '未実行音は取り消されています' : `${activeStage.sound}・端末時刻同期済み`}</small>
         </div>
       </div>
@@ -102,17 +126,18 @@ export function StartSequence({ warningAt, postponed, onPostpone, onResume }: St
           type="button"
           className={`audio-button ${audioArmed ? 'is-armed' : ''}`}
           onClick={toggleAudio}
+          disabled={!canControlSignals}
           aria-pressed={audioArmed}
         >
           {audioArmed ? <Volume2 size={18} /> : <VolumeX size={18} />}
-          <span>{audioArmed ? '公式音響ON' : '音響を準備'}</span>
+          <span>{!canControlSignals ? '参考端末' : audioArmed ? '公式音響ON' : '音響を準備'}</span>
         </button>
         {postponed ? (
-          <button type="button" className="resume-button" onClick={onResume}>
+          <button type="button" className="resume-button" onClick={onResume} disabled={!canControlSignals}>
             <RotateCcw size={18} /><span>予告を再設定</span>
           </button>
         ) : (
-          <button type="button" className="postpone-button" onClick={onPostpone}>
+          <button type="button" className="postpone-button" onClick={onPostpone} disabled={!canControlSignals}>
             {audioArmed ? <BellOff size={18} /> : <Bell size={18} />}<span>延期</span>
           </button>
         )}

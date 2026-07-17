@@ -2,11 +2,15 @@ import { DurableObject } from 'cloudflare:workers'
 import { handleAuthRequest } from './auth.js'
 import { can, eventAccess, requirePermission, type EventAccess } from './authorization.js'
 import { appendAuditEvent, finalizeRace } from './audit.js'
+import { handleBackupRequest } from './backups.js'
+import { handleCourseRequest } from './courses.js'
 import { handleEventCollectionRequest } from './events.js'
 import { json } from './http.js'
 import { handleInviteRequest } from './invites.js'
 import { authorizeCommitteeBoat, persistRealtimeOperation } from './operations.js'
+import { handleRevisionRequest } from './revisions.js'
 import { requireSession } from './security.js'
+import { handleSettingsRequest } from './settings.js'
 
 export interface AppEnv {
   ASSETS: Fetcher
@@ -379,6 +383,10 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
       'SELECT id, race_number, class_name, course_code, status, warning_at, target_minutes FROM races WHERE regatta_id = ? ORDER BY race_order',
     ).bind(regatta.id).all()
 
+    const raceAreas = await env.DB.prepare(
+      'SELECT id, name, center_lng, center_lat FROM race_areas WHERE regatta_id = ? ORDER BY name',
+    ).bind(regatta.id).all()
+
     const courseNodes = await env.DB.prepare(
       `SELECT
          cr.race_id, cr.revision, cn.id AS node_id, cn.mark_id, cn.node_order,
@@ -431,6 +439,48 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
        ORDER BY msg.sent_at DESC LIMIT 100`,
     ).bind(regatta.id).all()
 
+    const tasks = await env.DB.prepare(
+      `SELECT task.id, task.race_id, task.title, task.status, task.priority, task.due_at,
+              COALESCE(member.display_name, boat.name, '未割当') AS owner
+       FROM operational_tasks task
+       JOIN races race ON race.id = task.race_id
+       LEFT JOIN event_members member ON member.id = task.assignee_member_id
+       LEFT JOIN committee_boats boat ON boat.id = task.assignee_boat_id
+       WHERE race.regatta_id = ?
+       ORDER BY race.race_order, task.priority, task.title`,
+    ).bind(regatta.id).all()
+
+    const leadingPassages = await env.DB.prepare(
+      `SELECT passage.race_id, node.mark_id, passage.lap_number, passage.passed_at,
+              member.display_name AS recorded_by
+       FROM leading_passage_events passage
+       JOIN races race ON race.id = passage.race_id
+       JOIN course_nodes node ON node.id = passage.course_node_id
+       JOIN event_members member ON member.id = passage.recorded_by
+       WHERE race.regatta_id = ?
+       ORDER BY passage.passed_at`,
+    ).bind(regatta.id).all()
+
+    const memberCount = await env.DB.prepare(
+      `SELECT COUNT(*) AS count FROM event_members
+       WHERE regatta_id = ? AND status = 'active'`,
+    ).bind(regatta.id).first<{ count: number }>()
+
+    const availableMarks = await env.DB.prepare(
+      'SELECT id, label, mark_type FROM marks WHERE regatta_id = ? ORDER BY label',
+    ).bind(regatta.id).all()
+
+    const raceCorrections = await env.DB.prepare(
+      `SELECT revision.race_id, revision.revision, revision.patch_json, revision.reason,
+              revision.state_hash, revision.created_at
+       FROM post_finalization_revisions revision
+       WHERE revision.race_id IN (SELECT id FROM races WHERE regatta_id = ?)
+         AND revision.revision = (
+           SELECT MAX(latest.revision) FROM post_finalization_revisions latest
+           WHERE latest.race_id = revision.race_id
+         )`,
+    ).bind(regatta.id).all()
+
     return json({
       access: {
         memberId: access.memberId,
@@ -441,11 +491,17 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
       },
       regatta,
       races: races.results,
+      raceAreas: raceAreas.results,
       courseNodes: courseNodes.results,
       markEvents: markEvents.results,
       boats: boats.results,
       wind,
       messages: messages.results,
+      tasks: tasks.results,
+      leadingPassages: leadingPassages.results,
+      memberCount: memberCount?.count ?? 0,
+      availableMarks: availableMarks.results,
+      raceCorrections: raceCorrections.results,
     })
   } catch (error) {
     return json({
@@ -478,6 +534,18 @@ export default {
 
       const inviteResponse = await handleInviteRequest(request, env)
       if (inviteResponse) return inviteResponse
+
+      const backupResponse = await handleBackupRequest(request, env)
+      if (backupResponse) return backupResponse
+
+      const revisionResponse = await handleRevisionRequest(request, env)
+      if (revisionResponse) return revisionResponse
+
+      const courseResponse = await handleCourseRequest(request, env)
+      if (courseResponse) return courseResponse
+
+      const settingsResponse = await handleSettingsRequest(request, env)
+      if (settingsResponse) return settingsResponse
 
       const roomMatch = url.pathname.match(/^\/api\/events\/([^/]+)\/room(?:\/snapshot)?$/)
       if (roomMatch) {
