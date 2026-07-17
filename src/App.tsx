@@ -13,7 +13,7 @@ import {
   SlidersHorizontal,
   X,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { recommendedCourseLength } from './course'
 import {
   CLASS_PROFILES,
@@ -32,8 +32,8 @@ import {
 import { MapView } from './components/MapView'
 import { OperationsBoard } from './components/OperationsBoard'
 import { StartSequence } from './components/StartSequence'
-
-type SocketStatus = 'connecting' | 'live' | 'offline'
+import { saveEventSnapshot } from './offlineStore'
+import { useEventRoom, type SequencedOperation } from './realtime'
 
 const DETAIL_KEY = 'srs-board-detail'
 const SCALE_KEY = 'srs-board-scale'
@@ -44,36 +44,18 @@ function storedNumber(key: string, fallback: number): number {
   return Number.isFinite(value) && value > 0 ? value : fallback
 }
 
-function useEventRoom(eventId: string) {
-  const [status, setStatus] = useState<SocketStatus>('connecting')
+function eventSlugFromLocation(): string {
+  const match = window.location.pathname.match(/^\/e\/([^/]+)/)
+  return match ? decodeURIComponent(match[1]) : 'enoshima-summer-regatta'
+}
 
-  useEffect(() => {
-    let socket: WebSocket | undefined
-    let reconnectTimer: number | undefined
-    let cancelled = false
-
-    const connect = () => {
-      if (cancelled) return
-      setStatus('connecting')
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      socket = new WebSocket(`${protocol}//${window.location.host}/api/events/${eventId}/room`)
-      socket.addEventListener('open', () => setStatus('live'))
-      socket.addEventListener('close', () => {
-        setStatus('offline')
-        if (!cancelled) reconnectTimer = window.setTimeout(connect, 5_000)
-      })
-      socket.addEventListener('error', () => setStatus('offline'))
-    }
-
-    connect()
-    return () => {
-      cancelled = true
-      if (reconnectTimer) window.clearTimeout(reconnectTimer)
-      socket?.close()
-    }
-  }, [eventId])
-
-  return status
+function localMemberId(): string {
+  const key = 'srs-local-member-id'
+  const existing = window.localStorage.getItem(key)
+  if (existing) return existing
+  const created = crypto.randomUUID()
+  window.localStorage.setItem(key, created)
+  return created
 }
 
 function formatClock(iso: string): string {
@@ -85,6 +67,8 @@ function formatClock(iso: string): string {
 }
 
 export default function App() {
+  const [eventId] = useState(eventSlugFromLocation)
+  const [memberId] = useState(localMemberId)
   const [activeRaceId, setActiveRaceId] = useState(DEMO_RACES[0].id)
   const [races, setRaces] = useState<readonly RaceDefinition[]>(DEMO_RACES)
   const [boats, setBoats] = useState<readonly CommitteeBoat[]>(DEMO_BOATS)
@@ -102,7 +86,73 @@ export default function App() {
   const [mapSplit, setMapSplit] = useState(() => storedNumber(SPLIT_KEY, 58))
   const [selectedClass, setSelectedClass] = useState<SailingClass>('470')
   const [windSpeed, setWindSpeed] = useState(INITIAL_WIND.speedKnots)
+  const [leadingPassages, setLeadingPassages] = useState<Record<string, string>>({})
   const draggingSplit = useRef(false)
+
+  const applyRemoteEvent = useCallback((event: SequencedOperation) => {
+    if (event.type === 'position') {
+      const payload = event.payload as { committeeBoatId?: string; position?: LngLat; speedKnots?: number; courseDegrees?: number }
+      if (!payload.committeeBoatId || !payload.position) return
+      setBoats((current) => current.map((boat) => (
+        boat.id === payload.committeeBoatId
+          ? {
+              ...boat,
+              position: payload.position as LngLat,
+              speedKnots: payload.speedKnots ?? boat.speedKnots,
+              courseDegrees: payload.courseDegrees ?? boat.courseDegrees,
+              freshnessSeconds: 0,
+            }
+          : boat
+      )))
+    }
+
+    if (event.type === 'mark') {
+      const payload = event.payload as { markId?: string; actual?: LngLat; status?: 'deployed' | 'confirmed' }
+      if (!event.raceId || !payload.markId || !payload.actual) return
+      setRaces((current) => current.map((race) => (
+        race.id === event.raceId
+          ? {
+              ...race,
+              marks: race.marks.map((mark) => (
+                mark.id === payload.markId
+                  ? { ...mark, actual: payload.actual, status: payload.status ?? 'deployed' }
+                  : mark
+              )),
+            }
+          : race
+      )))
+    }
+
+    if (event.type === 'leading-passage') {
+      const payload = event.payload as { markId?: string; passedAt?: string }
+      if (!event.raceId || !payload.markId || !payload.passedAt) return
+      setLeadingPassages((current) => ({
+        ...current,
+        [`${event.raceId}:${payload.markId}`]: payload.passedAt as string,
+      }))
+    }
+
+    if (event.type === 'finalize' && event.raceId) {
+      setRaces((current) => current.map((race) => (
+        race.id === event.raceId ? { ...race, status: 'finalized' as const } : race
+      )))
+    }
+
+    if (event.type === 'signal') {
+      const payload = event.payload as { action?: 'postpone' | 'resume'; warningAt?: string }
+      if (payload.action === 'postpone') setPostponed(true)
+      if (payload.action === 'resume') {
+        setPostponed(false)
+        if (event.raceId && payload.warningAt) {
+          setRaces((current) => current.map((race) => (
+            race.id === event.raceId ? { ...race, warningAt: payload.warningAt as string } : race
+          )))
+        }
+      }
+    }
+  }, [])
+
+  const realtime = useEventRoom({ eventId, memberId, onEvent: applyRemoteEvent })
 
   const activeRace = races.find((race) => race.id === activeRaceId) ?? races[0]
   const marks = useMemo(() => {
@@ -114,13 +164,24 @@ export default function App() {
       status: 'planned' as const,
     }))
   }, [activeRace, races])
-  const socketStatus = useEventRoom('enoshima-summer-regatta')
   const recommendation = recommendedCourseLength(selectedClass, windSpeed)
   const locked = activeRace.status === 'finalized'
 
   useEffect(() => window.localStorage.setItem(SCALE_KEY, String(boardScale)), [boardScale])
   useEffect(() => window.localStorage.setItem(DETAIL_KEY, boardDetail), [boardDetail])
   useEffect(() => window.localStorage.setItem(SPLIT_KEY, String(mapSplit)), [mapSplit])
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      void saveEventSnapshot({
+        eventId,
+        sequence: realtime.lastSequence,
+        savedAt: new Date().toISOString(),
+        value: { races, boats, messages, leadingPassages },
+      })
+    }, 250)
+    return () => window.clearTimeout(timeout)
+  }, [boats, eventId, leadingPassages, messages, races, realtime.lastSequence])
 
   useEffect(() => {
     const move = (event: PointerEvent) => {
@@ -138,21 +199,67 @@ export default function App() {
   }, [])
 
   const updateSelfLocation = (position: LngLat) => {
+    const selfBoat = boats.find((boat) => boat.isSelf)
     setBoats((current) => current.map((boat) => (
       boat.isSelf ? { ...boat, position, freshnessSeconds: 0 } : boat
     )))
+    if (selfBoat) {
+      void realtime.send('position', {
+        committeeBoatId: selfBoat.id,
+        position,
+        speedKnots: selfBoat.speedKnots,
+        courseDegrees: selfBoat.courseDegrees,
+      }, activeRace.id)
+    }
   }
 
   const acknowledgeMessage = (messageId: string) => {
     setMessages((current) => current.map((message) => (
       message.id === messageId ? { ...message, acknowledgement: 'acknowledged' as const } : message
     )))
+    void realtime.send('message', { action: 'acknowledge', messageId }, activeRace.id)
+  }
+
+  const recordMarkDrop = (markId: string) => {
+    if (locked) return
+    const selfBoat = boats.find((boat) => boat.isSelf)
+    if (!selfBoat) return
+    setRaces((current) => current.map((race) => {
+      if (race.id !== activeRace.id) return race
+      const sourceMarks = race.marks.length ? race.marks : marks
+      return {
+        ...race,
+        marks: sourceMarks.map((mark) => (
+          mark.id === markId
+            ? { ...mark, actual: selfBoat.position, status: 'deployed' as const }
+            : mark
+        )),
+      }
+    }))
+    void realtime.send('mark', {
+      markId,
+      actual: selfBoat.position,
+      status: 'deployed',
+      recordedAt: new Date().toISOString(),
+      committeeBoatId: selfBoat.id,
+    }, activeRace.id)
+  }
+
+  const recordLeadingPassage = (markId: string) => {
+    if (locked) return
+    const passedAt = new Date().toISOString()
+    setLeadingPassages((current) => ({ ...current, [`${activeRace.id}:${markId}`]: passedAt }))
+    void realtime.send('leading-passage', { markId, passedAt, lapNumber: 1 }, activeRace.id)
   }
 
   const finalizeRace = () => {
     setRaces((current) => current.map((race) => (
       race.id === activeRace.id ? { ...race, status: 'finalized' as const } : race
     )))
+    void realtime.send('finalize', {
+      finalizedAt: new Date().toISOString(),
+      reason: '大会管理者による確定',
+    }, activeRace.id)
     setConfirmFinalize(false)
   }
 
@@ -162,6 +269,12 @@ export default function App() {
       race.id === activeRace.id ? { ...race, warningAt: nextWarningAt } : race
     )))
     setPostponed(false)
+    void realtime.send('signal', { action: 'resume', warningAt: nextWarningAt }, activeRace.id)
+  }
+
+  const postponeRace = () => {
+    setPostponed(true)
+    void realtime.send('signal', { action: 'postpone', executedAt: new Date().toISOString() }, activeRace.id)
   }
 
   return (
@@ -200,9 +313,9 @@ export default function App() {
         </nav>
 
         <div className="header-actions">
-          <span className={`connection-pill status-${socketStatus}`}>
-            {socketStatus === 'live' ? <RadioTower size={14} /> : <CloudOff size={14} />}
-            {socketStatus === 'live' ? '同期中' : socketStatus === 'connecting' ? '接続中' : 'オフライン'}
+          <span className={`connection-pill status-${realtime.status}`}>
+            {realtime.status === 'live' ? <RadioTower size={14} /> : <CloudOff size={14} />}
+            {realtime.status === 'live' ? '同期中' : realtime.status === 'connecting' ? '接続中' : `オフライン${realtime.pendingCount ? `・未同期${realtime.pendingCount}` : ''}`}
           </span>
           <button type="button" className="header-icon" onClick={() => setMessagesOpen(true)} aria-label="メッセージ">
             <MessageSquareText size={19} /><i>{messages.filter((message) => message.acknowledgement === 'pending').length}</i>
@@ -218,7 +331,7 @@ export default function App() {
       <StartSequence
         warningAt={activeRace.warningAt}
         postponed={postponed}
-        onPostpone={() => setPostponed(true)}
+        onPostpone={postponeRace}
         onResume={resumeAfterPostponement}
       />
 
@@ -234,6 +347,11 @@ export default function App() {
             selectedMarkId={selectedMarkId}
             onSelectMark={setSelectedMarkId}
             onUseCurrentLocation={updateSelfLocation}
+            onRecordDrop={recordMarkDrop}
+            onRecordLeadingPassage={recordLeadingPassage}
+            leadingPassages={leadingPassages}
+            raceId={activeRace.id}
+            locked={locked}
           />
           <div className="course-advisor glass-panel">
             <div className="course-advisor__title">
@@ -279,7 +397,8 @@ export default function App() {
           detail={boardDetail}
           postponed={postponed}
           locked={locked}
-          socketStatus={socketStatus}
+          socketStatus={realtime.status}
+          pendingCount={realtime.pendingCount}
           onScaleChange={setBoardScale}
           onDetailChange={setBoardDetail}
           onSelectMark={setSelectedMarkId}

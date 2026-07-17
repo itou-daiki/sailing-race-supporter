@@ -623,7 +623,8 @@ select:focus-visible {
   left: 14px;
   bottom: 154px;
   z-index: 6;
-  min-width: 210px;
+  min-width: 390px;
+  max-width: calc(100% - 28px);
   display: flex;
   align-items: center;
   gap: 9px;
@@ -641,8 +642,9 @@ select:focus-visible {
   border-radius: 9px;
 }
 
-.selected-mark > div:last-child {
+.selected-mark__body {
   display: grid;
+  min-width: 130px;
 }
 
 .selected-mark strong {
@@ -652,6 +654,44 @@ select:focus-visible {
 .selected-mark small {
   color: var(--muted);
   font-size: 9px;
+}
+
+.selected-mark .passage-recorded {
+  margin-top: 2px;
+  color: var(--success);
+  font-weight: 800;
+}
+
+.selected-mark__actions {
+  display: flex;
+  gap: 5px;
+  margin-left: auto;
+}
+
+.selected-mark__actions button {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  color: #fff;
+  background: var(--dodger-strong);
+  border: 0;
+  border-radius: 7px;
+  font-size: 8px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.selected-mark__actions button:last-child {
+  color: var(--navy);
+  background: #e5f2fa;
+  border: 1px solid #c5dce9;
+}
+
+.selected-mark__actions button:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
 }
 
 .map-error {
@@ -2066,6 +2106,22 @@ select:focus-visible {
   .map-actions,
   .map-legend {
     top: 61px;
+  }
+
+  .selected-mark {
+    min-width: 0;
+    right: 9px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .selected-mark__actions {
+    width: 100%;
+  }
+
+  .selected-mark__actions button {
+    flex: 1;
+    justify-content: center;
   }
 
   .segmented-control button,

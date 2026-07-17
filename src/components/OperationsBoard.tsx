@@ -41,6 +41,7 @@ interface OperationsBoardProps {
   postponed: boolean
   locked: boolean
   socketStatus: 'connecting' | 'live' | 'offline'
+  pendingCount: number
   onScaleChange: (scale: number) => void
   onDetailChange: (detail: BoardDetail) => void
   onSelectMark: (markId: string) => void
@@ -73,6 +74,7 @@ export function OperationsBoard({
   postponed,
   locked,
   socketStatus,
+  pendingCount,
   onScaleChange,
   onDetailChange,
   onSelectMark,
@@ -264,7 +266,7 @@ export function OperationsBoard({
 
       <footer className="board-footer">
         <span><Users size={14} /> 18人参加中</span>
-        <span><RadioTower size={14} /> {socketStatus === 'live' ? '同期済み' : '端末保存中'}</span>
+        <span><RadioTower size={14} /> {socketStatus === 'live' ? '同期済み' : `端末保存中${pendingCount ? `・未同期${pendingCount}` : ''}`}</span>
       </footer>
     </section>
   )

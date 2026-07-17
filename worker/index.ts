@@ -14,7 +14,7 @@ interface ClientAttachment {
 
 interface RoomMessage {
   id: string
-  type: 'presence' | 'position' | 'wind' | 'task' | 'message' | 'signal'
+  type: 'presence' | 'position' | 'wind' | 'mark' | 'leading-passage' | 'task' | 'message' | 'signal' | 'finalize'
   raceId?: string
   memberId?: string
   payload: unknown
@@ -36,9 +36,12 @@ const ROOM_MESSAGE_TYPES = new Set<RoomMessage['type']>([
   'presence',
   'position',
   'wind',
+  'mark',
+  'leading-passage',
   'task',
   'message',
   'signal',
+  'finalize',
 ])
 
 function json(data: unknown, init: ResponseInit = {}): Response {

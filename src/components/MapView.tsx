@@ -1,9 +1,11 @@
 import {
+  CircleCheckBig,
   Crosshair,
   LocateFixed,
   MapPin,
   Navigation,
   Radio,
+  Timer,
   Waves,
   Wind,
 } from 'lucide-react'
@@ -20,6 +22,11 @@ interface MapViewProps {
   selectedMarkId?: string
   onSelectMark: (markId?: string) => void
   onUseCurrentLocation: (position: LngLat) => void
+  onRecordDrop: (markId: string) => void
+  onRecordLeadingPassage: (markId: string) => void
+  leadingPassages: Readonly<Record<string, string>>
+  raceId: string
+  locked: boolean
 }
 
 const MAP_STYLE: maplibregl.StyleSpecification = {
@@ -112,6 +119,11 @@ export function MapView({
   selectedMarkId,
   onSelectMark,
   onUseCurrentLocation,
+  onRecordDrop,
+  onRecordLeadingPassage,
+  leadingPassages,
+  raceId,
+  locked,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
@@ -122,6 +134,7 @@ export function MapView({
   const initialFeaturesRef = useRef(features)
   const selectedMark = marks.find((mark) => mark.id === selectedMarkId)
   const selfBoat = boats.find((boat) => boat.isSelf)
+  const selectedPassageAt = selectedMark ? leadingPassages[`${raceId}:${selectedMark.id}`] : undefined
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
@@ -310,13 +323,22 @@ export function MapView({
       {selectedMark && selfBoat && (
         <article className="selected-mark glass-panel">
           <div className="selected-mark__icon"><MapPin size={19} /></div>
-          <div>
+          <div className="selected-mark__body">
             <span className="eyebrow">{selectedMark.label}</span>
             <strong>{formatDistance(distanceMetres(selfBoat.position, selectedMark.actual ?? selectedMark.target))}</strong>
             <small>
               方位 {Math.round(bearingDegrees(selfBoat.position, selectedMark.actual ?? selectedMark.target))}°
               {selectedMark.actual && `・計画差 ${Math.round(distanceMetres(selectedMark.target, selectedMark.actual))}m`}
             </small>
+            {selectedPassageAt && <small className="passage-recorded">先頭通過 {new Date(selectedPassageAt).toLocaleTimeString('ja-JP')}</small>}
+          </div>
+          <div className="selected-mark__actions">
+            <button type="button" onClick={() => onRecordDrop(selectedMark.id)} disabled={locked}>
+              <CircleCheckBig size={14} /> 現在地を投下地点に記録
+            </button>
+            <button type="button" onClick={() => onRecordLeadingPassage(selectedMark.id)} disabled={locked || Boolean(selectedPassageAt)}>
+              <Timer size={14} /> {selectedPassageAt ? '先頭通過 記録済み' : '先頭通過を記録'}
+            </button>
           </div>
         </article>
       )}
