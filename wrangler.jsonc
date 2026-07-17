@@ -31,12 +31,6 @@
       "migrations_dir": "migrations"
     }
   ],
-  "r2_buckets": [
-    {
-      "binding": "FILES",
-      "bucket_name": "sailing-race-supporter"
-    }
-  ],
   "observability": {
     "enabled": true
   },

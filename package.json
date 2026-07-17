@@ -1,7 +1,7 @@
 {
   "name": "sailing-race-supporter",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,9 +10,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "npm run build && vite preview",
-    "deploy": "npm run build && wrangler deploy",
+    "deploy": "npm run deploy:worker",
+    "deploy:worker": "npm run build && node scripts/check-cloudflare-config.mjs && wrangler deploy",
     "cf-typegen": "wrangler types",
-    "db:migrate:local": "wrangler d1 migrations apply sailing-race-supporter --local"
+    "db:migrate:local": "wrangler d1 migrations apply sailing-race-supporter --local",
+    "db:migrate:remote": "node scripts/check-cloudflare-config.mjs && wrangler d1 migrations apply sailing-race-supporter --remote",
+    "cf:check": "node scripts/check-cloudflare-config.mjs && wrangler whoami"
   },
   "dependencies": {
     "@simplewebauthn/browser": "^13.3.0",

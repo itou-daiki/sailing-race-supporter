@@ -19,7 +19,6 @@ export interface AppEnv {
   ASSETS: Fetcher
   DB: D1Database
   EVENT_ROOMS: DurableObjectNamespace<EventRoom>
-  FILES: R2Bucket
 }
 
 interface ClientAttachment {
@@ -523,7 +522,7 @@ export default {
       if (url.pathname === '/api/health') {
         return json({
           service: 'Sailing Race Supporter',
-          version: '0.2.0',
+          version: '0.3.0',
           status: 'ok',
           serverTime: new Date().toISOString(),
         })
