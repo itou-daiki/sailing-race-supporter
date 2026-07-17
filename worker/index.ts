@@ -12,6 +12,7 @@ import { authorizeCommitteeBoat, persistRealtimeOperation } from './operations.j
 import { handleRevisionRequest } from './revisions.js'
 import { requireSession } from './security.js'
 import { handleSettingsRequest } from './settings.js'
+import { runDailyRetention } from './retention.js'
 
 export interface AppEnv {
   ASSETS: Fetcher
@@ -596,5 +597,8 @@ export default {
       console.error('Unhandled request error', error)
       return json({ error: 'Internal server error' }, { status: 500 })
     }
+  },
+  async scheduled(_controller, env, ctx): Promise<void> {
+    ctx.waitUntil(runDailyRetention(env))
   },
 } satisfies ExportedHandler<AppEnv>

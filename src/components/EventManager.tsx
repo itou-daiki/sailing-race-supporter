@@ -26,6 +26,7 @@ import {
   listEvents,
   loadRetentionPolicy,
   saveRetentionPolicy,
+  runRetentionNow,
   type EventResources,
   type EventSummary,
   type RetentionPolicy,
@@ -285,6 +286,20 @@ export function EventManager({
     }
   }
 
+  const runRetention = async () => {
+    setRetentionWorking(true)
+    setError(undefined)
+    try {
+      const report = await runRetentionNow(currentEventSlug)
+      const affected = Object.values(report.counts).reduce((sum, count) => sum + count, 0)
+      setBackupReport(`${report.detail}（処理 ${affected}件）`)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '保存期間処理を実行できません')
+    } finally {
+      setRetentionWorking(false)
+    }
+  }
+
   return (
     <div className="drawer-backdrop" role="presentation" onMouseDown={onClose}>
       <aside className="event-manager" aria-label="大会URLと大会作成" onMouseDown={(event) => event.stopPropagation()}>
@@ -389,7 +404,10 @@ export function EventManager({
                     <label className="event-field"><span>招待・復元秘密（日）</span><input type="number" min="1" max="36500" value={retention.authSecretsAfterEventDays} onChange={(event) => setRetention((current) => ({ ...current, authSecretsAfterEventDays: Number(event.target.value) }))} /></label>
                   </div>
                   <p>初期推奨は確定・監査5年、観測1年、位置・通常メッセージ90日、名前・担当1年、招待・復元秘密30日です。短縮前に暗号化バックアップを保存してください。</p>
-                  <button type="button" onClick={() => void saveRetention()} disabled={retentionWorking}>{retentionWorking ? <LoaderCircle className="is-spinning" size={17} /> : <Archive size={17} />}保存期間を更新</button>
+                  <div className="retention-actions">
+                    <button type="button" onClick={() => void saveRetention()} disabled={retentionWorking}>{retentionWorking ? <LoaderCircle className="is-spinning" size={17} /> : <Archive size={17} />}保存期間を更新</button>
+                    <button type="button" onClick={() => void runRetention()} disabled={retentionWorking}><Trash2 size={17} />期限到来分を今すぐ処理</button>
+                  </div>
                 </div>
               </section>
             )}

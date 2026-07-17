@@ -133,11 +133,12 @@ async function collectLogs(env: AppEnv, regattaId: string, raceId: string | null
                ORDER BY event.server_time DESC LIMIT ?`, values),
     rows(env, `SELECT message.id, message.race_id, race.race_number,
                       message.sent_at AS occurred_at, message.priority, message.body,
+                      message.body_hash, message.deleted_at,
                       member.display_name AS actor
                FROM messages message
                LEFT JOIN races race ON race.id = message.race_id
                JOIN event_members member ON member.id = message.sender_member_id
-               WHERE message.regatta_id = ? AND message.deleted_at IS NULL
+               WHERE message.regatta_id = ?
                  AND (? IS NULL OR message.race_id = ?)
                ORDER BY message.sent_at DESC LIMIT ?`, values),
     rows(env, `SELECT sample.id, sample.race_id, race.race_number, sample.sampled_at AS occurred_at,
@@ -191,7 +192,9 @@ async function collectLogs(env: AppEnv, regattaId: string, raceId: string | null
     ...messages.map((row) => ({
       id: text(row.id), raceId: nullableText(row.race_id), raceNumber: nullableText(row.race_number),
       sequence: null, occurredAt: text(row.occurred_at), category: 'message' as const,
-      title: text(row.body), actor: text(row.actor, '不明'), detail: `優先度 ${text(row.priority)}`, eventHash: null,
+      title: text(row.body), actor: text(row.actor, '不明'),
+      detail: `${row.deleted_at ? `本文削除 ${text(row.deleted_at)}・` : ''}優先度 ${text(row.priority)}${row.body_hash ? `・本文ハッシュ ${text(row.body_hash)}` : ''}`,
+      eventHash: null,
     })),
     ...positions.map((row) => ({
       id: text(row.id), raceId: nullableText(row.race_id), raceNumber: nullableText(row.race_number),

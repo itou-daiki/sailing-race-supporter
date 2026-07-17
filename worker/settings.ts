@@ -3,6 +3,7 @@ import { appendAuditEvent } from './audit.js'
 import { json, readJson } from './http.js'
 import type { AppEnv } from './index.js'
 import { assertSameOrigin, requireSession } from './security.js'
+import { runRetentionForEvent } from './retention.js'
 
 const RETENTION_KEYS = [
   'finalizedRecordsDays',
@@ -27,6 +28,13 @@ async function owner(request: Request, env: AppEnv, eventReference: string) {
 
 export async function handleSettingsRequest(request: Request, env: AppEnv): Promise<Response | null> {
   const pathname = new URL(request.url).pathname
+  const runMatch = pathname.match(/^\/api\/events\/([^/]+)\/settings\/retention\/run$/)
+  if (runMatch) {
+    if (request.method !== 'POST') return json({ error: 'Method not allowed' }, { status: 405, headers: { allow: 'POST' } })
+    assertSameOrigin(request)
+    const access = await owner(request, env, decodeURIComponent(runMatch[1]))
+    return json({ report: await runRetentionForEvent(env, access.eventId, 'manual') })
+  }
   const match = pathname.match(/^\/api\/events\/([^/]+)\/settings\/retention$/)
   if (!match) return null
   const access = await owner(request, env, decodeURIComponent(match[1]))
@@ -35,7 +43,11 @@ export async function handleSettingsRequest(request: Request, env: AppEnv): Prom
       'SELECT retention_json, updated_at FROM regatta_settings WHERE regatta_id = ? LIMIT 1',
     ).bind(access.eventId).first<{ retention_json: string; updated_at: string }>()
     if (!row) return json({ error: '保存期間設定が見つかりません' }, { status: 404 })
-    return json({ policy: JSON.parse(row.retention_json), updatedAt: row.updated_at })
+    const latestRun = await env.DB.prepare(
+      `SELECT id, trigger_type, status, counts_json, detail, started_at, completed_at
+       FROM retention_runs WHERE regatta_id = ? ORDER BY started_at DESC LIMIT 1`,
+    ).bind(access.eventId).first()
+    return json({ policy: JSON.parse(row.retention_json), updatedAt: row.updated_at, latestRun })
   }
   if (request.method === 'PATCH') {
     assertSameOrigin(request)

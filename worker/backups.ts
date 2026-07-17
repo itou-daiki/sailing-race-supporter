@@ -56,7 +56,10 @@ async function createBackup(request: Request, env: AppEnv, eventReference: strin
     messages,
     messageReceipts,
     raceFinalizations,
+    postFinalizationRevisions,
     auditEvents,
+    retentionRuns,
+    retentionTombstones,
     invites,
   ] = await Promise.all([
     all(env, 'SELECT id, slug, name, owner_user_id, starts_on, ends_on, status, default_locale, created_at, updated_at FROM regattas WHERE id = ?', access.eventId),
@@ -80,7 +83,10 @@ async function createBackup(request: Request, env: AppEnv, eventReference: strin
     all(env, 'SELECT * FROM messages WHERE regatta_id = ?', access.eventId),
     all(env, 'SELECT receipt.* FROM message_receipts receipt JOIN messages message ON message.id = receipt.message_id WHERE message.regatta_id = ?', access.eventId),
     all(env, 'SELECT finalization.* FROM race_finalizations finalization JOIN races race ON race.id = finalization.race_id WHERE race.regatta_id = ?', access.eventId),
+    all(env, 'SELECT revision.* FROM post_finalization_revisions revision JOIN races race ON race.id = revision.race_id WHERE race.regatta_id = ?', access.eventId),
     all(env, 'SELECT * FROM audit_events WHERE regatta_id = ? ORDER BY sequence', access.eventId),
+    all(env, 'SELECT * FROM retention_runs WHERE regatta_id = ? ORDER BY started_at', access.eventId),
+    all(env, 'SELECT * FROM retention_tombstones WHERE regatta_id = ? ORDER BY deleted_at', access.eventId),
     all(env, `SELECT id, regatta_id, role, assignment_scope_json, race_area_id, committee_boat_id,
                     mark_id, max_uses, use_count, expires_at, revoked_at, created_by, created_at
              FROM invites WHERE regatta_id = ?`, access.eventId),
@@ -107,7 +113,10 @@ async function createBackup(request: Request, env: AppEnv, eventReference: strin
     messages,
     messageReceipts,
     raceFinalizations,
+    postFinalizationRevisions,
     auditEvents,
+    retentionRuns,
+    retentionTombstones,
     invites,
   }
   const dataHash = await sha256Base64Url(JSON.stringify(canonical(data)))

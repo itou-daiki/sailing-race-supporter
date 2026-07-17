@@ -2731,7 +2731,8 @@ select:focus-visible {
   line-height: 1.55;
 }
 
-.retention-card > button {
+.retention-card > button,
+.retention-actions button {
   min-height: 39px;
   display: flex;
   align-items: center;
@@ -2746,8 +2747,21 @@ select:focus-visible {
   cursor: pointer;
 }
 
-.retention-card > button:disabled {
+.retention-card > button:disabled,
+.retention-actions button:disabled {
   opacity: 0.5;
+}
+
+.retention-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.retention-actions button:last-child {
+  color: #93420c;
+  background: #fff4e8;
+  border-color: #f0c492;
 }
 
 .event-form-grid {

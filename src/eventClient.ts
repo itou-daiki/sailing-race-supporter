@@ -320,3 +320,20 @@ export async function saveRetentionPolicy(eventSlug: string, policy: RetentionPo
     { method: 'PATCH', body: JSON.stringify({ policy }) },
   )).policy
 }
+
+export interface RetentionRunReport {
+  runId: string
+  eventId: string
+  status: 'completed' | 'skipped' | 'failed'
+  counts: Record<string, number>
+  detail: string
+  startedAt: string
+  completedAt: string
+}
+
+export async function runRetentionNow(eventSlug: string): Promise<RetentionRunReport> {
+  return (await apiJson<{ report: RetentionRunReport }>(
+    `/api/events/${encodeURIComponent(eventSlug)}/settings/retention/run`,
+    { method: 'POST', body: '{}' },
+  )).report
+}
