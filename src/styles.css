@@ -344,8 +344,11 @@ select:focus-visible {
 }
 
 .start-sequence__signal small {
+  overflow: hidden;
   color: #abc2d2;
   font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .start-sequence__actions {
@@ -381,6 +384,15 @@ select:focus-visible {
   color: #b7f4df;
   background: #0b5948;
   border-color: #2a8b72;
+}
+
+.audio-release-button {
+  width: 38px;
+  justify-content: center;
+  padding: 0 !important;
+  color: #ffd7d1;
+  background: #59302d;
+  border: 1px solid #8b4c45;
 }
 
 .postpone-button {
@@ -3592,7 +3604,9 @@ select:focus-visible {
   }
 
   .start-sequence__signal small {
-    display: none;
+    display: block;
+    max-width: 100%;
+    font-size: 8px;
   }
 
   .start-sequence__actions button {

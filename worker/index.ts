@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers'
 import { handleAuthRequest } from './auth.js'
+import { handleAudioDeviceRequest } from './audioDevices.js'
 import { can, eventAccess, requirePermission, type EventAccess } from './authorization.js'
 import { appendAuditEvent, finalizeRace } from './audit.js'
 import { handleBackupRequest } from './backups.js'
@@ -530,6 +531,9 @@ export default {
 
       const authResponse = await handleAuthRequest(request, env)
       if (authResponse) return authResponse
+
+      const audioDeviceResponse = await handleAudioDeviceRequest(request, env)
+      if (audioDeviceResponse) return audioDeviceResponse
 
       const eventCollectionResponse = await handleEventCollectionRequest(request, env)
       if (eventCollectionResponse) return eventCollectionResponse

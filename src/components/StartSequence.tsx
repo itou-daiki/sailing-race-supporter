@@ -8,6 +8,7 @@ import {
   VolumeX,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import type { OfficialAudioState } from '../audioDeviceClient'
 
 interface StartSequenceProps {
   warningAt: string
@@ -15,6 +16,10 @@ interface StartSequenceProps {
   serverOffsetMs: number
   canControlSignals: boolean
   preparatoryFlag: string
+  officialAudio: OfficialAudioState
+  canForceAudioTakeover: boolean
+  onClaimOfficialAudio: (force?: boolean) => Promise<void>
+  onReleaseOfficialAudio: () => Promise<void>
   onPostpone: () => void
   onResume: () => void
   onSignalExecuted: (signal: { action: string; label: string; flag: string; sound: string; executedAt: string }) => void
@@ -64,13 +69,21 @@ export function StartSequence({
   serverOffsetMs,
   canControlSignals,
   preparatoryFlag,
+  officialAudio,
+  canForceAudioTakeover,
+  onClaimOfficialAudio,
+  onReleaseOfficialAudio,
   onPostpone,
   onResume,
   onSignalExecuted,
 }: StartSequenceProps) {
   const [now, setNow] = useState(() => new Date(warningAt).getTime())
-  const [audioArmed, setAudioArmed] = useState(false)
+  const [armedRaceId, setArmedRaceId] = useState<string>()
+  const [audioTestedRaceId, setAudioTestedRaceId] = useState<string>()
+  const [audioWorking, setAudioWorking] = useState(false)
+  const [audioError, setAudioError] = useState<string>()
   const playedRef = useRef(new Set<number>())
+  const audioArmed = armedRaceId === officialAudio.raceId && officialAudio.status === 'mine'
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now() + serverOffsetMs), 250)
@@ -103,10 +116,76 @@ export function StartSequence({
     })
   }, [audioArmed, onSignalExecuted, postponed, preparatoryFlag, remainingSeconds, serverOffsetMs])
 
-  const toggleAudio = () => {
+  const toggleAudio = async () => {
+    if (!canControlSignals || audioWorking) return
+    setAudioError(undefined)
+    if (officialAudio.status === 'loading') return
+    if (officialAudio.status === 'other') {
+      if (!canForceAudioTakeover || !window.confirm(`${officialAudio.device?.deviceLabel ?? '別の端末'}から公式音響を強制的に引き継ぎますか？`)) return
+      setAudioWorking(true)
+      try {
+        playSignal(false)
+        await onClaimOfficialAudio(true)
+        setArmedRaceId(officialAudio.raceId)
+      } catch (reason) {
+        setAudioError(reason instanceof Error ? reason.message : '公式音響を引き継げません')
+      } finally {
+        setAudioWorking(false)
+      }
+      return
+    }
+    if (officialAudio.status === 'available') {
+      if (audioTestedRaceId !== officialAudio.raceId) {
+        playSignal(false)
+        setAudioTestedRaceId(officialAudio.raceId)
+        return
+      }
+      setAudioWorking(true)
+      try {
+        await onClaimOfficialAudio(false)
+        setArmedRaceId(officialAudio.raceId)
+      } catch (reason) {
+        setAudioError(reason instanceof Error ? reason.message : '公式音響端末に設定できません')
+      } finally {
+        setAudioWorking(false)
+      }
+      return
+    }
     if (!audioArmed) playSignal(false)
-    setAudioArmed((current) => !current)
+    setArmedRaceId(audioArmed ? undefined : officialAudio.raceId)
   }
+
+  const releaseAudio = async () => {
+    if (!window.confirm('このレースの公式音響端末を解除しますか？')) return
+    setAudioWorking(true)
+    setAudioError(undefined)
+    try {
+      await onReleaseOfficialAudio()
+      setArmedRaceId(undefined)
+      setAudioTestedRaceId(undefined)
+    } catch (reason) {
+      setAudioError(reason instanceof Error ? reason.message : '公式音響端末を解除できません')
+    } finally {
+      setAudioWorking(false)
+    }
+  }
+
+  const audioLabel = !canControlSignals
+    ? '参考端末'
+    : officialAudio.status === 'loading' ? '音響状態を確認中'
+    : officialAudio.status === 'other' ? canForceAudioTakeover ? '管理者が引継ぎ' : `公式: ${officialAudio.device?.deviceLabel ?? '他端末'}`
+    : officialAudio.status === 'available'
+      ? audioTestedRaceId === officialAudio.raceId ? '聞こえた・公式にする' : 'テスト音を鳴らす'
+      : audioArmed ? '公式音響ON' : '公式音響をON'
+
+  const audioStatus = audioError ?? officialAudio.error ?? (
+    officialAudio.status === 'mine'
+      ? officialAudio.networkAvailable ? 'この端末が公式音響・端末時刻同期済み' : '通信断・この端末で公式音響を継続'
+      : officialAudio.status === 'other' ? `公式音響は ${officialAudio.device?.deviceLabel ?? '別端末'}`
+      : officialAudio.status === 'available'
+        ? audioTestedRaceId === officialAudio.raceId ? 'テスト音が聞こえたら、音響ボタンをもう一度タップ' : '公式音響端末は未選出'
+        : '公式音響端末を確認中'
+  )
 
   return (
     <section className={`start-sequence ${postponed ? 'is-postponed' : ''}`} aria-label="スタートシーケンス">
@@ -118,20 +197,25 @@ export function StartSequence({
         {postponed ? <CirclePause size={19} /> : <Flag size={19} />}
         <div>
           <strong>{postponed ? 'シグナルボートの再設定待ち' : activeStage.offsetSeconds === 240 ? preparatoryFlag : activeStage.flag}</strong>
-          <small>{postponed ? '未実行音は取り消されています' : `${activeStage.sound}・端末時刻同期済み`}</small>
+          <small>{postponed ? '未実行音は取り消されています' : `${activeStage.sound}・${audioStatus}`}</small>
         </div>
       </div>
       <div className="start-sequence__actions">
         <button
           type="button"
           className={`audio-button ${audioArmed ? 'is-armed' : ''}`}
-          onClick={toggleAudio}
-          disabled={!canControlSignals}
+          onClick={() => void toggleAudio()}
+          disabled={!canControlSignals || audioWorking || (officialAudio.status === 'other' && !canForceAudioTakeover)}
           aria-pressed={audioArmed}
+          aria-label={audioLabel}
+          title={audioLabel}
         >
-          {audioArmed ? <Volume2 size={18} /> : <VolumeX size={18} />}
-          <span>{!canControlSignals ? '参考端末' : audioArmed ? '公式音響ON' : '音響を準備'}</span>
+          {audioArmed || audioTestedRaceId === officialAudio.raceId ? <Volume2 size={18} /> : <VolumeX size={18} />}
+          <span>{audioWorking ? '設定中…' : audioLabel}</span>
         </button>
+        {officialAudio.status === 'mine' && (
+          <button type="button" className="audio-release-button" onClick={() => void releaseAudio()} disabled={audioWorking} title="公式音響端末を解除" aria-label="公式音響端末を解除"><VolumeX size={17} /></button>
+        )}
         {postponed ? (
           <button type="button" className="resume-button" onClick={onResume} disabled={!canControlSignals}>
             <RotateCcw size={18} /><span>予告を再設定</span>

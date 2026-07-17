@@ -39,6 +39,7 @@ import { createPostFinalizationRevision, loadEventBootstrap, saveCourseRevision 
 import type { EventAccessSummary, EventResources } from './eventClient'
 import { saveEventSnapshot } from './offlineStore'
 import { useEventRoom, type SequencedOperation } from './realtime'
+import { useOfficialAudioDevice } from './audioDeviceClient'
 
 const DETAIL_KEY = 'srs-board-detail'
 const SCALE_KEY = 'srs-board-scale'
@@ -258,6 +259,12 @@ export default function App() {
   )
   const locked = activeRace.status === 'finalized'
   const canControlSignals = !eventAccess || eventAccess.isOwner || ['pro', 'ro', 'signal-boat'].includes(eventAccess.role)
+  const officialAudio = useOfficialAudioDevice({
+    eventSlug: eventId,
+    raceId: activeRace.id,
+    enabled: session.mode === 'authenticated' && Boolean(eventAccess) && canControlSignals,
+    serverOffsetMs: realtime.serverOffsetMs,
+  })
 
   useEffect(() => window.localStorage.setItem(SCALE_KEY, String(boardScale)), [boardScale])
   useEffect(() => window.localStorage.setItem(DETAIL_KEY, boardDetail), [boardDetail])
@@ -648,6 +655,10 @@ export default function App() {
         serverOffsetMs={realtime.serverOffsetMs}
         canControlSignals={canControlSignals}
         preparatoryFlag={preparatoryFlag}
+        officialAudio={officialAudio.state}
+        canForceAudioTakeover={eventAccess?.isOwner ?? false}
+        onClaimOfficialAudio={officialAudio.claim}
+        onReleaseOfficialAudio={officialAudio.release}
         onPostpone={postponeRace}
         onResume={resumeAfterPostponement}
         onSignalExecuted={recordSignal}
