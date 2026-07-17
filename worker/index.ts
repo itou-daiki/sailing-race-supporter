@@ -7,6 +7,7 @@ import { handleCourseRequest } from './courses.js'
 import { handleEventCollectionRequest } from './events.js'
 import { json } from './http.js'
 import { handleInviteRequest } from './invites.js'
+import { handleLogRequest } from './logs.js'
 import { authorizeCommitteeBoat, persistRealtimeOperation } from './operations.js'
 import { handleRevisionRequest } from './revisions.js'
 import { requireSession } from './security.js'
@@ -534,6 +535,9 @@ export default {
 
       const inviteResponse = await handleInviteRequest(request, env)
       if (inviteResponse) return inviteResponse
+
+      const logResponse = await handleLogRequest(request, env)
+      if (logResponse) return logResponse
 
       const backupResponse = await handleBackupRequest(request, env)
       if (backupResponse) return backupResponse

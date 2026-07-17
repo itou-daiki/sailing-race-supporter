@@ -9,6 +9,7 @@ import {
   Menu,
   MessageSquareText,
   RadioTower,
+  ScrollText,
   Settings2,
   ShieldCheck,
   SlidersHorizontal,
@@ -46,6 +47,7 @@ const SPLIT_KEY = 'srs-map-split'
 const AuthPanel = lazy(() => import('./components/AuthPanel').then((module) => ({ default: module.AuthPanel })))
 const EventManager = lazy(() => import('./components/EventManager').then((module) => ({ default: module.EventManager })))
 const JoinRecoveryPanel = lazy(() => import('./components/JoinRecoveryPanel').then((module) => ({ default: module.JoinRecoveryPanel })))
+const LogDrawer = lazy(() => import('./components/LogDrawer').then((module) => ({ default: module.LogDrawer })))
 const MapView = lazy(() => import('./components/MapView').then((module) => ({ default: module.MapView })))
 
 function storedNumber(key: string, fallback: number): number {
@@ -94,6 +96,7 @@ export default function App() {
   const [tasks, setTasks] = useState<readonly OperationalTask[]>(DEMO_TASKS)
   const [memberCount, setMemberCount] = useState(18)
   const [messagesOpen, setMessagesOpen] = useState(false)
+  const [logsOpen, setLogsOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
   const [eventManagerOpen, setEventManagerOpen] = useState(false)
@@ -623,6 +626,11 @@ export default function App() {
           <button type="button" className="header-icon" onClick={() => setMessagesOpen(true)} aria-label="メッセージ">
             <MessageSquareText size={19} /><i>{messages.filter((message) => message.acknowledgement === 'pending').length}</i>
           </button>
+          {session.mode === 'authenticated' && (
+            <button type="button" className="header-icon" onClick={() => setLogsOpen(true)} aria-label="運営ログ" title="運営ログ">
+              <ScrollText size={19} />
+            </button>
+          )}
           <button type="button" className="owner-button" onClick={() => setAuthOpen(true)}>
             <CircleUserRound size={21} />
             <span>
@@ -766,6 +774,16 @@ export default function App() {
         </div>
       )}
 
+      {logsOpen && (
+        <div className="drawer-backdrop drawer-backdrop--map-visible" role="presentation" onMouseDown={() => setLogsOpen(false)}>
+          <Suspense fallback={<aside className="log-drawer"><div className="log-state">ログ画面を準備中…</div></aside>}>
+            <div onMouseDown={(event) => event.stopPropagation()}>
+              <LogDrawer eventSlug={eventId} eventName={eventName} races={races} activeRaceId={activeRace.id} onClose={() => setLogsOpen(false)} />
+            </div>
+          </Suspense>
+        </div>
+      )}
+
       {settingsOpen && (
         <div className="drawer-backdrop" role="presentation" onMouseDown={() => setSettingsOpen(false)}>
           <aside className="settings-sheet" aria-label="コース設定" onMouseDown={(event) => event.stopPropagation()}>
@@ -777,6 +795,7 @@ export default function App() {
             <label className="switch-row"><span><strong>下ゲート</strong><small>3S / 3Pを使用</small></span><input type="checkbox" checked={lowerGate} onChange={(event) => setLowerGate(event.target.checked)} /></label>
             <label className="switch-row"><span><strong>上ゲート</strong><small>1S / 1Pを使用</small></span><input type="checkbox" checked={upperGate} onChange={(event) => setUpperGate(event.target.checked)} /></label>
             {courseSaveError && <div className="auth-error" role="alert">{courseSaveError}</div>}
+            {session.mode === 'authenticated' && <button type="button" className="sheet-secondary" onClick={() => { setSettingsOpen(false); setLogsOpen(true) }}><ScrollText size={17} /> 大会・レース別の運営ログ</button>}
             <button type="button" className="sheet-secondary" onClick={() => { setSettingsOpen(false); setAuthOpen(true) }}><ShieldCheck size={17} /> 本人確認・パスキー</button>
             <button type="button" className="sheet-primary" onClick={() => void saveCourse()} disabled={courseSaving || locked}>{courseSaving ? '座標を計算・保存中…' : '設定案を保存'}</button>
           </aside>

@@ -343,13 +343,27 @@ async function persistTask(env: AppEnv, access: EventAccess, operation: Realtime
   const taskId = stringValue(payload.taskId, 'taskId')
   const status = String(payload.status)
   if (!['blocked', 'waiting', 'doing', 'done'].includes(status)) throw new Response('Invalid task status', { status: 400 })
-  const result = await env.DB.prepare(
-    `UPDATE operational_tasks
-     SET status = ?, completed_at = CASE WHEN ? = 'done' THEN ? ELSE NULL END, revision = revision + 1
-     WHERE id = ? AND race_id = ?`,
-  ).bind(status, status, new Date().toISOString(), taskId, raceId).run()
-  if (!result.meta.changes) throw new Response('Task not found', { status: 404 })
-  return { taskId, status }
+  const task = await env.DB.prepare(
+    'SELECT id, revision FROM operational_tasks WHERE id = ? AND race_id = ? LIMIT 1',
+  ).bind(taskId, raceId).first<{ id: string; revision: number }>()
+  if (!task) throw new Response('Task not found', { status: 404 })
+  const memberId = await requireMemberId(env, access)
+  const serverTime = new Date().toISOString()
+  const clientTime = operation.clientTime ? isoTime(operation.clientTime, serverTime) : null
+  const revision = task.revision + 1
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE operational_tasks
+       SET status = ?, completed_at = CASE WHEN ? = 'done' THEN ? ELSE NULL END, revision = ?
+       WHERE id = ? AND race_id = ?`,
+    ).bind(status, status, serverTime, revision, taskId, raceId),
+    env.DB.prepare(
+      `INSERT INTO operational_task_events
+       (id, task_id, race_id, status, member_id, revision, client_time, server_time)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(operation.id, taskId, raceId, status, memberId, revision, clientTime, serverTime),
+  ])
+  return { taskId, status, revision, changedBy: access.displayName, changedAt: serverTime }
 }
 
 export async function persistRealtimeOperation(
