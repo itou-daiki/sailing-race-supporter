@@ -39,11 +39,12 @@ interface RoomEnvelope {
 interface UseRealtimeOptions {
   eventId: string
   memberId: string
+  enabled?: boolean
   onEvent?: (event: SequencedOperation) => void
 }
 
-export function useEventRoom({ eventId, memberId, onEvent }: UseRealtimeOptions) {
-  const [status, setStatus] = useState<RealtimeStatus>('connecting')
+export function useEventRoom({ eventId, memberId, enabled = true, onEvent }: UseRealtimeOptions) {
+  const [status, setStatus] = useState<RealtimeStatus>(enabled ? 'connecting' : 'offline')
   const [pendingCount, setPendingCount] = useState(0)
   const [lastSequence, setLastSequence] = useState(0)
   const socketRef = useRef<WebSocket | undefined>(undefined)
@@ -72,6 +73,7 @@ export function useEventRoom({ eventId, memberId, onEvent }: UseRealtimeOptions)
   }, [memberId])
 
   useEffect(() => {
+    if (!enabled) return
     let socket: WebSocket | undefined
     let reconnectTimer: number | undefined
     let cancelled = false
@@ -136,7 +138,7 @@ export function useEventRoom({ eventId, memberId, onEvent }: UseRealtimeOptions)
       socket?.close()
       if (socketRef.current === socket) socketRef.current = undefined
     }
-  }, [eventId, memberId, refreshPendingCount, transmit])
+  }, [enabled, eventId, memberId, refreshPendingCount, transmit])
 
   const send = useCallback(async (
     type: OperationType,
@@ -158,5 +160,5 @@ export function useEventRoom({ eventId, memberId, onEvent }: UseRealtimeOptions)
     return operation.id
   }, [eventId, refreshPendingCount, transmit])
 
-  return { status, pendingCount, lastSequence, send }
+  return { status: enabled ? status : 'offline' as RealtimeStatus, pendingCount, lastSequence, send }
 }

@@ -13,7 +13,7 @@ import {
   SlidersHorizontal,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { recommendedCourseLength } from './course'
 import {
   CLASS_PROFILES,
@@ -32,12 +32,19 @@ import {
 import { MapView } from './components/MapView'
 import { OperationsBoard } from './components/OperationsBoard'
 import { StartSequence } from './components/StartSequence'
+import { loadSession, type SessionState } from './authClient'
+import { loadEventBootstrap } from './eventClient'
+import type { EventAccessSummary, EventResources } from './eventClient'
 import { saveEventSnapshot } from './offlineStore'
 import { useEventRoom, type SequencedOperation } from './realtime'
 
 const DETAIL_KEY = 'srs-board-detail'
 const SCALE_KEY = 'srs-board-scale'
 const SPLIT_KEY = 'srs-map-split'
+
+const AuthPanel = lazy(() => import('./components/AuthPanel').then((module) => ({ default: module.AuthPanel })))
+const EventManager = lazy(() => import('./components/EventManager').then((module) => ({ default: module.EventManager })))
+const JoinRecoveryPanel = lazy(() => import('./components/JoinRecoveryPanel').then((module) => ({ default: module.JoinRecoveryPanel })))
 
 function storedNumber(key: string, fallback: number): number {
   const value = Number(window.localStorage.getItem(key))
@@ -58,6 +65,13 @@ function localMemberId(): string {
   return created
 }
 
+function joinContextFromLocation(): { inviteId: string; secret: string } | undefined {
+  const match = window.location.pathname.match(/^\/e\/[^/]+\/join\/([^/]+)/)
+  if (!match) return undefined
+  const secret = new URLSearchParams(window.location.hash.slice(1)).get('token') ?? ''
+  return { inviteId: decodeURIComponent(match[1]), secret }
+}
+
 function formatClock(iso: string): string {
   return new Intl.DateTimeFormat('ja-JP', {
     hour: '2-digit',
@@ -68,7 +82,8 @@ function formatClock(iso: string): string {
 
 export default function App() {
   const [eventId] = useState(eventSlugFromLocation)
-  const [memberId] = useState(localMemberId)
+  const [eventName, setEventName] = useState('2026 江の島サマーレガッタ')
+  const [memberId, setMemberId] = useState(localMemberId)
   const [activeRaceId, setActiveRaceId] = useState(DEMO_RACES[0].id)
   const [races, setRaces] = useState<readonly RaceDefinition[]>(DEMO_RACES)
   const [boats, setBoats] = useState<readonly CommitteeBoat[]>(DEMO_BOATS)
@@ -76,6 +91,13 @@ export default function App() {
   const [messages, setMessages] = useState<readonly OperationalMessage[]>(DEMO_MESSAGES)
   const [messagesOpen, setMessagesOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [authOpen, setAuthOpen] = useState(false)
+  const [eventManagerOpen, setEventManagerOpen] = useState(false)
+  const [joinContext, setJoinContext] = useState(joinContextFromLocation)
+  const [recoveryOpen, setRecoveryOpen] = useState(false)
+  const [session, setSession] = useState<SessionState>({ mode: 'checking' })
+  const [eventAccess, setEventAccess] = useState<EventAccessSummary>()
+  const [eventResources, setEventResources] = useState<EventResources>({ boats: [], marks: [] })
   const [postponed, setPostponed] = useState(false)
   const [confirmFinalize, setConfirmFinalize] = useState(false)
   const [boardScale, setBoardScale] = useState(() => storedNumber(SCALE_KEY, 100))
@@ -86,6 +108,9 @@ export default function App() {
   const [mapSplit, setMapSplit] = useState(() => storedNumber(SPLIT_KEY, 58))
   const [selectedClass, setSelectedClass] = useState<SailingClass>('470')
   const [windSpeed, setWindSpeed] = useState(INITIAL_WIND.speedKnots)
+  const [windDirection, setWindDirection] = useState(INITIAL_WIND.directionDegrees)
+  const [messageDraft, setMessageDraft] = useState('')
+  const [messagePriority, setMessagePriority] = useState<OperationalMessage['priority']>('normal')
   const [leadingPassages, setLeadingPassages] = useState<Record<string, string>>({})
   const draggingSplit = useRef(false)
 
@@ -132,6 +157,34 @@ export default function App() {
       }))
     }
 
+    if (event.type === 'wind') {
+      const payload = event.payload as { directionDegrees?: number; speedKnots?: number }
+      if (typeof payload.directionDegrees === 'number') setWindDirection(payload.directionDegrees)
+      if (typeof payload.speedKnots === 'number') setWindSpeed(payload.speedKnots)
+    }
+
+    if (event.type === 'message') {
+      const payload = event.payload as {
+        action?: string; messageId?: string; body?: string; sender?: string; channel?: string
+        priority?: OperationalMessage['priority']; sentAt?: string
+      }
+      if (payload.action === 'acknowledge' && payload.messageId) {
+        setMessages((current) => current.map((message) => (
+          message.id === payload.messageId ? { ...message, acknowledgement: 'acknowledged' as const } : message
+        )))
+      } else if (payload.body) {
+        setMessages((current) => current.some((message) => message.id === event.id) ? current : [...current, {
+          id: event.id,
+          sender: payload.sender ?? '運営メンバー',
+          channel: payload.channel ?? event.raceId ?? 'event',
+          text: payload.body as string,
+          sentAt: payload.sentAt ?? event.serverTime,
+          priority: payload.priority ?? 'normal',
+          acknowledgement: payload.priority === 'confirm' || payload.priority === 'urgent' ? 'pending' : undefined,
+        }])
+      }
+    }
+
     if (event.type === 'finalize' && event.raceId) {
       setRaces((current) => current.map((race) => (
         race.id === event.raceId ? { ...race, status: 'finalized' as const } : race
@@ -152,7 +205,12 @@ export default function App() {
     }
   }, [])
 
-  const realtime = useEventRoom({ eventId, memberId, onEvent: applyRemoteEvent })
+  const realtime = useEventRoom({
+    eventId,
+    memberId,
+    enabled: session.mode === 'authenticated',
+    onEvent: applyRemoteEvent,
+  })
 
   const activeRace = races.find((race) => race.id === activeRaceId) ?? races[0]
   const marks = useMemo(() => {
@@ -170,6 +228,42 @@ export default function App() {
   useEffect(() => window.localStorage.setItem(SCALE_KEY, String(boardScale)), [boardScale])
   useEffect(() => window.localStorage.setItem(DETAIL_KEY, boardDetail), [boardDetail])
   useEffect(() => window.localStorage.setItem(SPLIT_KEY, String(mapSplit)), [mapSplit])
+
+  useEffect(() => {
+    let active = true
+    void loadSession()
+      .then((loaded) => { if (active) setSession(loaded) })
+      .catch(() => { if (active) setSession({ mode: 'anonymous' }) })
+    return () => { active = false }
+  }, [])
+
+  useEffect(() => {
+    if (session.mode !== 'authenticated') return
+    let active = true
+    void loadEventBootstrap(eventId)
+      .then((bootstrap) => {
+        if (!active) return
+        setEventName(bootstrap.event.name)
+        setEventAccess(bootstrap.access)
+        setEventResources(bootstrap.resources)
+        setMemberId(bootstrap.access.memberId)
+        if (bootstrap.races.length) {
+          setRaces(bootstrap.races)
+          setActiveRaceId(bootstrap.races[0].id)
+          setSelectedClass(bootstrap.races[0].className)
+        }
+        setBoats(bootstrap.boats)
+        setMessages(bootstrap.messages)
+        if (bootstrap.wind) {
+          setWindSpeed(bootstrap.wind.speedKnots)
+          setWindDirection(bootstrap.wind.directionDegrees)
+        }
+      })
+      .catch(() => {
+        // The public Pages demo and inaccessible event URLs retain the local demonstration state.
+      })
+    return () => { active = false }
+  }, [eventId, session.mode])
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -277,6 +371,39 @@ export default function App() {
     void realtime.send('signal', { action: 'postpone', executedAt: new Date().toISOString() }, activeRace.id)
   }
 
+  const shareWind = () => {
+    void realtime.send('wind', {
+      directionDegrees: windDirection,
+      speedKnots: windSpeed,
+      gustKnots: Math.max(windSpeed, INITIAL_WIND.gustKnots),
+      averagingSeconds: 300,
+      observedAt: new Date().toISOString(),
+      confidence: 'medium',
+    }, activeRace.id)
+  }
+
+  const sendMessage = async (event: React.FormEvent) => {
+    event.preventDefault()
+    const body = messageDraft.trim()
+    if (!body) return
+    const id = await realtime.send('message', {
+      body,
+      priority: messagePriority,
+      channel: `race:${activeRace.id}`,
+    }, activeRace.id)
+    setMessages((current) => current.some((message) => message.id === id) ? current : [...current, {
+      id,
+      sender: eventAccess?.displayName ?? (session.mode === 'authenticated' ? session.user.displayName : '自分'),
+      channel: `${activeRace.number}・全運営`,
+      text: body,
+      sentAt: new Date().toISOString(),
+      priority: messagePriority,
+      acknowledgement: messagePriority === 'confirm' || messagePriority === 'urgent' ? 'pending' : undefined,
+    }])
+    setMessageDraft('')
+    setMessagePriority('normal')
+  }
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -288,8 +415,8 @@ export default function App() {
           </div>
         </div>
 
-        <button type="button" className="event-selector">
-          <span><small>大会</small><strong>2026 江の島サマーレガッタ</strong></span>
+        <button type="button" className="event-selector" onClick={() => setEventManagerOpen(true)}>
+          <span><small>大会</small><strong>{eventName}</strong></span>
           <ChevronDown size={16} />
         </button>
 
@@ -320,9 +447,12 @@ export default function App() {
           <button type="button" className="header-icon" onClick={() => setMessagesOpen(true)} aria-label="メッセージ">
             <MessageSquareText size={19} /><i>{messages.filter((message) => message.acknowledgement === 'pending').length}</i>
           </button>
-          <button type="button" className="owner-button">
+          <button type="button" className="owner-button" onClick={() => setAuthOpen(true)}>
             <CircleUserRound size={21} />
-            <span><strong>伊藤 大輝</strong><small>大会管理者</small></span>
+            <span>
+              <strong>{session.mode === 'authenticated' ? session.user.displayName : '伊藤 大輝'}</strong>
+              <small>{session.mode === 'authenticated' ? '認証済み管理者' : session.mode === 'offline-demo' ? 'オフラインデモ' : '本人確認が必要'}</small>
+            </span>
           </button>
           <button type="button" className="mobile-menu" onClick={() => setSettingsOpen(true)} aria-label="メニュー"><Menu size={21} /></button>
         </div>
@@ -343,7 +473,7 @@ export default function App() {
           <MapView
             marks={marks}
             boats={boats}
-            wind={{ ...INITIAL_WIND, speedKnots: windSpeed }}
+            wind={{ ...INITIAL_WIND, directionDegrees: windDirection, speedKnots: windSpeed }}
             selectedMarkId={selectedMarkId}
             onSelectMark={setSelectedMarkId}
             onUseCurrentLocation={updateSelfLocation}
@@ -366,7 +496,7 @@ export default function App() {
             </label>
             <label>
               <span>風速 <strong>{windSpeed.toFixed(1)}kt</strong></span>
-              <input type="range" min="2" max="20" step="0.5" value={windSpeed} onChange={(event) => setWindSpeed(Number(event.target.value))} />
+              <input type="range" min="2" max="20" step="0.5" value={windSpeed} onChange={(event) => setWindSpeed(Number(event.target.value))} onPointerUp={shareWind} />
             </label>
             <div className="course-advisor__result">
               <strong>{recommendation.kilometres.toFixed(1)} km</strong>
@@ -392,7 +522,7 @@ export default function App() {
           boats={boats}
           tasks={DEMO_TASKS}
           messages={messages}
-          wind={{ ...INITIAL_WIND, speedKnots: windSpeed }}
+          wind={{ ...INITIAL_WIND, directionDegrees: windDirection, speedKnots: windSpeed }}
           scale={boardScale}
           detail={boardDetail}
           postponed={postponed}
@@ -408,7 +538,7 @@ export default function App() {
       </main>
 
       <div className="floating-owner-actions">
-        {!locked && (
+        {!locked && (!eventAccess || eventAccess.isOwner || eventAccess.role === 'pro' || eventAccess.role === 'ro') && (
           <button type="button" className="finalize-button" onClick={() => setConfirmFinalize(true)}>
             <ShieldCheck size={17} /> {activeRace.number}を確定
           </button>
@@ -419,7 +549,7 @@ export default function App() {
         <div className="drawer-backdrop" role="presentation" onMouseDown={() => setMessagesOpen(false)}>
           <aside className="message-drawer" aria-label="大会メッセージ" onMouseDown={(event) => event.stopPropagation()}>
             <header>
-              <div><span className="eyebrow">2026 江の島サマーレガッタ</span><strong>運営メッセージ</strong></div>
+              <div><span className="eyebrow">{eventName}</span><strong>運営メッセージ</strong></div>
               <button type="button" onClick={() => setMessagesOpen(false)} aria-label="閉じる"><X size={20} /></button>
             </header>
             <div className="channel-tabs"><button className="is-active">{activeRace.number}</button><button>海面A</button><button>自分の艇</button></div>
@@ -433,10 +563,15 @@ export default function App() {
                 </article>
               ))}
             </div>
-            <form className="message-composer" onSubmit={(event) => event.preventDefault()}>
-              <button type="button" aria-label="優先度"><BellRing size={18} /></button>
-              <input aria-label="メッセージ" placeholder="運営連絡を入力…" />
-              <button type="submit">送信</button>
+            <form className={`message-composer priority-${messagePriority}`} onSubmit={(event) => void sendMessage(event)}>
+              <button
+                type="button"
+                aria-label={`優先度: ${messagePriority}`}
+                title="通常 → 要確認 → 緊急"
+                onClick={() => setMessagePriority((current) => current === 'normal' ? 'confirm' : current === 'confirm' ? 'urgent' : 'normal')}
+              ><BellRing size={18} /></button>
+              <input aria-label="メッセージ" placeholder="運営連絡を入力…" value={messageDraft} onChange={(event) => setMessageDraft(event.target.value)} maxLength={1_000} />
+              <button type="submit" disabled={!messageDraft.trim()}>送信</button>
             </form>
           </aside>
         </div>
@@ -450,6 +585,7 @@ export default function App() {
             <label><span>コース</span><select defaultValue="O2"><option>O2</option><option>I2</option><option>L2</option><option>L3</option><option>W2</option></select></label>
             <label className="switch-row"><span><strong>下ゲート</strong><small>3S / 3Pを使用</small></span><input type="checkbox" defaultChecked /></label>
             <label className="switch-row"><span><strong>上ゲート</strong><small>1マークを左右2点にする</small></span><input type="checkbox" /></label>
+            <button type="button" className="sheet-secondary" onClick={() => { setSettingsOpen(false); setAuthOpen(true) }}><ShieldCheck size={17} /> 本人確認・パスキー</button>
             <button type="button" className="sheet-primary" onClick={() => setSettingsOpen(false)}>設定案を保存</button>
           </aside>
         </div>
@@ -466,6 +602,44 @@ export default function App() {
           </section>
         </div>
       )}
+
+      <Suspense fallback={null}>
+        {authOpen && (
+          <AuthPanel session={session} onSessionChange={setSession} onClose={() => setAuthOpen(false)} />
+        )}
+
+        {eventManagerOpen && (
+          <EventManager
+            session={session}
+            currentEventSlug={eventId}
+            currentEventName={eventName}
+            isCurrentEventOwner={eventAccess?.isOwner ?? false}
+            resources={eventResources}
+            onRequestAuthentication={() => { setEventManagerOpen(false); setAuthOpen(true) }}
+            onRecoverParticipation={() => { setEventManagerOpen(false); setRecoveryOpen(true) }}
+            onClose={() => setEventManagerOpen(false)}
+          />
+        )}
+
+        {joinContext && (
+          <JoinRecoveryPanel
+            eventSlug={eventId}
+            mode={{ kind: 'join', ...joinContext }}
+            onSessionChange={setSession}
+            onComplete={() => setJoinContext(undefined)}
+          />
+        )}
+
+        {recoveryOpen && (
+          <JoinRecoveryPanel
+            eventSlug={eventId}
+            mode={{ kind: 'recover' }}
+            onSessionChange={setSession}
+            onComplete={() => setRecoveryOpen(false)}
+            onClose={() => setRecoveryOpen(false)}
+          />
+        )}
+      </Suspense>
     </div>
   )
 }

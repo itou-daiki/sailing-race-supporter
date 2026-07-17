@@ -1,0 +1,378 @@
+import type { EventAccess } from './authorization.js'
+import type { AppEnv } from './index.js'
+
+export interface RealtimeOperation {
+  id: string
+  type: 'presence' | 'position' | 'wind' | 'mark' | 'leading-passage' | 'task' | 'message' | 'signal' | 'finalize'
+  raceId?: string
+  payload: unknown
+  clientTime?: string
+}
+
+function objectPayload(payload: unknown): Record<string, unknown> {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Response('Object payload required', { status: 400 })
+  }
+  return payload as Record<string, unknown>
+}
+
+function stringValue(value: unknown, field: string, maxLength = 120): string {
+  if (typeof value !== 'string' || !value.trim() || value.trim().length > maxLength) {
+    throw new Response(`Invalid ${field}`, { status: 400 })
+  }
+  return value.trim()
+}
+
+function optionalString(value: unknown, maxLength = 500): string | null {
+  if (value == null || value === '') return null
+  if (typeof value !== 'string' || value.length > maxLength) throw new Response('Invalid text value', { status: 400 })
+  return value
+}
+
+function finiteNumber(value: unknown, field: string, minimum: number, maximum: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new Response(`Invalid ${field}`, { status: 400 })
+  }
+  return value
+}
+
+function optionalNumber(value: unknown, field: string, minimum: number, maximum: number): number | null {
+  if (value == null) return null
+  return finiteNumber(value, field, minimum, maximum)
+}
+
+function isoTime(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) throw new Response('Invalid timestamp', { status: 400 })
+  return parsed.toISOString()
+}
+
+function position(value: unknown): readonly [number, number] {
+  if (!Array.isArray(value) || value.length !== 2) throw new Response('Invalid position', { status: 400 })
+  return [
+    finiteNumber(value[0], 'longitude', -180, 180),
+    finiteNumber(value[1], 'latitude', -85, 85),
+  ]
+}
+
+async function requireRace(env: AppEnv, access: EventAccess, raceId: string | undefined): Promise<string> {
+  if (!raceId) throw new Response('Race required', { status: 400 })
+  const race = await env.DB.prepare(
+    'SELECT id FROM races WHERE id = ? AND regatta_id = ? LIMIT 1',
+  ).bind(raceId, access.eventId).first<{ id: string }>()
+  if (!race) throw new Response('Race not found', { status: 404 })
+  return race.id
+}
+
+async function requireMemberId(env: AppEnv, access: EventAccess): Promise<string> {
+  const member = await env.DB.prepare(
+    `SELECT id FROM event_members
+     WHERE id = ? AND regatta_id = ? AND status = 'active' LIMIT 1`,
+  ).bind(access.memberId, access.eventId).first<{ id: string }>()
+  if (!member) throw new Response('Active event member required', { status: 403 })
+  return member.id
+}
+
+export async function authorizeCommitteeBoat(
+  env: AppEnv,
+  access: EventAccess,
+  committeeBoatId: string,
+): Promise<void> {
+  const boat = await env.DB.prepare(
+    `SELECT id, name, call_sign FROM committee_boats
+     WHERE id = ? AND regatta_id = ? AND status = 'active' LIMIT 1`,
+  ).bind(committeeBoatId, access.eventId).first<{ id: string; name: string; call_sign: string | null }>()
+  if (!boat) throw new Response('Operating boat not found', { status: 404 })
+  if (access.isOwner || access.role === 'pro' || access.role === 'ro') return
+
+  const scoped = await env.DB.prepare(
+    `SELECT 1 AS allowed FROM event_member_scopes
+     WHERE event_member_id = ? AND committee_boat_id = ? LIMIT 1`,
+  ).bind(access.memberId, committeeBoatId).first<{ allowed: number }>()
+  if (scoped) return
+  if (access.assignment === boat.name || access.assignment === boat.call_sign) return
+  throw new Response('Operating boat assignment required', { status: 403 })
+}
+
+async function persistPosition(
+  env: AppEnv,
+  access: EventAccess,
+  operation: RealtimeOperation,
+  samplePosition: boolean,
+  skipCommitteeBoatAuthorization: boolean,
+): Promise<Record<string, unknown>> {
+  const payload = objectPayload(operation.payload)
+  const committeeBoatId = stringValue(payload.committeeBoatId, 'committeeBoatId')
+  if (!skipCommitteeBoatAuthorization) await authorizeCommitteeBoat(env, access, committeeBoatId)
+  const coordinates = position(payload.position)
+  const speedKnots = optionalNumber(payload.speedKnots, 'speedKnots', 0, 80)
+  const courseDegrees = optionalNumber(payload.courseDegrees, 'courseDegrees', 0, 360)
+  const accuracyMetres = optionalNumber(payload.accuracyMetres, 'accuracyMetres', 0, 10_000)
+  const sampledAt = isoTime(operation.clientTime, new Date().toISOString())
+  if (samplePosition) {
+    await env.DB.prepare(
+      `INSERT INTO position_samples
+       (id, regatta_id, race_id, committee_boat_id, lng, lat, accuracy_metres,
+        speed_knots, course_degrees, sampled_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      operation.id,
+      access.eventId,
+      operation.raceId ?? null,
+      committeeBoatId,
+      coordinates[0],
+      coordinates[1],
+      accuracyMetres,
+      speedKnots,
+      courseDegrees,
+      sampledAt,
+    ).run()
+  }
+  return {
+    committeeBoatId,
+    position: coordinates,
+    speedKnots,
+    courseDegrees,
+    accuracyMetres,
+    sampledAt,
+    lastSampledAt: samplePosition ? sampledAt : null,
+  }
+}
+
+async function persistWind(env: AppEnv, access: EventAccess, operation: RealtimeOperation): Promise<Record<string, unknown>> {
+  const payload = objectPayload(operation.payload)
+  const directionDegrees = finiteNumber(payload.directionDegrees, 'directionDegrees', 0, 360)
+  const speedKnots = finiteNumber(payload.speedKnots, 'speedKnots', 0, 100)
+  const gustKnots = optionalNumber(payload.gustKnots, 'gustKnots', 0, 120)
+  const observedAt = isoTime(payload.observedAt ?? operation.clientTime, new Date().toISOString())
+  const coordinates = payload.position == null ? null : position(payload.position)
+  const committeeBoatId = typeof payload.committeeBoatId === 'string' ? payload.committeeBoatId : null
+  if (committeeBoatId) await authorizeCommitteeBoat(env, access, committeeBoatId)
+  const memberId = await requireMemberId(env, access)
+  await env.DB.prepare(
+    `INSERT INTO wind_observations
+     (id, regatta_id, race_id, committee_boat_id, member_id, direction_degrees,
+      speed_knots, gust_knots, averaging_seconds, lng, lat, observed_at, source, confidence)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    operation.id,
+    access.eventId,
+    operation.raceId ?? null,
+    committeeBoatId,
+    memberId,
+    directionDegrees,
+    speedKnots,
+    gustKnots,
+    optionalNumber(payload.averagingSeconds, 'averagingSeconds', 0, 3_600),
+    coordinates?.[0] ?? null,
+    coordinates?.[1] ?? null,
+    observedAt,
+    access.displayName,
+    payload.confidence === 'high' || payload.confidence === 'medium' ? payload.confidence : 'low',
+  ).run()
+  return { directionDegrees, speedKnots, gustKnots, observedAt, position: coordinates, source: access.displayName }
+}
+
+async function markForRace(
+  env: AppEnv,
+  access: EventAccess,
+  raceId: string,
+  markId: string,
+): Promise<{ markId: string; nodeId: string; label: string }> {
+  const mark = await env.DB.prepare(
+    `SELECT m.id AS mark_id, m.label, cn.id AS node_id
+     FROM marks m
+     JOIN course_nodes cn ON cn.mark_id = m.id
+     JOIN course_revisions cr ON cr.id = cn.course_revision_id
+     WHERE m.id = ? AND m.regatta_id = ? AND cr.race_id = ?
+       AND cr.revision = (SELECT MAX(latest.revision) FROM course_revisions latest WHERE latest.race_id = cr.race_id)
+     LIMIT 1`,
+  ).bind(markId, access.eventId, raceId).first<{ mark_id: string; node_id: string; label: string }>()
+  if (!mark) throw new Response('Mark is not part of the active course', { status: 404 })
+
+  if (!access.isOwner && !['pro', 'ro', 'course-setter'].includes(access.role)) {
+    const scoped = await env.DB.prepare(
+      `SELECT 1 AS allowed FROM event_member_scopes
+       WHERE event_member_id = ? AND mark_id = ? LIMIT 1`,
+    ).bind(access.memberId, markId).first<{ allowed: number }>()
+    const assignmentMatches = access.assignment === mark.label || access.assignment.startsWith(mark.label.replace('マーク', ''))
+    if (!scoped && !assignmentMatches) throw new Response('Mark assignment required', { status: 403 })
+  }
+  return { markId: mark.mark_id, nodeId: mark.node_id, label: mark.label }
+}
+
+async function persistMark(env: AppEnv, access: EventAccess, operation: RealtimeOperation): Promise<Record<string, unknown>> {
+  const raceId = await requireRace(env, access, operation.raceId)
+  const payload = objectPayload(operation.payload)
+  const markId = stringValue(payload.markId, 'markId')
+  await markForRace(env, access, raceId, markId)
+  const coordinates = position(payload.actual)
+  const memberId = await requireMemberId(env, access)
+  const committeeBoatId = typeof payload.committeeBoatId === 'string' ? payload.committeeBoatId : null
+  if (committeeBoatId) await authorizeCommitteeBoat(env, access, committeeBoatId)
+  const eventTypes: Record<string, string> = {
+    planned: 'assigned',
+    'en-route': 'en-route',
+    deployed: 'dropped',
+    dropped: 'dropped',
+    confirmed: 'confirmed',
+    moved: 'moved',
+    recovered: 'recovered',
+  }
+  const eventType = eventTypes[String(payload.status ?? 'deployed')]
+  if (!eventType) throw new Response('Invalid mark state', { status: 400 })
+  const sequence = await env.DB.prepare(
+    'SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM mark_events WHERE race_id = ?',
+  ).bind(raceId).first<{ sequence: number }>()
+  const clientTime = isoTime(payload.recordedAt ?? operation.clientTime, new Date().toISOString())
+  const serverTime = new Date().toISOString()
+  await env.DB.prepare(
+    `INSERT INTO mark_events
+     (id, race_id, mark_id, event_type, lng, lat, accuracy_metres, member_id,
+      committee_boat_id, client_time, server_time, sequence, payload_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    operation.id,
+    raceId,
+    markId,
+    eventType,
+    coordinates[0],
+    coordinates[1],
+    optionalNumber(payload.accuracyMetres, 'accuracyMetres', 0, 10_000),
+    memberId,
+    committeeBoatId,
+    clientTime,
+    serverTime,
+    sequence?.sequence ?? 1,
+    JSON.stringify({ source: 'web', originalStatus: payload.status ?? 'deployed' }),
+  ).run()
+  return { markId, actual: coordinates, status: eventType === 'dropped' ? 'deployed' : eventType, recordedAt: clientTime, committeeBoatId }
+}
+
+async function persistLeadingPassage(env: AppEnv, access: EventAccess, operation: RealtimeOperation): Promise<Record<string, unknown>> {
+  const raceId = await requireRace(env, access, operation.raceId)
+  const payload = objectPayload(operation.payload)
+  const markId = stringValue(payload.markId, 'markId')
+  const mark = await markForRace(env, access, raceId, markId)
+  const memberId = await requireMemberId(env, access)
+  const passedAt = isoTime(payload.passedAt ?? operation.clientTime, new Date().toISOString())
+  const lapNumber = Math.trunc(finiteNumber(payload.lapNumber ?? 1, 'lapNumber', 1, 100))
+  await env.DB.prepare(
+    `INSERT INTO leading_passage_events
+     (id, race_id, course_node_id, lap_number, passed_at, recorded_by, source, note)
+     VALUES (?, ?, ?, ?, ?, ?, 'manual-observation', ?)`,
+  ).bind(operation.id, raceId, mark.nodeId, lapNumber, passedAt, memberId, optionalString(payload.note)).run()
+  return { markId, passedAt, lapNumber, recordedBy: access.displayName }
+}
+
+async function persistMessage(env: AppEnv, access: EventAccess, operation: RealtimeOperation): Promise<Record<string, unknown>> {
+  const payload = objectPayload(operation.payload)
+  const memberId = await requireMemberId(env, access)
+  if (payload.action === 'acknowledge') {
+    const messageId = stringValue(payload.messageId, 'messageId')
+    const exists = await env.DB.prepare(
+      'SELECT id FROM messages WHERE id = ? AND regatta_id = ? LIMIT 1',
+    ).bind(messageId, access.eventId).first<{ id: string }>()
+    if (!exists) throw new Response('Message not found', { status: 404 })
+    const now = new Date().toISOString()
+    await env.DB.prepare(
+      `INSERT INTO message_receipts (message_id, member_id, delivered_at, read_at, acknowledged_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(message_id, member_id) DO UPDATE SET
+         read_at = excluded.read_at, acknowledged_at = excluded.acknowledged_at`,
+    ).bind(messageId, memberId, now, now, now).run()
+    return { action: 'acknowledge', messageId, memberId, acknowledgedAt: now }
+  }
+
+  const body = stringValue(payload.body, 'message body', 1_000)
+  const priority = payload.priority === 'urgent' || payload.priority === 'confirm' ? payload.priority : 'normal'
+  const channelKey = typeof payload.channel === 'string' && payload.channel.trim()
+    ? payload.channel.trim().slice(0, 120)
+    : operation.raceId ? `race:${operation.raceId}` : 'event'
+  const sentAt = isoTime(operation.clientTime, new Date().toISOString())
+  await env.DB.prepare(
+    `INSERT INTO messages
+     (id, regatta_id, race_id, channel_key, sender_member_id, priority, body, corrects_message_id, sent_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    operation.id,
+    access.eventId,
+    operation.raceId ?? null,
+    channelKey,
+    memberId,
+    priority,
+    body,
+    typeof payload.correctsMessageId === 'string' ? payload.correctsMessageId : null,
+    sentAt,
+  ).run()
+  return { body, priority, channel: channelKey, sender: access.displayName, sentAt }
+}
+
+async function persistSignal(env: AppEnv, access: EventAccess, operation: RealtimeOperation): Promise<Record<string, unknown>> {
+  const raceId = await requireRace(env, access, operation.raceId)
+  const payload = objectPayload(operation.payload)
+  const action = stringValue(payload.action, 'signal action', 60)
+  const executedAt = isoTime(payload.executedAt ?? operation.clientTime, new Date().toISOString())
+  const memberId = await requireMemberId(env, access)
+  await env.DB.prepare(
+    `INSERT INTO signal_events
+     (id, race_id, signal_type, scheduled_at, executed_at, member_id, payload_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    operation.id,
+    raceId,
+    action,
+    typeof payload.warningAt === 'string' ? isoTime(payload.warningAt, executedAt) : null,
+    executedAt,
+    memberId,
+    JSON.stringify(payload),
+  ).run()
+  if (action === 'resume' && typeof payload.warningAt === 'string') {
+    await env.DB.prepare(
+      `UPDATE races SET warning_at = ?, status = 'start-sequence', updated_at = ?
+       WHERE id = ? AND regatta_id = ?`,
+    ).bind(isoTime(payload.warningAt, executedAt), executedAt, raceId, access.eventId).run()
+  }
+  return { ...payload, action, executedAt }
+}
+
+async function persistTask(env: AppEnv, access: EventAccess, operation: RealtimeOperation): Promise<Record<string, unknown>> {
+  const raceId = await requireRace(env, access, operation.raceId)
+  const payload = objectPayload(operation.payload)
+  const taskId = stringValue(payload.taskId, 'taskId')
+  const status = String(payload.status)
+  if (!['blocked', 'waiting', 'doing', 'done'].includes(status)) throw new Response('Invalid task status', { status: 400 })
+  const result = await env.DB.prepare(
+    `UPDATE operational_tasks
+     SET status = ?, completed_at = CASE WHEN ? = 'done' THEN ? ELSE NULL END, revision = revision + 1
+     WHERE id = ? AND race_id = ?`,
+  ).bind(status, status, new Date().toISOString(), taskId, raceId).run()
+  if (!result.meta.changes) throw new Response('Task not found', { status: 404 })
+  return { taskId, status }
+}
+
+export async function persistRealtimeOperation(
+  env: AppEnv,
+  access: EventAccess,
+  operation: RealtimeOperation,
+  options: { samplePosition?: boolean; skipCommitteeBoatAuthorization?: boolean } = {},
+): Promise<unknown> {
+  switch (operation.type) {
+    case 'presence': return operation.payload
+    case 'position': return persistPosition(
+      env,
+      access,
+      operation,
+      options.samplePosition ?? false,
+      'skipCommitteeBoatAuthorization' in options && options.skipCommitteeBoatAuthorization === true,
+    )
+    case 'wind': return persistWind(env, access, operation)
+    case 'mark': return persistMark(env, access, operation)
+    case 'leading-passage': return persistLeadingPassage(env, access, operation)
+    case 'message': return persistMessage(env, access, operation)
+    case 'signal': return persistSignal(env, access, operation)
+    case 'task': return persistTask(env, access, operation)
+    case 'finalize': throw new Response('Finalize uses the finalization workflow', { status: 400 })
+  }
+}
