@@ -1,6 +1,7 @@
 import type {
   CommitteeBoat,
   CourseMark,
+  LeadingPassageVisit,
   OperationalMessage,
   OperationalTask,
   RaceDefinition,
@@ -34,7 +35,7 @@ export interface EventBootstrap {
   boats: CommitteeBoat[]
   messages: OperationalMessage[]
   tasks: OperationalTask[]
-  leadingPassages: Record<string, string>
+  leadingPassages: Record<string, LeadingPassageVisit>
   memberCount: number
   resources: EventResources
   wind?: { directionDegrees: number; speedKnots: number; gustKnots: number; observedAt: string; source: string }
@@ -99,7 +100,10 @@ interface BootstrapResponse {
     priority: OperationalTask['priority']; due_at: string; owner: string
   }>
   leadingPassages: Array<{
-    race_id: string; mark_id: string; lap_number: number; passed_at: string; recorded_by: string
+    id: string; race_id: string; mark_id: string; lap_number: number; passed_at: string; recorded_by: string
+    sync_quality: 'good' | 'fair' | 'poor' | 'offline' | 'unknown'; was_offline: number
+    sail_number: string | null; note: string | null; status: 'active' | 'cancelled' | 'corrected'
+    adopted_observation_id: string | null; adopted_at: string | null; adoption_revision: number | null
   }>
   memberCount: number
   raceCorrections: Array<{
@@ -167,6 +171,49 @@ function bootstrapMarks(response: BootstrapResponse, raceId: string): CourseMark
         gateSide: node.label.endsWith('S') ? 'S' : node.label.endsWith('P') ? 'P' : undefined,
       }
     })
+}
+
+function bootstrapLeadingPassages(rows: BootstrapResponse['leadingPassages']): Record<string, LeadingPassageVisit> {
+  const visits: Record<string, LeadingPassageVisit> = {}
+  for (const row of rows ?? []) {
+    const key = `${row.race_id}:${row.mark_id}:${row.lap_number}`
+    const visit = visits[key] ?? {
+      raceId: row.race_id,
+      markId: row.mark_id,
+      lapNumber: row.lap_number,
+      observations: [],
+      adoptedObservationId: row.adopted_observation_id ?? undefined,
+      adoptedAt: row.adopted_at ?? undefined,
+      spreadMilliseconds: 0,
+      hasConflict: false,
+    }
+    visit.observations.push({
+      id: row.id,
+      passedAt: row.passed_at,
+      recordedBy: row.recorded_by,
+      syncQuality: row.sync_quality ?? 'unknown',
+      wasOffline: Boolean(row.was_offline),
+      sailNumber: row.sail_number ?? undefined,
+      note: row.note ?? undefined,
+      status: row.status,
+    })
+    if (row.adopted_observation_id && row.adopted_at && (
+      !visit.adoptedAt || Date.parse(row.adopted_at) >= Date.parse(visit.adoptedAt)
+    )) {
+      visit.adoptedObservationId = row.adopted_observation_id
+      visit.adoptedAt = row.adopted_at
+    }
+    visits[key] = visit
+  }
+  for (const visit of Object.values(visits)) {
+    const times = visit.observations
+      .filter((observation) => observation.status === 'active')
+      .map((observation) => Date.parse(observation.passedAt))
+      .filter(Number.isFinite)
+    visit.spreadMilliseconds = times.length > 1 ? Math.max(...times) - Math.min(...times) : 0
+    visit.hasConflict = visit.spreadMilliseconds > 2_000
+  }
+  return visits
 }
 
 export async function loadEventBootstrap(eventReference: string): Promise<EventBootstrap> {
@@ -241,10 +288,7 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
       dueLabel: `${formatClock(task.due_at)}まで`,
       priority: task.priority,
     })),
-    leadingPassages: Object.fromEntries((response.leadingPassages ?? []).map((passage) => [
-      `${passage.race_id}:${passage.mark_id}`,
-      passage.passed_at,
-    ])),
+    leadingPassages: bootstrapLeadingPassages(response.leadingPassages ?? []),
     memberCount: response.memberCount ?? 0,
     resources: {
       boats: response.boats.map((boat) => ({

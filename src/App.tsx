@@ -26,6 +26,8 @@ import {
   INITIAL_WIND,
   type BoardDetail,
   type CommitteeBoat,
+  type LeadingPassageObservation,
+  type LeadingPassageVisit,
   type LngLat,
   type OperationalMessage,
   type OperationalTask,
@@ -40,6 +42,7 @@ import type { EventAccessSummary, EventResources } from './eventClient'
 import { loadEventSnapshot, saveEventSnapshot } from './offlineStore'
 import { useEventRoom, type SequencedOperation } from './realtime'
 import { useOfficialAudioDevice } from './audioDeviceClient'
+import { adoptPassageObservation, mergePassageObservation, passageVisitKey } from './passages'
 
 const DETAIL_KEY = 'srs-board-detail'
 const SCALE_KEY = 'srs-board-scale'
@@ -51,7 +54,7 @@ interface CachedAppState {
   boats: readonly CommitteeBoat[]
   messages: readonly OperationalMessage[]
   tasks: readonly OperationalTask[]
-  leadingPassages: Record<string, string>
+  leadingPassages: Record<string, LeadingPassageVisit>
   memberCount: number
 }
 
@@ -142,7 +145,7 @@ export default function App() {
   const [preparatoryFlag, setPreparatoryFlag] = useState('P旗')
   const [messageDraft, setMessageDraft] = useState('')
   const [messagePriority, setMessagePriority] = useState<OperationalMessage['priority']>('normal')
-  const [leadingPassages, setLeadingPassages] = useState<Record<string, string>>({})
+  const [leadingPassages, setLeadingPassages] = useState<Record<string, LeadingPassageVisit>>({})
   const draggingSplit = useRef(false)
 
   const applyRemoteEvent = useCallback((event: SequencedOperation) => {
@@ -180,12 +183,27 @@ export default function App() {
     }
 
     if (event.type === 'leading-passage') {
-      const payload = event.payload as { markId?: string; passedAt?: string }
-      if (!event.raceId || !payload.markId || !payload.passedAt) return
-      setLeadingPassages((current) => ({
-        ...current,
-        [`${event.raceId}:${payload.markId}`]: payload.passedAt as string,
-      }))
+      const payload = event.payload as {
+        action?: 'observe' | 'adopt'; markId?: string; lapNumber?: number
+        observation?: LeadingPassageObservation; observationId?: string; adoptedAt?: string
+      }
+      if (!event.raceId || !payload.markId) return
+      const lapNumber = payload.lapNumber ?? 1
+      const key = passageVisitKey(event.raceId, payload.markId, lapNumber)
+      if (payload.action === 'observe' && payload.observation) {
+        setLeadingPassages((current) => ({
+          ...current,
+          [key]: mergePassageObservation(
+            current[key], event.raceId as string, payload.markId as string, lapNumber, payload.observation as LeadingPassageObservation,
+          ),
+        }))
+      }
+      if (payload.action === 'adopt' && payload.observationId && payload.adoptedAt) {
+        setLeadingPassages((current) => current[key] ? ({
+          ...current,
+          [key]: adoptPassageObservation(current[key], payload.observationId as string, payload.adoptedAt as string),
+        }) : current)
+      }
     }
 
     if (event.type === 'task') {
@@ -269,6 +287,7 @@ export default function App() {
   )
   const locked = activeRace.status === 'finalized'
   const canControlSignals = !eventAccess || eventAccess.isOwner || ['pro', 'ro', 'signal-boat'].includes(eventAccess.role)
+  const canAdoptLeadingPassage = !eventAccess || eventAccess.isOwner || ['pro', 'ro', 'timekeeper', 'record-keeper', 'signal-boat'].includes(eventAccess.role)
   const officialAudio = useOfficialAudioDevice({
     eventSlug: eventId,
     raceId: activeRace.id,
@@ -429,10 +448,49 @@ export default function App() {
   }
 
   const recordLeadingPassage = (markId: string) => {
-    if (locked) return
+    if (locked && !eventAccess?.isOwner) return
     const passedAt = new Date().toISOString()
-    setLeadingPassages((current) => ({ ...current, [`${activeRace.id}:${markId}`]: passedAt }))
-    void sendRealtimeOperation('leading-passage', { markId, passedAt, lapNumber: 1 }, activeRace.id)
+    const selfBoat = boats.find((boat) => boat.isSelf)
+    void sendRealtimeOperation('leading-passage', {
+      action: 'observe',
+      markId,
+      passedAt,
+      lapNumber: 1,
+      committeeBoatId: selfBoat?.id,
+      deviceId: memberId,
+      clockOffsetMs: Math.round(realtime.serverOffsetMs),
+      syncQuality: realtime.status === 'live' ? 'good' : 'offline',
+      wasOffline: realtime.status !== 'live',
+    }, activeRace.id).then((observationId) => {
+      const observation: LeadingPassageObservation = {
+        id: observationId,
+        passedAt,
+        recordedBy: eventAccess?.displayName ?? 'この端末',
+        syncQuality: realtime.status === 'live' ? 'good' : 'offline',
+        wasOffline: realtime.status !== 'live',
+        status: 'active',
+      }
+      const key = passageVisitKey(activeRace.id, markId, 1)
+      setLeadingPassages((current) => ({
+        ...current,
+        [key]: mergePassageObservation(current[key], activeRace.id, markId, 1, observation),
+      }))
+    })
+  }
+
+  const adoptLeadingPassage = (markId: string, observationId: string) => {
+    if (!canAdoptLeadingPassage || locked && !eventAccess?.isOwner) return
+    const adoptedAt = new Date().toISOString()
+    const key = passageVisitKey(activeRace.id, markId, 1)
+    setLeadingPassages((current) => current[key] ? ({
+      ...current,
+      [key]: adoptPassageObservation(current[key], observationId, adoptedAt),
+    }) : current)
+    void sendRealtimeOperation('leading-passage', {
+      action: 'adopt',
+      observationId,
+      reason: locked ? '大会管理者による確定後の追記訂正' : '記録担当者による採用',
+    }, activeRace.id)
   }
 
   const finalizeRace = () => {
@@ -703,9 +761,12 @@ export default function App() {
               onUseCurrentLocation={updateSelfLocation}
               onRecordDrop={recordMarkDrop}
               onRecordLeadingPassage={recordLeadingPassage}
+              onAdoptLeadingPassage={adoptLeadingPassage}
               leadingPassages={leadingPassages}
               raceId={activeRace.id}
               locked={locked}
+              passageLocked={locked && !eventAccess?.isOwner}
+              canAdoptLeadingPassage={canAdoptLeadingPassage}
             />
           </Suspense>
           <div className="course-advisor glass-panel">

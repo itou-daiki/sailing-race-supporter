@@ -79,6 +79,28 @@ export interface OperationalMessage {
   acknowledgement?: 'pending' | 'acknowledged' | 'done'
 }
 
+export interface LeadingPassageObservation {
+  id: string
+  passedAt: string
+  recordedBy: string
+  syncQuality: 'good' | 'fair' | 'poor' | 'offline' | 'unknown'
+  wasOffline: boolean
+  sailNumber?: string
+  note?: string
+  status: 'active' | 'cancelled' | 'corrected'
+}
+
+export interface LeadingPassageVisit {
+  raceId: string
+  markId: string
+  lapNumber: number
+  observations: LeadingPassageObservation[]
+  adoptedObservationId?: string
+  adoptedAt?: string
+  spreadMilliseconds: number
+  hasConflict: boolean
+}
+
 export interface ClassPerformanceProfile {
   className: SailingClass
   targetMinutes: number

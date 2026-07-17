@@ -710,6 +710,75 @@ select:focus-visible {
   font-weight: 800;
 }
 
+.passage-observations {
+  max-height: 104px;
+  display: grid;
+  gap: 3px;
+  margin-top: 4px;
+  overflow: auto;
+}
+
+.passage-observations__summary {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #31546b;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.passage-observations__summary em {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--danger);
+  font-style: normal;
+}
+
+.passage-candidate {
+  min-width: 225px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 5px;
+  background: rgba(230, 243, 250, 0.78);
+  border: 1px solid #cee1ec;
+  border-radius: 6px;
+}
+
+.passage-candidate.is-adopted {
+  background: #e7f8ef;
+  border-color: #9fd8b8;
+}
+
+.passage-candidate > span {
+  min-width: 0;
+  display: grid;
+  margin-right: auto;
+}
+
+.passage-candidate strong {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.passage-candidate button,
+.passage-candidate b {
+  padding: 3px 6px;
+  color: #fff;
+  background: var(--dodger-strong);
+  border: 0;
+  border-radius: 5px;
+  font-size: 8px;
+  font-weight: 900;
+}
+
+.passage-candidate b {
+  color: var(--success);
+  background: transparent;
+  white-space: nowrap;
+}
+
 .selected-mark__actions {
   display: flex;
   gap: 5px;

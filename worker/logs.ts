@@ -112,16 +112,25 @@ async function collectLogs(env: AppEnv, regattaId: string, raceId: string | null
                LEFT JOIN event_members member ON member.id = event.member_id
                WHERE race.regatta_id = ? AND (? IS NULL OR event.race_id = ?)
                ORDER BY event.executed_at DESC LIMIT ?`, values),
-    rows(env, `SELECT passage.id, passage.race_id, race.race_number, passage.passed_at AS occurred_at,
-                      passage.lap_number, mark.label, passage.source,
-                      member.display_name AS actor
-               FROM leading_passage_events passage
-               JOIN races race ON race.id = passage.race_id
-               JOIN course_nodes node ON node.id = passage.course_node_id
+    rows(env, `SELECT observation.id, observation.race_id, race.race_number,
+                      observation.passed_at AS occurred_at, observation.lap_number,
+                      mark.label, observation.sync_quality, observation.was_offline,
+                      member.display_name AS actor,
+                      CASE WHEN adoption.observation_id = observation.id THEN 1 ELSE 0 END AS adopted
+               FROM leading_passage_observations observation
+               JOIN races race ON race.id = observation.race_id
+               JOIN course_nodes node ON node.id = observation.course_node_id
                LEFT JOIN marks mark ON mark.id = node.mark_id
-               JOIN event_members member ON member.id = passage.recorded_by
-               WHERE race.regatta_id = ? AND (? IS NULL OR passage.race_id = ?)
-               ORDER BY passage.passed_at DESC LIMIT ?`, values),
+               JOIN event_members member ON member.id = observation.recorded_by
+               LEFT JOIN leading_passage_adoptions adoption ON adoption.id = (
+                 SELECT latest.id FROM leading_passage_adoptions latest
+                 WHERE latest.race_id = observation.race_id
+                   AND latest.course_node_id = observation.course_node_id
+                   AND latest.lap_number = observation.lap_number
+                 ORDER BY latest.revision DESC LIMIT 1
+               )
+               WHERE race.regatta_id = ? AND (? IS NULL OR observation.race_id = ?)
+               ORDER BY observation.passed_at DESC LIMIT ?`, values),
     rows(env, `SELECT event.id, event.race_id, race.race_number, event.status,
                       event.revision, event.server_time AS occurred_at,
                       task.title, member.display_name AS actor
@@ -181,7 +190,7 @@ async function collectLogs(env: AppEnv, regattaId: string, raceId: string | null
       id: text(row.id), raceId: nullableText(row.race_id), raceNumber: nullableText(row.race_number),
       sequence: null, occurredAt: text(row.occurred_at), category: 'passage' as const,
       title: `先頭艇 ${text(row.label, 'マーク')}通過`, actor: text(row.actor, '不明'),
-      detail: `${row.lap_number}周目・${text(row.source)}`, eventHash: null,
+      detail: `${row.lap_number}周目・${row.adopted ? '採用済' : '観測候補'}・同期 ${text(row.sync_quality)}${row.was_offline ? '・オフライン' : ''}`, eventHash: null,
     })),
     ...tasks.map((row) => ({
       id: text(row.id), raceId: nullableText(row.race_id), raceNumber: nullableText(row.race_number),

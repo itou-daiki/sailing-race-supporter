@@ -28,6 +28,7 @@ interface ClientAttachment {
   memberId: string
   displayName: string
   role: string
+  assignment: string
   isOwner: boolean
   joinedAt: string
 }
@@ -131,6 +132,7 @@ export class EventRoom extends DurableObject<AppEnv> {
         memberId,
         displayName: decodeURIComponent(encodedDisplayName),
         role,
+        assignment: request.headers.get('x-srs-assignment') ?? '',
         isOwner: request.headers.get('x-srs-owner') === '1',
         joinedAt: new Date().toISOString(),
       }
@@ -215,7 +217,8 @@ export class EventRoom extends DurableObject<AppEnv> {
       const mutatesFinalizedState = new Set<RoomMessage['type']>([
         'wind', 'mark', 'leading-passage', 'task', 'signal',
       ])
-      if (race.status === 'finalized' && mutatesFinalizedState.has(parsed.type)) {
+      const ownerPassageRevision = access.isOwner && parsed.type === 'leading-passage'
+      if (race.status === 'finalized' && mutatesFinalizedState.has(parsed.type) && !ownerPassageRevision) {
         socket.send(JSON.stringify({ type: 'error', code: 'RACE_FINALIZED' }))
         return
       }
@@ -368,7 +371,7 @@ export class EventRoom extends DurableObject<AppEnv> {
       memberId: attachment.memberId,
       displayName: attachment.displayName,
       role: attachment.role,
-      assignment: '',
+      assignment: attachment.assignment,
       isOwner: attachment.isOwner,
     }
   }
@@ -453,14 +456,25 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
     ).bind(regatta.id).all()
 
     const leadingPassages = await env.DB.prepare(
-      `SELECT passage.race_id, node.mark_id, passage.lap_number, passage.passed_at,
-              member.display_name AS recorded_by
-       FROM leading_passage_events passage
-       JOIN races race ON race.id = passage.race_id
-       JOIN course_nodes node ON node.id = passage.course_node_id
-       JOIN event_members member ON member.id = passage.recorded_by
+      `SELECT observation.id, observation.race_id, node.mark_id, observation.lap_number,
+              observation.passed_at, observation.sync_quality, observation.was_offline,
+              observation.sail_number, observation.note, observation.status,
+              member.display_name AS recorded_by,
+              adoption.observation_id AS adopted_observation_id,
+              adoption.adopted_at, adoption.revision AS adoption_revision
+       FROM leading_passage_observations observation
+       JOIN races race ON race.id = observation.race_id
+       JOIN course_nodes node ON node.id = observation.course_node_id
+       JOIN event_members member ON member.id = observation.recorded_by
+       LEFT JOIN leading_passage_adoptions adoption ON adoption.id = (
+         SELECT latest.id FROM leading_passage_adoptions latest
+         WHERE latest.race_id = observation.race_id
+           AND latest.course_node_id = observation.course_node_id
+           AND latest.lap_number = observation.lap_number
+         ORDER BY latest.revision DESC LIMIT 1
+       )
        WHERE race.regatta_id = ?
-       ORDER BY passage.passed_at`,
+       ORDER BY observation.passed_at`,
     ).bind(regatta.id).all()
 
     const memberCount = await env.DB.prepare(
@@ -574,6 +588,7 @@ export default {
         headers.set('x-srs-member-id', access.memberId)
         headers.set('x-srs-display-name', encodeURIComponent(access.displayName))
         headers.set('x-srs-role', access.role)
+        headers.set('x-srs-assignment', access.assignment)
         headers.set('x-srs-owner', access.isOwner ? '1' : '0')
         headers.set('x-srs-event-id', access.eventId)
         headers.set('x-srs-event-slug', access.eventSlug)

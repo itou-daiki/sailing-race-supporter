@@ -253,17 +253,116 @@ async function persistMark(env: AppEnv, access: EventAccess, operation: Realtime
 async function persistLeadingPassage(env: AppEnv, access: EventAccess, operation: RealtimeOperation): Promise<Record<string, unknown>> {
   const raceId = await requireRace(env, access, operation.raceId)
   const payload = objectPayload(operation.payload)
+  const memberId = await requireMemberId(env, access)
+  const action = payload.action === 'adopt' ? 'adopt' : 'observe'
+
+  if (action === 'adopt') {
+    if (!access.isOwner && !['pro', 'ro', 'timekeeper', 'record-keeper', 'signal-boat'].includes(access.role)) {
+      throw new Response('Passage adoption requires a record-keeper role', { status: 403 })
+    }
+    const observationId = stringValue(payload.observationId, 'observationId')
+    const observation = await env.DB.prepare(
+      `SELECT observation.id, observation.course_node_id, observation.lap_number,
+              observation.passed_at, node.mark_id
+       FROM leading_passage_observations observation
+       JOIN races race ON race.id = observation.race_id
+       JOIN course_nodes node ON node.id = observation.course_node_id
+       WHERE observation.id = ? AND observation.race_id = ?
+         AND race.regatta_id = ? AND observation.status = 'active'
+       LIMIT 1`,
+    ).bind(observationId, raceId, access.eventId).first<{
+      id: string; course_node_id: string; lap_number: number; passed_at: string; mark_id: string
+    }>()
+    if (!observation) throw new Response('Passage observation not found', { status: 404 })
+    const latest = await env.DB.prepare(
+      `SELECT id, revision FROM leading_passage_adoptions
+       WHERE race_id = ? AND course_node_id = ? AND lap_number = ?
+       ORDER BY revision DESC LIMIT 1`,
+    ).bind(raceId, observation.course_node_id, observation.lap_number).first<{ id: string; revision: number }>()
+    const adoptedAt = new Date().toISOString()
+    const adoptionId = operation.id
+    const reason = optionalString(payload.reason, 500) ?? (latest ? '採用記録の追記訂正' : '記録担当者による採用')
+    await env.DB.prepare(
+      `INSERT INTO leading_passage_adoptions
+       (id, race_id, course_node_id, lap_number, observation_id, adopted_by,
+        adopted_at, revision, reason, supersedes_adoption_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      adoptionId,
+      raceId,
+      observation.course_node_id,
+      observation.lap_number,
+      observation.id,
+      memberId,
+      adoptedAt,
+      (latest?.revision ?? 0) + 1,
+      reason,
+      latest?.id ?? null,
+      adoptedAt,
+    ).run()
+    return {
+      action: 'adopt',
+      adoptionId,
+      observationId,
+      markId: observation.mark_id,
+      lapNumber: observation.lap_number,
+      passedAt: observation.passed_at,
+      adoptedAt,
+      adoptedBy: access.displayName,
+      revision: (latest?.revision ?? 0) + 1,
+      reason,
+    }
+  }
+
   const markId = stringValue(payload.markId, 'markId')
   const mark = await markForRace(env, access, raceId, markId)
-  const memberId = await requireMemberId(env, access)
   const passedAt = isoTime(payload.passedAt ?? operation.clientTime, new Date().toISOString())
   const lapNumber = Math.trunc(finiteNumber(payload.lapNumber ?? 1, 'lapNumber', 1, 100))
+  const committeeBoatId = typeof payload.committeeBoatId === 'string' ? payload.committeeBoatId : null
+  if (committeeBoatId) await authorizeCommitteeBoat(env, access, committeeBoatId)
+  const receivedAt = new Date().toISOString()
+  const syncQuality = ['good', 'fair', 'poor', 'offline'].includes(String(payload.syncQuality))
+    ? String(payload.syncQuality)
+    : 'unknown'
   await env.DB.prepare(
-    `INSERT INTO leading_passage_events
-     (id, race_id, course_node_id, lap_number, passed_at, recorded_by, source, note)
-     VALUES (?, ?, ?, ?, ?, ?, 'manual-observation', ?)`,
-  ).bind(operation.id, raceId, mark.nodeId, lapNumber, passedAt, memberId, optionalString(payload.note)).run()
-  return { markId, passedAt, lapNumber, recordedBy: access.displayName }
+    `INSERT INTO leading_passage_observations
+     (id, race_id, course_node_id, lap_number, passed_at, recorded_by,
+      committee_boat_id, device_id, received_at, clock_offset_ms, sync_quality,
+      gps_accuracy_metres, was_offline, sail_number, note, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
+  ).bind(
+    operation.id,
+    raceId,
+    mark.nodeId,
+    lapNumber,
+    passedAt,
+    memberId,
+    committeeBoatId,
+    optionalString(payload.deviceId, 160),
+    receivedAt,
+    optionalNumber(payload.clockOffsetMs, 'clockOffsetMs', -86_400_000, 86_400_000),
+    syncQuality,
+    optionalNumber(payload.gpsAccuracyMetres, 'gpsAccuracyMetres', 0, 10_000),
+    payload.wasOffline === true ? 1 : 0,
+    optionalString(payload.sailNumber, 80),
+    optionalString(payload.note),
+    receivedAt,
+  ).run()
+  return {
+    action: 'observe',
+    markId,
+    lapNumber,
+    observation: {
+      id: operation.id,
+      passedAt,
+      recordedBy: access.displayName,
+      syncQuality,
+      wasOffline: payload.wasOffline === true,
+      sailNumber: optionalString(payload.sailNumber, 80),
+      note: optionalString(payload.note),
+      status: 'active',
+    },
+  }
 }
 
 async function persistMessage(env: AppEnv, access: EventAccess, operation: RealtimeOperation): Promise<Record<string, unknown>> {

@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   CircleCheckBig,
   Crosshair,
   LocateFixed,
@@ -13,7 +14,8 @@ import maplibregl, { type GeoJSONSource, type Map as MapLibreMap } from 'maplibr
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Feature, FeatureCollection, LineString, Point } from 'geojson'
 import { bearingDegrees, distanceMetres, estimateEtaSeconds, formatDistance, headingDifferenceDegrees, midpoint } from '../course'
-import type { CommitteeBoat, CourseMark, LngLat, WindObservation } from '../domain'
+import type { CommitteeBoat, CourseMark, LeadingPassageVisit, LngLat, WindObservation } from '../domain'
+import { passageVisitKey } from '../passages'
 
 interface MapViewProps {
   marks: readonly CourseMark[]
@@ -24,9 +26,12 @@ interface MapViewProps {
   onUseCurrentLocation: (position: LngLat, motion: { speedKnots?: number; courseDegrees?: number; accuracyMetres?: number }) => void
   onRecordDrop: (markId: string) => void
   onRecordLeadingPassage: (markId: string) => void
-  leadingPassages: Readonly<Record<string, string>>
+  onAdoptLeadingPassage: (markId: string, observationId: string) => void
+  leadingPassages: Readonly<Record<string, LeadingPassageVisit>>
   raceId: string
   locked: boolean
+  passageLocked: boolean
+  canAdoptLeadingPassage: boolean
 }
 
 const MAP_STYLE: maplibregl.StyleSpecification = {
@@ -167,9 +172,12 @@ export function MapView({
   onUseCurrentLocation,
   onRecordDrop,
   onRecordLeadingPassage,
+  onAdoptLeadingPassage,
   leadingPassages,
   raceId,
   locked,
+  passageLocked,
+  canAdoptLeadingPassage,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
@@ -183,7 +191,9 @@ export function MapView({
   const initialFeaturesRef = useRef(features)
   const selectedMark = marks.find((mark) => mark.id === selectedMarkId)
   const selfBoat = boats.find((boat) => boat.isSelf)
-  const selectedPassageAt = selectedMark ? leadingPassages[`${raceId}:${selectedMark.id}`] : undefined
+  const selectedPassage = selectedMark ? leadingPassages[passageVisitKey(raceId, selectedMark.id, 1)] : undefined
+  const selectedPassageObservations = selectedPassage?.observations.filter((observation) => observation.status === 'active') ?? []
+  const selectedAdoptedPassage = selectedPassageObservations.find((observation) => observation.id === selectedPassage?.adoptedObservationId)
   const selectedDestination = selectedMark?.actual ?? selectedMark?.target
   const selectedDistance = selfBoat && selectedDestination ? distanceMetres(selfBoat.position, selectedDestination) : undefined
   const selectedBearing = selfBoat && selectedDestination ? bearingDegrees(selfBoat.position, selectedDestination) : undefined
@@ -417,28 +427,51 @@ export function MapView({
         ))}
       </div>
 
-      {selectedMark && selfBoat && (
+      {selectedMark && (
         <article className="selected-mark glass-panel">
           <div className="selected-mark__icon"><MapPin size={19} /></div>
           <div className="selected-mark__body">
             <span className="eyebrow">{selectedMark.label}</span>
-            <strong>{formatDistance(selectedDistance ?? 0)}</strong>
-            <small className="selected-mark__navigation">
-              目標方位 {Math.round(selectedBearing ?? 0)}°・{formatEta(selectedEta)}
-            </small>
-            <small className="selected-mark__navigation">
-              {selfBoat.courseDegrees === undefined ? 'COG —（低速または取得不可）' : `COG ${Math.round(selfBoat.courseDegrees)}°・方位差 ${headingDifference === undefined || Math.abs(headingDifference) < 1 ? '0°' : `${headingDifference > 0 ? '右' : '左'}${Math.round(Math.abs(headingDifference))}°`}`}
-              {selectedMark.actual && `・計画差 ${Math.round(distanceMetres(selectedMark.target, selectedMark.actual))}m`}
-            </small>
+            {selfBoat ? <>
+              <strong>{formatDistance(selectedDistance ?? 0)}</strong>
+              <small className="selected-mark__navigation">
+                目標方位 {Math.round(selectedBearing ?? 0)}°・{formatEta(selectedEta)}
+              </small>
+              <small className="selected-mark__navigation">
+                {selfBoat.courseDegrees === undefined ? 'COG —（低速または取得不可）' : `COG ${Math.round(selfBoat.courseDegrees)}°・方位差 ${headingDifference === undefined || Math.abs(headingDifference) < 1 ? '0°' : `${headingDifference > 0 ? '右' : '左'}${Math.round(Math.abs(headingDifference))}°`}`}
+                {selectedMark.actual && `・計画差 ${Math.round(distanceMetres(selectedMark.target, selectedMark.actual))}m`}
+              </small>
+            </> : <small className="selected-mark__navigation">運営ボート位置未取得・時刻記録は利用可能</small>}
             {selectedGate && <small className="gate-metrics">{selectedGate.actual ? '実測' : '計画'}ゲート 幅 {Math.round(distanceMetres(selectedGate.positions[0], selectedGate.positions[1]))}m・方位 {Math.round(bearingDegrees(selectedGate.positions[0], selectedGate.positions[1]))}°・中央 {selectedGate.center[1].toFixed(5)}, {selectedGate.center[0].toFixed(5)}</small>}
-            {selectedPassageAt && <small className="passage-recorded">先頭通過 {new Date(selectedPassageAt).toLocaleTimeString('ja-JP')}</small>}
+            {selectedAdoptedPassage && <small className="passage-recorded">採用 先頭通過 {new Date(selectedAdoptedPassage.passedAt).toLocaleTimeString('ja-JP')}</small>}
+            {selectedPassageObservations.length > 0 && (
+              <div className="passage-observations" aria-label="先頭通過の観測候補">
+                <span className="passage-observations__summary">
+                  観測 {selectedPassageObservations.length}件
+                  {!selectedAdoptedPassage && '・未採用'}
+                  {selectedPassage?.hasConflict && <em><AlertTriangle size={12} /> 差 {(selectedPassage.spreadMilliseconds / 1_000).toFixed(1)}秒</em>}
+                </span>
+                {selectedPassageObservations.map((observation) => (
+                  <span className={`passage-candidate ${observation.id === selectedPassage?.adoptedObservationId ? 'is-adopted' : ''}`} key={observation.id}>
+                    <span>
+                      <strong>{new Date(observation.passedAt).toLocaleTimeString('ja-JP')}</strong>
+                      <small>{observation.recordedBy}{observation.wasOffline ? '・オフライン観測' : ''}</small>
+                    </span>
+                    {canAdoptLeadingPassage && observation.id !== selectedPassage?.adoptedObservationId && (
+                      <button type="button" onClick={() => onAdoptLeadingPassage(selectedMark.id, observation.id)} disabled={passageLocked}>採用</button>
+                    )}
+                    {observation.id === selectedPassage?.adoptedObservationId && <b>採用済</b>}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
           <div className="selected-mark__actions">
-            <button type="button" onClick={() => onRecordDrop(selectedMark.id)} disabled={locked}>
+            <button type="button" onClick={() => onRecordDrop(selectedMark.id)} disabled={locked || !selfBoat}>
               <CircleCheckBig size={14} /> 現在地を投下地点に記録
             </button>
-            <button type="button" onClick={() => onRecordLeadingPassage(selectedMark.id)} disabled={locked || Boolean(selectedPassageAt)}>
-              <Timer size={14} /> {selectedPassageAt ? '先頭通過 記録済み' : '先頭通過を記録'}
+            <button type="button" onClick={() => onRecordLeadingPassage(selectedMark.id)} disabled={passageLocked}>
+              <Timer size={14} /> {selectedPassageObservations.length ? '別観測を追加' : '先頭通過を記録'}
             </button>
           </div>
         </article>
