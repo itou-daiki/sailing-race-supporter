@@ -37,13 +37,23 @@ import { StartSequence } from './components/StartSequence'
 import { loadSession, type SessionState } from './authClient'
 import { createPostFinalizationRevision, loadEventBootstrap, saveCourseRevision } from './eventClient'
 import type { EventAccessSummary, EventResources } from './eventClient'
-import { saveEventSnapshot } from './offlineStore'
+import { loadEventSnapshot, saveEventSnapshot } from './offlineStore'
 import { useEventRoom, type SequencedOperation } from './realtime'
 import { useOfficialAudioDevice } from './audioDeviceClient'
 
 const DETAIL_KEY = 'srs-board-detail'
 const SCALE_KEY = 'srs-board-scale'
 const SPLIT_KEY = 'srs-map-split'
+
+interface CachedAppState {
+  eventName: string
+  races: readonly RaceDefinition[]
+  boats: readonly CommitteeBoat[]
+  messages: readonly OperationalMessage[]
+  tasks: readonly OperationalTask[]
+  leadingPassages: Record<string, string>
+  memberCount: number
+}
 
 const AuthPanel = lazy(() => import('./components/AuthPanel').then((module) => ({ default: module.AuthPanel })))
 const EventManager = lazy(() => import('./components/EventManager').then((module) => ({ default: module.EventManager })))
@@ -279,8 +289,24 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (session.mode !== 'authenticated') return
+    if (session.mode !== 'authenticated' && session.mode !== 'offline-demo') return
     let active = true
+    const applyCachedState = async () => {
+      const cached = await loadEventSnapshot<CachedAppState>(eventId)
+      if (!active || !cached) return
+      setEventName(cached.value.eventName)
+      setRaces(cached.value.races)
+      setActiveRaceId((current) => cached.value.races.some((race) => race.id === current) ? current : cached.value.races[0]?.id ?? current)
+      setBoats(cached.value.boats)
+      setMessages(cached.value.messages)
+      setTasks(cached.value.tasks ?? [])
+      setLeadingPassages(cached.value.leadingPassages)
+      setMemberCount(cached.value.memberCount ?? 0)
+    }
+    if (session.mode === 'offline-demo') {
+      void applyCachedState()
+      return () => { active = false }
+    }
     void loadEventBootstrap(eventId)
       .then((bootstrap) => {
         if (!active) return
@@ -303,9 +329,7 @@ export default function App() {
           setWindDirection(bootstrap.wind.directionDegrees)
         }
       })
-      .catch(() => {
-        // The public Pages demo and inaccessible event URLs retain the local demonstration state.
-      })
+      .catch(() => void applyCachedState())
     return () => { active = false }
   }, [eventId, session.mode])
 
@@ -315,11 +339,11 @@ export default function App() {
         eventId,
         sequence: realtime.lastSequence,
         savedAt: new Date().toISOString(),
-        value: { races, boats, messages, leadingPassages },
+        value: { eventName, races, boats, messages, tasks, leadingPassages, memberCount },
       })
     }, 250)
     return () => window.clearTimeout(timeout)
-  }, [boats, eventId, leadingPassages, messages, races, realtime.lastSequence])
+  }, [boats, eventId, eventName, leadingPassages, memberCount, messages, races, realtime.lastSequence, tasks])
 
   useEffect(() => {
     const move = (event: PointerEvent) => {

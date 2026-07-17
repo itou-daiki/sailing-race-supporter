@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Sailing Race Supporter">
+  <rect width="512" height="512" rx="112" fill="#087ee8"/>
+  <circle cx="256" cy="256" r="184" fill="#0b3857" opacity=".18"/>
+  <path d="M256 92v278M206 148h100M191 210c0 40 29 72 65 72s65-32 65-72M149 282c14 78 48 117 107 117s93-39 107-117M149 282l-40 27M363 282l40 27" fill="none" stroke="#fff" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="256" cy="91" r="33" fill="#fff"/>
+</svg>

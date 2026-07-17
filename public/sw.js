@@ -1,8 +1,18 @@
-const CACHE_NAME = 'sailing-race-supporter-v1'
-const APP_SHELL = ['/', '/manifest.webmanifest']
+const CACHE_NAME = 'sailing-race-supporter-v2'
+const APP_SHELL = ['/manifest.webmanifest', '/icon.svg', '/icon-180.png', '/icon-192.png', '/icon-512.png']
+
+async function cacheApplicationShell() {
+  const cache = await caches.open(CACHE_NAME)
+  const response = await fetch('/', { cache: 'reload' })
+  if (!response.ok) throw new Error('Unable to cache application shell')
+  const html = await response.clone().text()
+  await cache.put('/', response)
+  const assetPaths = [...html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/gu)].map((match) => match[1])
+  await cache.addAll([...new Set([...APP_SHELL, ...assetPaths])])
+}
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)))
+  event.waitUntil(cacheApplicationShell())
   self.skipWaiting()
 })
 
@@ -25,10 +35,13 @@ self.addEventListener('fetch', (event) => {
       fetch(request)
         .then((response) => {
           const copy = response.clone()
-          void caches.open(CACHE_NAME).then((cache) => cache.put('/', copy))
+          void caches.open(CACHE_NAME).then((cache) => Promise.all([
+            cache.put(request, copy.clone()),
+            cache.put('/', copy),
+          ]))
           return response
         })
-        .catch(() => caches.match('/')),
+        .catch(async () => (await caches.match(request)) ?? caches.match('/')),
     )
     return
   }
