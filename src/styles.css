@@ -693,6 +693,17 @@ select:focus-visible {
   font-size: 9px;
 }
 
+.selected-mark .selected-mark__navigation {
+  color: #31546b;
+  font-variant-numeric: tabular-nums;
+}
+
+.selected-mark .gate-metrics {
+  margin-top: 2px;
+  color: #68429b;
+  font-weight: 800;
+}
+
 .selected-mark .passage-recorded {
   margin-top: 2px;
   color: var(--success);

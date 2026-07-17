@@ -29,6 +29,19 @@ export function bearingDegrees(from: LngLat, to: LngLat): number {
   return (toDegrees(Math.atan2(y, x)) + 360) % 360
 }
 
+export function headingDifferenceDegrees(courseDegrees: number, targetBearingDegrees: number): number {
+  return ((targetBearingDegrees - courseDegrees + 540) % 360) - 180
+}
+
+export function estimateEtaSeconds(distance: number, speedKnots: number): number | undefined {
+  if (!Number.isFinite(distance) || distance < 0 || !Number.isFinite(speedKnots) || speedKnots < 0.5) return undefined
+  return distance / (speedKnots * 0.514444)
+}
+
+export function midpoint(from: LngLat, to: LngLat): LngLat {
+  return [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2]
+}
+
 function windSpeedFactor(windKnots: number): number {
   if (windKnots <= 3) return 0.58
   if (windKnots <= 6) return 0.58 + ((windKnots - 3) / 3) * 0.28

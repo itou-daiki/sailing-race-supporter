@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bearingDegrees, distanceMetres, generateCoursePlan, recommendedCourseLength } from '../src/course'
+import { bearingDegrees, distanceMetres, estimateEtaSeconds, generateCoursePlan, headingDifferenceDegrees, midpoint, recommendedCourseLength } from '../src/course'
 
 describe('course calculations', () => {
   it('calculates a short geodesic distance', () => {
@@ -10,6 +10,17 @@ describe('course calculations', () => {
 
   it('returns a northward bearing', () => {
     expect(bearingDegrees([139.46, 35.28], [139.46, 35.29])).toBeCloseTo(0, 4)
+  })
+
+  it('calculates the signed shortest turn and omits low-speed ETA', () => {
+    expect(headingDifferenceDegrees(350, 10)).toBe(20)
+    expect(headingDifferenceDegrees(10, 350)).toBe(-20)
+    expect(estimateEtaSeconds(926, 5)).toBeCloseTo(360, 0)
+    expect(estimateEtaSeconds(100, 0.2)).toBeUndefined()
+  })
+
+  it('calculates a gate center without creating racing-yacht telemetry', () => {
+    expect(midpoint([139.46, 35.28], [139.462, 35.282])).toEqual([139.461, 35.281])
   })
 
   it('uses the selected class target time without measuring racing yacht speed', () => {
