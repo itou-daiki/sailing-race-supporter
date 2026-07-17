@@ -32,6 +32,7 @@ import {
   type OperationalMessage,
   type OperationalTask,
   type RaceDefinition,
+  type RaceSignalEvent,
   type SailingClass,
 } from './domain'
 import { OperationsBoard } from './components/OperationsBoard'
@@ -43,6 +44,7 @@ import { loadEventSnapshot, saveEventSnapshot } from './offlineStore'
 import { useEventRoom, type SequencedOperation } from './realtime'
 import { useOfficialAudioDevice } from './audioDeviceClient'
 import { adoptPassageObservation, mergePassageObservation, passageVisitKey } from './passages'
+import { isRaceSignalHeld, makeRaceSignalEvent } from './signals'
 
 const DETAIL_KEY = 'srs-board-detail'
 const SCALE_KEY = 'srs-board-scale'
@@ -159,7 +161,6 @@ export default function App() {
   const [session, setSession] = useState<SessionState>({ mode: 'checking' })
   const [eventAccess, setEventAccess] = useState<EventAccessSummary>()
   const [eventResources, setEventResources] = useState<EventResources>({ boats: [], marks: [], members: [] })
-  const [postponed, setPostponed] = useState(false)
   const [confirmFinalize, setConfirmFinalize] = useState(false)
   const [revisionOpen, setRevisionOpen] = useState(false)
   const [revisionCourseCode, setRevisionCourseCode] = useState('')
@@ -315,16 +316,18 @@ export default function App() {
     }
 
     if (event.type === 'signal') {
-      const payload = event.payload as { action?: 'postpone' | 'resume'; warningAt?: string }
-      if (payload.action === 'postpone') setPostponed(true)
-      if (payload.action === 'resume') {
-        setPostponed(false)
-        if (event.raceId && payload.warningAt) {
-          setRaces((current) => current.map((race) => (
-            race.id === event.raceId ? { ...race, warningAt: payload.warningAt as string } : race
-          )))
-        }
-      }
+      const payload = event.payload as Partial<Omit<RaceSignalEvent, 'id'>>
+      if (!event.raceId || !payload.action || !payload.executedAt) return
+      const signal = makeRaceSignalEvent(event.id, payload.action, payload.executedAt, payload)
+      const startsSequence = ['warning', 'preparatory', 'one-minute', 'resume', 'general-recall-clear', 'abandon-clear'].includes(signal.action)
+      const startsRace = ['start', 'individual-recall', 'individual-recall-clear', 'shorten'].includes(signal.action)
+      const returnsToSetup = ['postpone', 'postpone-h', 'postpone-a', 'general-recall', 'abandon', 'abandon-h', 'abandon-a'].includes(signal.action)
+      setRaces((current) => current.map((race) => race.id === event.raceId ? {
+        ...race,
+        warningAt: signal.warningAt ?? race.warningAt,
+        latestSignal: signal,
+        status: startsSequence ? 'start-sequence' : startsRace ? 'racing' : returnsToSetup ? 'setup' : race.status,
+      } : race))
     }
   }, [])
 
@@ -337,6 +340,7 @@ export default function App() {
   const sendRealtimeOperation = realtime.send
 
   const activeRace = races.find((race) => race.id === activeRaceId) ?? races[0]
+  const postponed = isRaceSignalHeld(activeRace.latestSignal)
   const marks = useMemo(() => {
     if (activeRace.marks.length) return activeRace.marks
     return races[0].marks.map((mark) => ({
@@ -352,7 +356,7 @@ export default function App() {
     [activeRace.id, tasks],
   )
   const locked = activeRace.status === 'finalized'
-  const canControlSignals = !eventAccess || eventAccess.isOwner || ['pro', 'ro', 'signal-boat'].includes(eventAccess.role)
+  const canControlSignals = !locked && (!eventAccess || eventAccess.isOwner || ['pro', 'ro', 'signal-boat'].includes(eventAccess.role))
   const canAdoptLeadingPassage = !eventAccess || eventAccess.isOwner || ['pro', 'ro', 'timekeeper', 'record-keeper', 'signal-boat'].includes(eventAccess.role)
   const messageRoles = useMemo(
     () => [...new Set(eventResources.members.map((member) => member.role))].sort((left, right) => left.localeCompare(right, 'ja')),
@@ -586,22 +590,19 @@ export default function App() {
     setConfirmFinalize(false)
   }
 
-  const resumeAfterPostponement = () => {
-    const nextWarningAt = new Date(Date.now() + 5 * 60_000).toISOString()
-    setRaces((current) => current.map((race) => (
-      race.id === activeRace.id ? { ...race, warningAt: nextWarningAt } : race
-    )))
-    setPostponed(false)
-    void sendRealtimeOperation('signal', { action: 'resume', warningAt: nextWarningAt }, activeRace.id)
-  }
-
-  const postponeRace = () => {
-    setPostponed(true)
-    void sendRealtimeOperation('signal', { action: 'postpone', executedAt: new Date().toISOString() }, activeRace.id)
-  }
-
-  const recordSignal = useCallback((signal: { action: string; label: string; flag: string; sound: string; executedAt: string }) => {
-    void sendRealtimeOperation('signal', signal, activeRace.id)
+  const recordSignal = useCallback((signal: Omit<RaceSignalEvent, 'id'>) => {
+    void sendRealtimeOperation('signal', signal, activeRace.id).then((id) => {
+      const recorded = makeRaceSignalEvent(id, signal.action, signal.executedAt, signal)
+      const startsSequence = ['warning', 'preparatory', 'one-minute', 'resume', 'general-recall-clear', 'abandon-clear'].includes(recorded.action)
+      const startsRace = ['start', 'individual-recall', 'individual-recall-clear', 'shorten'].includes(recorded.action)
+      const returnsToSetup = ['postpone', 'postpone-h', 'postpone-a', 'general-recall', 'abandon', 'abandon-h', 'abandon-a'].includes(recorded.action)
+      setRaces((current) => current.map((race) => race.id === activeRace.id ? {
+        ...race,
+        warningAt: recorded.warningAt ?? race.warningAt,
+        latestSignal: recorded,
+        status: startsSequence ? 'start-sequence' : startsRace ? 'racing' : returnsToSetup ? 'setup' : race.status,
+      } : race))
+    })
   }, [activeRace.id, sendRealtimeOperation])
 
   const shareWind = () => {
@@ -782,7 +783,6 @@ export default function App() {
               onClick={() => {
                 setActiveRaceId(race.id)
                 setSelectedMarkId(undefined)
-                setPostponed(false)
               }}
               key={race.id}
             >
@@ -819,7 +819,8 @@ export default function App() {
 
       <StartSequence
         warningAt={activeRace.warningAt}
-        postponed={postponed}
+        latestSignal={activeRace.latestSignal}
+        marks={marks}
         serverOffsetMs={realtime.serverOffsetMs}
         canControlSignals={canControlSignals}
         preparatoryFlag={preparatoryFlag}
@@ -827,8 +828,6 @@ export default function App() {
         canForceAudioTakeover={eventAccess?.isOwner ?? false}
         onClaimOfficialAudio={officialAudio.claim}
         onReleaseOfficialAudio={officialAudio.release}
-        onPostpone={postponeRace}
-        onResume={resumeAfterPostponement}
         onSignalExecuted={recordSignal}
       />
 
@@ -902,6 +901,7 @@ export default function App() {
           socketStatus={realtime.status}
           pendingCount={realtime.pendingCount}
           memberCount={memberCount}
+          latestSignal={activeRace.latestSignal}
           onScaleChange={setBoardScale}
           onDetailChange={setBoardDetail}
           onSelectMark={setSelectedMarkId}

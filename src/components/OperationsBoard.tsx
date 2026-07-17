@@ -26,8 +26,10 @@ import type {
   OperationalMessage,
   OperationalTask,
   RaceDefinition,
+  RaceSignalEvent,
   WindObservation,
 } from '../domain'
+import { signalDefinition } from '../signals'
 
 interface OperationsBoardProps {
   race: RaceDefinition
@@ -43,6 +45,7 @@ interface OperationsBoardProps {
   socketStatus: 'connecting' | 'live' | 'offline'
   pendingCount: number
   memberCount: number
+  latestSignal?: RaceSignalEvent
   onScaleChange: (scale: number) => void
   onDetailChange: (detail: BoardDetail) => void
   onSelectMark: (markId: string) => void
@@ -78,6 +81,7 @@ export function OperationsBoard({
   socketStatus,
   pendingCount,
   memberCount,
+  latestSignal,
   onScaleChange,
   onDetailChange,
   onSelectMark,
@@ -91,6 +95,7 @@ export function OperationsBoard({
   const completion = tasks.length
     ? Math.round((tasks.filter((task) => task.status === 'done').length / tasks.length) * 100)
     : 0
+  const controlSignal = latestSignal && signalDefinition(latestSignal.action).group !== 'sequence' ? latestSignal : undefined
 
   const setScale = (next: number) => onScaleChange(Math.min(200, Math.max(75, next)))
 
@@ -132,7 +137,12 @@ export function OperationsBoard({
           {postponed ? (
             <div className="status-banner status-banner--warning">
               <TimerReset size={18} />
-              <div><strong>延期中</strong><small>未実行の信号音は取消済み</small></div>
+              <div><strong>{controlSignal?.label ?? '信号により待機中'}</strong><small>{controlSignal?.flag ?? '未実行の信号音は取消済み'}{controlSignal?.reason ? `・${controlSignal.reason}` : ''}</small></div>
+            </div>
+          ) : controlSignal ? (
+            <div className={`status-banner ${controlSignal.action.includes('recall') || controlSignal.action.startsWith('abandon') ? 'status-banner--warning' : 'status-banner--signal'}`}>
+              <BellRing size={18} />
+              <div><strong>{controlSignal.label}</strong><small>{controlSignal.flag}・{controlSignal.sound}{controlSignal.finishAt ? `・${controlSignal.finishAt}` : ''}</small></div>
             </div>
           ) : (
             <div className="status-banner status-banner--live">

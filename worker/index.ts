@@ -412,6 +412,20 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
       'SELECT id, race_number, class_name, course_code, status, warning_at, target_minutes FROM races WHERE regatta_id = ? ORDER BY race_order',
     ).bind(regatta.id).all()
 
+    const signalEvents = await env.DB.prepare(
+      `SELECT signal.id, signal.race_id, signal.signal_type, signal.scheduled_at,
+              signal.executed_at, signal.payload_json, member.display_name AS actor
+       FROM signal_events signal
+       LEFT JOIN event_members member ON member.id = signal.member_id
+       WHERE signal.race_id IN (SELECT id FROM races WHERE regatta_id = ?)
+         AND signal.id = (
+           SELECT latest.id FROM signal_events latest
+           WHERE latest.race_id = signal.race_id
+           ORDER BY latest.executed_at DESC, latest.rowid DESC LIMIT 1
+         )
+       ORDER BY signal.race_id`,
+    ).bind(regatta.id).all()
+
     const raceAreas = await env.DB.prepare(
       'SELECT id, name, center_lng, center_lat FROM race_areas WHERE regatta_id = ? ORDER BY name',
     ).bind(regatta.id).all()
@@ -547,6 +561,7 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
       },
       regatta,
       races: races.results,
+      signalEvents: signalEvents.results,
       raceAreas: raceAreas.results,
       courseNodes: courseNodes.results,
       markEvents: markEvents.results,

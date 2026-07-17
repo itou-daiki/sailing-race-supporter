@@ -1,18 +1,33 @@
 import {
+  AlertTriangle,
   Bell,
   BellOff,
   CirclePause,
   Flag,
   RotateCcw,
+  Scissors,
   Volume2,
   VolumeX,
+  X,
 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { OfficialAudioState } from '../audioDeviceClient'
+import type { CourseMark, RaceSignalAction, RaceSignalEvent } from '../domain'
+import {
+  canClearRaceSignal,
+  clearActionFor,
+  isRaceSignalHeld,
+  isTerminalRaceSignal,
+  nextWarningAfterFlagRemoval,
+  signalDefinition,
+} from '../signals'
+
+type SignalExecution = Omit<RaceSignalEvent, 'id'>
 
 interface StartSequenceProps {
   warningAt: string
-  postponed: boolean
+  latestSignal?: RaceSignalEvent
+  marks: readonly CourseMark[]
   serverOffsetMs: number
   canControlSignals: boolean
   preparatoryFlag: string
@@ -20,24 +35,43 @@ interface StartSequenceProps {
   canForceAudioTakeover: boolean
   onClaimOfficialAudio: (force?: boolean) => Promise<void>
   onReleaseOfficialAudio: () => Promise<void>
-  onPostpone: () => void
-  onResume: () => void
-  onSignalExecuted: (signal: { action: string; label: string; flag: string; sound: string; executedAt: string }) => void
+  onSignalExecuted: (signal: SignalExecution) => void
 }
 
 interface SignalStage {
   offsetSeconds: number
+  action: RaceSignalAction
   label: string
   flag: string
   sound: '短音1回' | '長音1回'
 }
 
 const SIGNAL_STAGES: readonly SignalStage[] = [
-  { offsetSeconds: 300, label: '予告信号', flag: 'クラス旗 掲揚', sound: '短音1回' },
-  { offsetSeconds: 240, label: '準備信号', flag: 'P / I / Z / U / 黒旗', sound: '短音1回' },
-  { offsetSeconds: 60, label: '1分信号', flag: '準備旗 降下', sound: '長音1回' },
-  { offsetSeconds: 0, label: 'スタート', flag: 'クラス旗 降下', sound: '短音1回' },
+  { offsetSeconds: 300, action: 'warning', label: '予告信号', flag: 'クラス旗 掲揚', sound: '短音1回' },
+  { offsetSeconds: 240, action: 'preparatory', label: '準備信号', flag: 'P / I / Z / U / 黒旗', sound: '短音1回' },
+  { offsetSeconds: 60, action: 'one-minute', label: '1分信号', flag: '準備旗 降下', sound: '長音1回' },
+  { offsetSeconds: 0, action: 'start', label: 'スタート', flag: 'クラス旗 降下', sound: '短音1回' },
 ] as const
+
+const CONTROL_ACTIONS: readonly RaceSignalAction[] = [
+  'postpone', 'individual-recall', 'general-recall', 'shorten', 'abandon',
+]
+
+const DEFAULT_REASONS: Partial<Record<RaceSignalAction, string>> = {
+  postpone: '風待ち・コース設定のため',
+  'postpone-h': '陸上で次の信号を行うため',
+  'postpone-a': '本日のレースを終了するため',
+  'individual-recall': 'OCS艇を確認したため',
+  'individual-recall-clear': '対象艇が正しくスタートしたため',
+  'general-recall': 'OCS艇を特定できない、またはスタート手順に誤りがあったため',
+  'general-recall-clear': '第一代表旗を降下し再スタートするため',
+  shorten: '目標時間と海況を踏まえて短縮するため',
+  abandon: '安全またはレースの公正性を確保するため',
+  'abandon-h': 'レースを中止し、陸上で次の信号を行うため',
+  'abandon-a': 'レースを中止し、本日のレースを終了するため',
+  'abandon-clear': 'N旗を降下し再スタートするため',
+  resume: 'AP旗を降下し再スタートするため',
+}
 
 function formatCountdown(totalSeconds: number): string {
   const sign = totalSeconds < 0 ? '+' : '−'
@@ -45,6 +79,10 @@ function formatCountdown(totalSeconds: number): string {
   const minutes = Math.floor(absolute / 60)
   const seconds = absolute % 60
   return `${sign}${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+}
+
+function formatTime(iso: string): string {
+  return new Intl.DateTimeFormat('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(iso))
 }
 
 function playSignal(long: boolean) {
@@ -63,9 +101,20 @@ function playSignal(long: boolean) {
   oscillator.addEventListener('ended', () => void context.close())
 }
 
+function playSignalPattern(count: number, long = false) {
+  for (let index = 0; index < count; index += 1) {
+    window.setTimeout(() => playSignal(long), index * (long ? 1_450 : 620))
+  }
+}
+
+function signalKey(signal: Pick<RaceSignalEvent, 'action' | 'executedAt'>): string {
+  return `${signal.action}:${signal.executedAt}`
+}
+
 export function StartSequence({
   warningAt,
-  postponed,
+  latestSignal,
+  marks,
   serverOffsetMs,
   canControlSignals,
   preparatoryFlag,
@@ -73,8 +122,6 @@ export function StartSequence({
   canForceAudioTakeover,
   onClaimOfficialAudio,
   onReleaseOfficialAudio,
-  onPostpone,
-  onResume,
   onSignalExecuted,
 }: StartSequenceProps) {
   const [now, setNow] = useState(() => new Date(warningAt).getTime())
@@ -82,8 +129,15 @@ export function StartSequence({
   const [audioTestedRaceId, setAudioTestedRaceId] = useState<string>()
   const [audioWorking, setAudioWorking] = useState(false)
   const [audioError, setAudioError] = useState<string>()
-  const playedRef = useRef(new Set<number>())
+  const [dialogAction, setDialogAction] = useState<RaceSignalAction>()
+  const [reason, setReason] = useState('')
+  const [targetSailNumbers, setTargetSailNumbers] = useState('')
+  const [finishAt, setFinishAt] = useState('')
+  const playedStagesRef = useRef(new Set<number>())
+  const playedSignalsRef = useRef(new Set<string>())
   const audioArmed = armedRaceId === officialAudio.raceId && officialAudio.status === 'mine'
+  const held = isRaceSignalHeld(latestSignal)
+  const terminal = isTerminalRaceSignal(latestSignal)
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now() + serverOffsetMs), 250)
@@ -91,7 +145,7 @@ export function StartSequence({
   }, [serverOffsetMs])
 
   useEffect(() => {
-    playedRef.current.clear()
+    playedStagesRef.current.clear()
   }, [warningAt])
 
   const startAt = new Date(warningAt).getTime() + 300_000
@@ -102,19 +156,32 @@ export function StartSequence({
   }) ?? SIGNAL_STAGES[0]
 
   useEffect(() => {
-    if (!audioArmed || postponed) return
+    if (!audioArmed || held) return
     const stage = SIGNAL_STAGES.find((item) => item.offsetSeconds === remainingSeconds)
-    if (!stage || playedRef.current.has(stage.offsetSeconds)) return
-    playedRef.current.add(stage.offsetSeconds)
-    playSignal(stage.sound === '長音1回')
+    if (!stage || playedStagesRef.current.has(stage.offsetSeconds)) return
+    playedStagesRef.current.add(stage.offsetSeconds)
+    const executedAt = new Date(Date.now() + serverOffsetMs).toISOString()
+    playedSignalsRef.current.add(`${stage.action}:${executedAt}`)
+    playSignalPattern(1, stage.sound === '長音1回')
     onSignalExecuted({
-      action: stage.offsetSeconds === 300 ? 'warning' : stage.offsetSeconds === 240 ? 'preparatory' : stage.offsetSeconds === 60 ? 'one-minute' : 'start',
+      action: stage.action,
       label: stage.label,
-      flag: stage.offsetSeconds === 240 ? preparatoryFlag : stage.flag,
+      flag: stage.action === 'preparatory' ? preparatoryFlag : stage.flag,
       sound: stage.sound,
-      executedAt: new Date(Date.now() + serverOffsetMs).toISOString(),
+      soundCount: 1,
+      executedAt,
     })
-  }, [audioArmed, onSignalExecuted, postponed, preparatoryFlag, remainingSeconds, serverOffsetMs])
+  }, [audioArmed, held, onSignalExecuted, preparatoryFlag, remainingSeconds, serverOffsetMs])
+
+  useEffect(() => {
+    if (!latestSignal || !audioArmed || latestSignal.soundCount < 1) return
+    const key = signalKey(latestSignal)
+    if (playedSignalsRef.current.has(key)) return
+    const age = Date.now() + serverOffsetMs - Date.parse(latestSignal.executedAt)
+    if (!Number.isFinite(age) || age < -2_000 || age > 8_000) return
+    playedSignalsRef.current.add(key)
+    playSignalPattern(latestSignal.soundCount, latestSignal.sound.includes('長音'))
+  }, [audioArmed, latestSignal, serverOffsetMs])
 
   const toggleAudio = async () => {
     if (!canControlSignals || audioWorking) return
@@ -127,8 +194,8 @@ export function StartSequence({
         playSignal(false)
         await onClaimOfficialAudio(true)
         setArmedRaceId(officialAudio.raceId)
-      } catch (reason) {
-        setAudioError(reason instanceof Error ? reason.message : '公式音響を引き継げません')
+      } catch (error) {
+        setAudioError(error instanceof Error ? error.message : '公式音響を引き継げません')
       } finally {
         setAudioWorking(false)
       }
@@ -144,8 +211,8 @@ export function StartSequence({
       try {
         await onClaimOfficialAudio(false)
         setArmedRaceId(officialAudio.raceId)
-      } catch (reason) {
-        setAudioError(reason instanceof Error ? reason.message : '公式音響端末に設定できません')
+      } catch (error) {
+        setAudioError(error instanceof Error ? error.message : '公式音響端末に設定できません')
       } finally {
         setAudioWorking(false)
       }
@@ -163,11 +230,41 @@ export function StartSequence({
       await onReleaseOfficialAudio()
       setArmedRaceId(undefined)
       setAudioTestedRaceId(undefined)
-    } catch (reason) {
-      setAudioError(reason instanceof Error ? reason.message : '公式音響端末を解除できません')
+    } catch (error) {
+      setAudioError(error instanceof Error ? error.message : '公式音響端末を解除できません')
     } finally {
       setAudioWorking(false)
     }
+  }
+
+  const openSignalDialog = (action: RaceSignalAction) => {
+    setDialogAction(action)
+    setReason(DEFAULT_REASONS[action] ?? '')
+    setTargetSailNumbers('')
+    setFinishAt(marks.find((mark) => mark.status === 'confirmed')?.label ?? marks[0]?.label ?? '')
+  }
+
+  const executeControlSignal = () => {
+    if (!dialogAction || !reason.trim()) return
+    const definition = signalDefinition(dialogAction)
+    const executedAt = new Date(Date.now() + serverOffsetMs).toISOString()
+    const clearsHold = ['resume', 'general-recall-clear', 'abandon-clear'].includes(dialogAction)
+    const execution: SignalExecution = {
+      action: dialogAction,
+      label: definition.label,
+      flag: definition.flag,
+      sound: definition.sound,
+      soundCount: definition.soundCount,
+      executedAt,
+      warningAt: clearsHold ? nextWarningAfterFlagRemoval(executedAt) : undefined,
+      reason: reason.trim(),
+      targetSailNumbers: dialogAction === 'individual-recall' ? targetSailNumbers.trim() || undefined : undefined,
+      finishAt: dialogAction === 'shorten' ? finishAt : undefined,
+    }
+    playedSignalsRef.current.add(signalKey(execution))
+    if (audioArmed) playSignalPattern(execution.soundCount, execution.sound.includes('長音'))
+    onSignalExecuted(execution)
+    setDialogAction(undefined)
   }
 
   const audioLabel = !canControlSignals
@@ -187,17 +284,29 @@ export function StartSequence({
         : '公式音響端末を確認中'
   )
 
+  const latestControlSignal = latestSignal && signalDefinition(latestSignal.action).group !== 'sequence' ? latestSignal : undefined
+  const displayLabel = held ? latestControlSignal?.label ?? '信号中' : latestControlSignal?.label ?? `次: ${activeStage.label}`
+  const displayFlag = held
+    ? latestControlSignal?.flag ?? '運営判断待ち'
+    : latestControlSignal?.flag ?? (activeStage.action === 'preparatory' ? preparatoryFlag : activeStage.flag)
+  const displayDetail = latestControlSignal
+    ? `${latestControlSignal.sound}・${formatTime(latestControlSignal.executedAt)}${latestControlSignal.reason ? `・${latestControlSignal.reason}` : ''}`
+    : `${activeStage.sound}・${audioStatus}`
+  const clearDefinition = useMemo(() => latestSignal && canClearRaceSignal(latestSignal)
+    ? signalDefinition(clearActionFor(latestSignal))
+    : undefined, [latestSignal])
+
   return (
-    <section className={`start-sequence ${postponed ? 'is-postponed' : ''}`} aria-label="スタートシーケンス">
+    <section className={`start-sequence ${held ? 'is-postponed is-held' : ''} ${terminal ? 'is-terminal' : ''}`} aria-label="スタートシーケンス">
       <div className="start-sequence__clock">
-        <span className="eyebrow">{postponed ? 'AP・延期中' : `次: ${activeStage.label}`}</span>
-        <strong>{postponed ? 'HOLD' : formatCountdown(remainingSeconds)}</strong>
+        <span className="eyebrow">{displayLabel}</span>
+        <strong>{held ? terminal ? 'STOP' : 'HOLD' : formatCountdown(remainingSeconds)}</strong>
       </div>
       <div className="start-sequence__signal">
-        {postponed ? <CirclePause size={19} /> : <Flag size={19} />}
+        {held ? <CirclePause size={19} /> : <Flag size={19} />}
         <div>
-          <strong>{postponed ? 'シグナルボートの再設定待ち' : activeStage.offsetSeconds === 240 ? preparatoryFlag : activeStage.flag}</strong>
-          <small>{postponed ? '未実行音は取り消されています' : `${activeStage.sound}・${audioStatus}`}</small>
+          <strong>{displayFlag}</strong>
+          <small>{displayDetail}</small>
         </div>
       </div>
       <div className="start-sequence__actions">
@@ -216,16 +325,67 @@ export function StartSequence({
         {officialAudio.status === 'mine' && (
           <button type="button" className="audio-release-button" onClick={() => void releaseAudio()} disabled={audioWorking} title="公式音響端末を解除" aria-label="公式音響端末を解除"><VolumeX size={17} /></button>
         )}
-        {postponed ? (
-          <button type="button" className="resume-button" onClick={onResume} disabled={!canControlSignals}>
-            <RotateCcw size={18} /><span>予告を再設定</span>
+        {clearDefinition ? (
+          <button type="button" className="resume-button" onClick={() => openSignalDialog(clearDefinition.action)} disabled={!canControlSignals} aria-label={clearDefinition.label} title={clearDefinition.label}>
+            <RotateCcw size={18} /><span>{clearDefinition.flag}</span>
+          </button>
+        ) : latestSignal?.action === 'individual-recall' ? (
+          <button type="button" className="resume-button" onClick={() => openSignalDialog('individual-recall-clear')} disabled={!canControlSignals} aria-label="個別リコール終了・X旗降下" title="個別リコール終了・X旗降下">
+            <RotateCcw size={18} /><span>X旗降下</span>
           </button>
         ) : (
-          <button type="button" className="postpone-button" onClick={onPostpone} disabled={!canControlSignals}>
-            {audioArmed ? <BellOff size={18} /> : <Bell size={18} />}<span>延期</span>
+          <button type="button" className="postpone-button" onClick={() => openSignalDialog('postpone')} disabled={!canControlSignals} aria-label="レース信号を選択" title="レース信号を選択">
+            {audioArmed ? <BellOff size={18} /> : <Bell size={18} />}<span>レース信号</span>
           </button>
         )}
       </div>
+
+      {dialogAction && (
+        <div className="signal-dialog-backdrop" role="presentation" onMouseDown={() => setDialogAction(undefined)}>
+          <div className="signal-dialog" role="dialog" aria-modal="true" aria-labelledby="signal-dialog-title" onMouseDown={(event) => event.stopPropagation()}>
+            <header>
+              <div><span className="eyebrow">公式信号</span><strong id="signal-dialog-title">レース委員会の信号を確認</strong></div>
+              <button type="button" onClick={() => setDialogAction(undefined)} aria-label="閉じる"><X size={20} /></button>
+            </header>
+
+            {!['resume', 'general-recall-clear', 'abandon-clear', 'individual-recall-clear'].includes(dialogAction) && (
+              <div className="signal-action-grid" aria-label="信号種別">
+                {CONTROL_ACTIONS.map((action) => {
+                  const definition = signalDefinition(action)
+                  return (
+                    <button type="button" className={dialogAction === action ? 'is-selected' : ''} onClick={() => openSignalDialog(action)} key={action}>
+                      {action === 'shorten' ? <Scissors size={19} /> : action.includes('recall') ? <RotateCcw size={19} /> : <AlertTriangle size={19} />}
+                      <span><strong>{definition.label}</strong><small>{definition.flag}・{definition.sound}</small></span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
+            {dialogAction === 'postpone' || dialogAction === 'postpone-h' || dialogAction === 'postpone-a' ? (
+              <label className="signal-dialog__field"><span>延期信号</span><select value={dialogAction} onChange={(event) => openSignalDialog(event.target.value as RaceSignalAction)}><option value="postpone">AP・海上で再開可能</option><option value="postpone-h">AP over H・次の信号は陸上</option><option value="postpone-a">AP over A・本日これ以上なし</option></select></label>
+            ) : null}
+            {dialogAction === 'abandon' || dialogAction === 'abandon-h' || dialogAction === 'abandon-a' ? (
+              <label className="signal-dialog__field"><span>中止信号</span><select value={dialogAction} onChange={(event) => openSignalDialog(event.target.value as RaceSignalAction)}><option value="abandon">N・スタート海面へ戻る</option><option value="abandon-h">N over H・次の信号は陸上</option><option value="abandon-a">N over A・本日これ以上なし</option></select></label>
+            ) : null}
+            {dialogAction === 'individual-recall' && <label className="signal-dialog__field"><span>対象艇（任意・未特定でも実行可）</span><input value={targetSailNumbers} onChange={(event) => setTargetSailNumbers(event.target.value)} maxLength={200} placeholder="例: JPN 1234, JPN 5678" /></label>}
+            {dialogAction === 'shorten' && <label className="signal-dialog__field"><span>短縮フィニッシュ位置</span><select value={finishAt} onChange={(event) => setFinishAt(event.target.value)}>{marks.map((mark) => <option value={mark.label} key={mark.id}>{mark.label}</option>)}</select></label>}
+            <label className="signal-dialog__field"><span>決定理由（監査ログに保存）</span><textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} rows={2} /></label>
+
+            <div className="signal-confirmation">
+              <Flag size={22} />
+              <div><strong>{signalDefinition(dialogAction).flag}</strong><small>{signalDefinition(dialogAction).sound}{['resume', 'general-recall-clear', 'abandon-clear'].includes(dialogAction) ? '・降下1分後に予告信号' : ''}</small></div>
+            </div>
+            {!audioArmed && <p className="signal-audio-warning"><AlertTriangle size={15} />この端末は公式音響ONではありません。記録は共有され、音はONの公式端末で実行されます。</p>}
+            <footer>
+              <button type="button" className="secondary-button" onClick={() => setDialogAction(undefined)}>戻る</button>
+              <button type="button" className="signal-execute-button" onClick={executeControlSignal} disabled={!reason.trim() || dialogAction === 'shorten' && !finishAt}>
+                <Bell size={17} /> 旗・音響を実行して記録
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
     </section>
   )
 }

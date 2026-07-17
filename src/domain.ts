@@ -45,6 +45,41 @@ export interface RaceDefinition {
   warningAt: string
   targetMinutes: number
   marks: CourseMark[]
+  latestSignal?: RaceSignalEvent
+}
+
+export type RaceSignalAction =
+  | 'warning'
+  | 'preparatory'
+  | 'one-minute'
+  | 'start'
+  | 'postpone'
+  | 'postpone-h'
+  | 'postpone-a'
+  | 'resume'
+  | 'individual-recall'
+  | 'individual-recall-clear'
+  | 'general-recall'
+  | 'general-recall-clear'
+  | 'shorten'
+  | 'abandon'
+  | 'abandon-h'
+  | 'abandon-a'
+  | 'abandon-clear'
+
+export interface RaceSignalEvent {
+  id: string
+  action: RaceSignalAction
+  label: string
+  flag: string
+  sound: string
+  soundCount: number
+  executedAt: string
+  warningAt?: string
+  reason?: string
+  targetSailNumbers?: string
+  finishAt?: string
+  actor?: string
 }
 
 export type SailingClass =

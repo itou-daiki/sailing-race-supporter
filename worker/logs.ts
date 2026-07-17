@@ -45,9 +45,29 @@ function taskStatus(status: string): string {
 function signalTitle(type: string): string {
   const labels: Record<string, string> = {
     warning: '予告信号', preparatory: '準備信号', 'one-minute': '1分信号', start: 'スタート信号',
-    postpone: '延期', resume: '延期解除', recall: 'リコール', abandon: '中止', shorten: 'コース短縮',
+    postpone: '延期', 'postpone-h': '延期・陸上で次の信号', 'postpone-a': '延期・本日これ以上なし',
+    resume: '延期解除・再予告設定',
+    recall: 'リコール', 'individual-recall': '個別リコール', 'individual-recall-clear': '個別リコール終了',
+    'general-recall': 'ゼネラルリコール', 'general-recall-clear': '第一代表旗降下・再予告設定',
+    abandon: '中止', 'abandon-h': '中止・陸上で次の信号', 'abandon-a': '中止・本日これ以上なし',
+    'abandon-clear': 'N旗降下・再予告設定', shorten: 'コース短縮',
   }
   return labels[type] ?? type
+}
+
+function signalDetail(row: Row): string {
+  let payload: Record<string, unknown> = {}
+  try {
+    if (typeof row.payload_json === 'string') payload = JSON.parse(row.payload_json) as Record<string, unknown>
+  } catch { /* A malformed historical payload is still represented by its execution record. */ }
+  return [
+    typeof payload.flag === 'string' ? payload.flag : null,
+    typeof payload.sound === 'string' ? payload.sound : null,
+    typeof payload.reason === 'string' ? `理由 ${payload.reason}` : null,
+    typeof payload.targetSailNumbers === 'string' ? `対象艇 ${payload.targetSailNumbers}` : null,
+    typeof payload.finishAt === 'string' ? `短縮フィニッシュ ${payload.finishAt}` : null,
+    row.scheduled_at ? `次の予告 ${text(row.scheduled_at)}` : null,
+  ].filter(Boolean).join('・') || '実行記録'
 }
 
 function csvCell(value: unknown): string {
@@ -107,7 +127,7 @@ async function collectLogs(env: AppEnv, access: EventAccess, raceId: string | nu
                WHERE observation.regatta_id = ? AND (? IS NULL OR observation.race_id = ?)
                ORDER BY observation.observed_at DESC LIMIT ?`, values),
     rows(env, `SELECT event.id, event.race_id, race.race_number, event.signal_type,
-                      event.executed_at AS occurred_at, event.scheduled_at,
+                      event.executed_at AS occurred_at, event.scheduled_at, event.payload_json,
                       COALESCE(member.display_name, '不明') AS actor
                FROM signal_events event
                JOIN races race ON race.id = event.race_id
@@ -193,7 +213,7 @@ async function collectLogs(env: AppEnv, access: EventAccess, raceId: string | nu
       id: text(row.id), raceId: nullableText(row.race_id), raceNumber: nullableText(row.race_number),
       sequence: null, occurredAt: text(row.occurred_at), category: 'signal' as const,
       title: signalTitle(text(row.signal_type)), actor: text(row.actor, '不明'),
-      detail: row.scheduled_at ? `予定 ${text(row.scheduled_at)}` : '実行記録', eventHash: null,
+      detail: signalDetail(row), eventHash: null,
     })),
     ...passages.map((row) => ({
       id: text(row.id), raceId: nullableText(row.race_id), raceNumber: nullableText(row.race_number),

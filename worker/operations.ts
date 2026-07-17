@@ -1,5 +1,8 @@
 import type { EventAccess } from './authorization.js'
 import type { AppEnv } from './index.js'
+import { appendAuditEvent } from './audit.js'
+import { signalDefinition } from '../src/signals.js'
+import type { RaceSignalAction } from '../src/domain.js'
 
 export interface RealtimeOperation {
   id: string
@@ -575,8 +578,41 @@ async function persistMessage(env: AppEnv, access: EventAccess, operation: Realt
 async function persistSignal(env: AppEnv, access: EventAccess, operation: RealtimeOperation): Promise<Record<string, unknown>> {
   const raceId = await requireRace(env, access, operation.raceId)
   const payload = objectPayload(operation.payload)
-  const action = stringValue(payload.action, 'signal action', 60)
+  const actionValue = stringValue(payload.action, 'signal action', 60)
+  const allowedActions = new Set<RaceSignalAction>([
+    'warning', 'preparatory', 'one-minute', 'start',
+    'postpone', 'postpone-h', 'postpone-a', 'resume',
+    'individual-recall', 'individual-recall-clear', 'general-recall', 'general-recall-clear',
+    'shorten', 'abandon', 'abandon-h', 'abandon-a', 'abandon-clear',
+  ])
+  if (!allowedActions.has(actionValue as RaceSignalAction)) throw new Response('Invalid signal action', { status: 400 })
+  const action = actionValue as RaceSignalAction
+  const definition = signalDefinition(action)
   const executedAt = isoTime(payload.executedAt ?? operation.clientTime, new Date().toISOString())
+  const warningAt = typeof payload.warningAt === 'string' ? isoTime(payload.warningAt, executedAt) : null
+  if (['resume', 'general-recall-clear', 'abandon-clear'].includes(action) && !warningAt) {
+    throw new Response('Next warning time required', { status: 400 })
+  }
+  const reason = optionalString(payload.reason, 500)
+  const targetSailNumbers = optionalString(payload.targetSailNumbers, 200)
+  const finishAt = optionalString(payload.finishAt, 200)
+  if (action === 'shorten' && !finishAt) throw new Response('Shortened finish location required', { status: 400 })
+  const normalizedPayload = {
+    ...payload,
+    action,
+    label: typeof payload.label === 'string' && payload.label.trim() ? payload.label.trim().slice(0, 120) : definition.label,
+    flag: action === 'preparatory' && typeof payload.flag === 'string' && payload.flag.trim()
+      ? payload.flag.trim().slice(0, 120)
+      : definition.flag,
+    sound: definition.sound,
+    soundCount: definition.soundCount,
+    executedAt,
+    warningAt: warningAt ?? undefined,
+    reason: reason ?? undefined,
+    targetSailNumbers: targetSailNumbers ?? undefined,
+    finishAt: finishAt ?? undefined,
+    actor: access.displayName,
+  }
   const memberId = await requireMemberId(env, access)
   await env.DB.prepare(
     `INSERT INTO signal_events
@@ -586,18 +622,43 @@ async function persistSignal(env: AppEnv, access: EventAccess, operation: Realti
     operation.id,
     raceId,
     action,
-    typeof payload.warningAt === 'string' ? isoTime(payload.warningAt, executedAt) : null,
+    warningAt,
     executedAt,
     memberId,
-    JSON.stringify(payload),
+    JSON.stringify(normalizedPayload),
   ).run()
-  if (action === 'resume' && typeof payload.warningAt === 'string') {
+  if (['resume', 'general-recall-clear', 'abandon-clear'].includes(action) && warningAt) {
     await env.DB.prepare(
       `UPDATE races SET warning_at = ?, status = 'start-sequence', updated_at = ?
        WHERE id = ? AND regatta_id = ?`,
-    ).bind(isoTime(payload.warningAt, executedAt), executedAt, raceId, access.eventId).run()
+    ).bind(warningAt, executedAt, raceId, access.eventId).run()
+  } else if (['warning', 'preparatory', 'one-minute'].includes(action)) {
+    await env.DB.prepare(
+      `UPDATE races SET status = 'start-sequence', updated_at = ?
+       WHERE id = ? AND regatta_id = ?`,
+    ).bind(executedAt, raceId, access.eventId).run()
+  } else if (['start', 'individual-recall', 'individual-recall-clear', 'shorten'].includes(action)) {
+    await env.DB.prepare(
+      `UPDATE races SET status = 'racing', updated_at = ?
+       WHERE id = ? AND regatta_id = ?`,
+    ).bind(executedAt, raceId, access.eventId).run()
+  } else if (['postpone', 'postpone-h', 'postpone-a', 'general-recall', 'abandon', 'abandon-h', 'abandon-a'].includes(action)) {
+    await env.DB.prepare(
+      `UPDATE races SET status = 'setup', updated_at = ?
+       WHERE id = ? AND regatta_id = ?`,
+    ).bind(executedAt, raceId, access.eventId).run()
   }
-  return { ...payload, action, executedAt }
+  await appendAuditEvent(env, {
+    access,
+    raceId,
+    action: `signal.${action}`,
+    entityType: 'signal',
+    entityId: operation.id,
+    after: normalizedPayload,
+    reason: reason ?? definition.label,
+    clientTime: operation.clientTime,
+  })
+  return normalizedPayload
 }
 
 async function persistTask(env: AppEnv, access: EventAccess, operation: RealtimeOperation): Promise<Record<string, unknown>> {

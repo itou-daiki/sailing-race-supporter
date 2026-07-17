@@ -5,8 +5,10 @@ import type {
   OperationalMessage,
   OperationalTask,
   RaceDefinition,
+  RaceSignalAction,
   SailingClass,
 } from './domain'
+import { makeRaceSignalEvent } from './signals'
 
 export interface EventSummary {
   id: string
@@ -75,6 +77,10 @@ interface BootstrapResponse {
   races: Array<{
     id: string; race_number: string; class_name: SailingClass; course_code: string
     status: RaceDefinition['status']; warning_at: string; target_minutes: number
+  }>
+  signalEvents: Array<{
+    id: string; race_id: string; signal_type: RaceSignalAction; executed_at: string; scheduled_at: string | null
+    payload_json: string; actor: string | null
   }>
   raceAreas: Array<{ id: string; name: string; center_lng: number | null; center_lat: number | null }>
   courseNodes: Array<{
@@ -244,6 +250,27 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
       try {
         if (latest) corrections = JSON.parse(latest.patch_json) as typeof corrections
       } catch { /* Invalid historical patches do not replace the finalized base record. */ }
+      const signalRow = (response.signalEvents ?? []).find((signal) => signal.race_id === race.id)
+      let signalPayload: Record<string, unknown> = {}
+      try {
+        if (signalRow?.payload_json) signalPayload = JSON.parse(signalRow.payload_json) as Record<string, unknown>
+      } catch { /* A malformed historical payload must not prevent event bootstrap. */ }
+      const latestSignal = signalRow ? makeRaceSignalEvent(
+        signalRow.id,
+        signalRow.signal_type,
+        signalRow.executed_at,
+        {
+          label: typeof signalPayload.label === 'string' ? signalPayload.label : undefined,
+          flag: typeof signalPayload.flag === 'string' ? signalPayload.flag : undefined,
+          sound: typeof signalPayload.sound === 'string' ? signalPayload.sound : undefined,
+          soundCount: typeof signalPayload.soundCount === 'number' ? signalPayload.soundCount : undefined,
+          warningAt: typeof signalPayload.warningAt === 'string' ? signalPayload.warningAt : signalRow.scheduled_at ?? undefined,
+          reason: typeof signalPayload.reason === 'string' ? signalPayload.reason : undefined,
+          targetSailNumbers: typeof signalPayload.targetSailNumbers === 'string' ? signalPayload.targetSailNumbers : undefined,
+          finishAt: typeof signalPayload.finishAt === 'string' ? signalPayload.finishAt : undefined,
+          actor: signalRow.actor ?? undefined,
+        },
+      ) : undefined
       return {
         id: race.id,
         number: race.race_number,
@@ -253,6 +280,7 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
         warningAt: corrections.warningAt ?? race.warning_at,
         targetMinutes: corrections.targetMinutes ?? race.target_minutes,
         marks: bootstrapMarks(response, race.id),
+        latestSignal,
       }
     }),
     boats: response.boats

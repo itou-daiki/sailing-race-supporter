@@ -297,6 +297,10 @@ select:focus-visible {
   background: #7b351e;
 }
 
+.start-sequence.is-terminal {
+  background: #5b1f28;
+}
+
 .start-sequence__clock {
   display: flex;
   align-items: baseline;
@@ -405,6 +409,218 @@ select:focus-visible {
   color: #55210e;
   background: #ffc47f;
   border: 1px solid #ffdbad;
+}
+
+.signal-dialog-backdrop {
+  position: fixed;
+  z-index: 220;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgb(3 20 32 / 72%);
+  backdrop-filter: blur(5px);
+}
+
+.signal-dialog {
+  width: min(680px, 100%);
+  max-height: min(760px, calc(100dvh - 28px));
+  overflow: auto;
+  color: #10273a;
+  background: #f8fbfd;
+  border: 1px solid #b7cedd;
+  border-radius: 18px;
+  box-shadow: 0 28px 80px rgb(0 20 33 / 38%);
+}
+
+.signal-dialog > header {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  background: rgb(248 251 253 / 96%);
+  border-bottom: 1px solid #d6e3eb;
+}
+
+.signal-dialog > header > div {
+  display: flex;
+  flex-direction: column;
+}
+
+.signal-dialog > header .eyebrow {
+  color: var(--dodger-strong);
+}
+
+.signal-dialog > header strong {
+  font-size: 17px;
+}
+
+.signal-dialog > header > button {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  color: #365468;
+  background: #eaf2f7;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.signal-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  padding: 16px 18px 8px;
+}
+
+.signal-action-grid > button {
+  min-height: 70px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  color: #24485f;
+  text-align: left;
+  background: #fff;
+  border: 1px solid #c9dce7;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.signal-action-grid > button.is-selected {
+  color: #073859;
+  background: #e4f3ff;
+  border-color: var(--dodger);
+  box-shadow: 0 0 0 2px rgb(30 144 255 / 12%);
+}
+
+.signal-action-grid > button > svg {
+  flex: 0 0 auto;
+  color: var(--dodger-strong);
+}
+
+.signal-action-grid > button > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.signal-action-grid strong {
+  font-size: 12px;
+}
+
+.signal-action-grid small {
+  color: #607b8d;
+  font-size: 10px;
+}
+
+.signal-dialog__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 18px 0;
+  color: #426176;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.signal-dialog__field input,
+.signal-dialog__field select,
+.signal-dialog__field textarea {
+  width: 100%;
+  padding: 10px 11px;
+  color: #10273a;
+  background: #fff;
+  border: 1px solid #bcd1df;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.signal-dialog__field textarea {
+  resize: vertical;
+}
+
+.signal-confirmation {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin: 14px 18px 0;
+  padding: 12px;
+  color: #722c20;
+  background: #fff1e8;
+  border: 1px solid #f1b596;
+  border-radius: 11px;
+}
+
+.signal-confirmation > div {
+  display: flex;
+  flex-direction: column;
+}
+
+.signal-confirmation strong {
+  font-size: 13px;
+}
+
+.signal-confirmation small {
+  color: #8e523e;
+  font-size: 10px;
+}
+
+.signal-audio-warning {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 10px 18px 0;
+  color: #7a4b19;
+  font-size: 10px;
+}
+
+.signal-dialog > footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 16px;
+  padding: 13px 18px calc(13px + env(safe-area-inset-bottom));
+  background: rgb(248 251 253 / 96%);
+  border-top: 1px solid #d6e3eb;
+}
+
+.signal-dialog > footer button {
+  min-height: 43px;
+  padding: 0 15px;
+  border-radius: 10px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.signal-dialog > footer .secondary-button {
+  color: #3f6176;
+  background: #eaf2f7;
+  border: 1px solid #cadbe5;
+}
+
+.signal-execute-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #fff;
+  background: #c94735;
+  border: 1px solid #ad3425;
+}
+
+.signal-execute-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed !important;
 }
 
 .race-workspace {
@@ -1112,6 +1328,12 @@ select:focus-visible {
   color: #8b3a11;
   background: #fff0df;
   border-color: #f3c291;
+}
+
+.status-banner--signal {
+  color: #075d91;
+  background: #e6f4ff;
+  border-color: #9ed1f3;
 }
 
 .status-banner--locked {
@@ -3865,6 +4087,50 @@ select:focus-visible {
 
   .start-sequence__signal strong {
     font-size: 10px;
+  }
+
+  .signal-dialog-backdrop {
+    align-items: end;
+    padding: 0;
+  }
+
+  .signal-dialog {
+    width: 100%;
+    max-height: calc(100dvh - 16px);
+    border-radius: 18px 18px 0 0;
+  }
+
+  .signal-action-grid {
+    grid-template-columns: 1fr;
+    gap: 7px;
+    padding: 12px 12px 5px;
+  }
+
+  .signal-action-grid > button {
+    min-height: 56px;
+  }
+
+  .signal-dialog__field,
+  .signal-confirmation,
+  .signal-audio-warning {
+    margin-right: 12px;
+    margin-left: 12px;
+  }
+
+  .signal-dialog > header,
+  .signal-dialog > footer {
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+
+  .signal-dialog > footer {
+    display: grid;
+    grid-template-columns: 0.7fr 1.8fr;
+  }
+
+  .signal-dialog > footer button {
+    padding: 0 10px;
+    font-size: 11px;
   }
 
   .course-advisor {
