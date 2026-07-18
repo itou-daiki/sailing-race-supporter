@@ -38,8 +38,46 @@ function nextWebSocketMessage(socket: WebSocket): Promise<Record<string, unknown
   })
 }
 
-async function connectEventRoom(eventId: string, rawSessionToken: string): Promise<WebSocket> {
-  const response = await exports.default.fetch(`https://example.test/api/events/${eventId}/room`, {
+function nextWebSocketMatching(
+  socket: WebSocket,
+  predicate: (message: Record<string, unknown>) => boolean,
+): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup()
+      reject(new Error('Timed out waiting for a matching WebSocket message'))
+    }, 2_000)
+    const cleanup = () => {
+      clearTimeout(timeout)
+      socket.removeEventListener('message', onMessage)
+      socket.removeEventListener('error', onError)
+    }
+    const onMessage = (event: MessageEvent) => {
+      if (typeof event.data !== 'string') return
+      try {
+        const parsed = JSON.parse(event.data) as Record<string, unknown>
+        if (!predicate(parsed)) return
+        cleanup()
+        resolve(parsed)
+      } catch {
+        // Ignore malformed and unrelated frames while waiting for the expected event.
+      }
+    }
+    const onError = () => {
+      cleanup()
+      reject(new Error('WebSocket emitted an error'))
+    }
+    socket.addEventListener('message', onMessage)
+    socket.addEventListener('error', onError)
+  })
+}
+
+async function openEventRoom(
+  eventId: string,
+  rawSessionToken: string,
+  since = 0,
+): Promise<{ socket: WebSocket; snapshot: Record<string, unknown> }> {
+  const response = await exports.default.fetch(`https://example.test/api/events/${eventId}/room?since=${since}`, {
     headers: {
       Cookie: `srs_session=${rawSessionToken}`,
       Origin: 'https://example.test',
@@ -51,8 +89,13 @@ async function connectEventRoom(eventId: string, rawSessionToken: string): Promi
   const socket = response.webSocket!
   const snapshot = nextWebSocketMessage(socket)
   socket.accept()
-  await expect(snapshot).resolves.toMatchObject({ type: 'snapshot' })
-  return socket
+  const resolvedSnapshot = await snapshot
+  expect(resolvedSnapshot).toMatchObject({ type: 'snapshot' })
+  return { socket, snapshot: resolvedSnapshot }
+}
+
+async function connectEventRoom(eventId: string, rawSessionToken: string): Promise<WebSocket> {
+  return (await openEventRoom(eventId, rawSessionToken)).socket
 }
 
 describe('Cloudflare Workers runtime integration', () => {
@@ -164,17 +207,308 @@ describe('Cloudflare Workers runtime integration', () => {
     })
 
     await evictDurableObject(stub)
-    const response = await stub.fetch('https://example.test/snapshot?race=race-runtime')
+    const response = await stub.fetch('https://example.test/snapshot?race=race-runtime', {
+      headers: {
+        'x-srs-event-id': 'runtime-event-room',
+        'x-srs-member-id': 'runtime-owner-member',
+        'x-srs-role': 'owner',
+        'x-srs-owner': '1',
+      },
+    })
     const snapshot = await response.json<{
       sequence: number
-      events: Array<{ event_id: string; sequence: number }>
+      events: Array<{ id: string; sequence: number }>
     }>()
 
     expect(response.status).toBe(200)
     expect(snapshot.sequence).toBe(42)
     expect(snapshot.events).toEqual([
-      expect.objectContaining({ event_id: 'runtime-event-42', sequence: 42 }),
+      expect.objectContaining({ id: 'runtime-event-42', sequence: 42 }),
     ])
+  })
+
+  it('shares course, operating-boat position, wind and mark drops within two seconds and replays a reconnect gap', async () => {
+    const now = new Date().toISOString()
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1_000).toISOString()
+    const eventId = 'runtime-realtime-event'
+    const raceId = 'runtime-realtime-race'
+    const boatId = 'runtime-realtime-boat'
+    const markId = 'runtime-realtime-mark'
+    const courseId = 'runtime-realtime-course'
+    const ownerToken = 'runtime-realtime-owner-session'
+    const viewerToken = 'runtime-realtime-viewer-session'
+    const privateToken = 'runtime-realtime-private-session'
+    const [ownerTokenHash, viewerTokenHash, privateTokenHash] = await Promise.all([
+      sha256Base64Url(ownerToken),
+      sha256Base64Url(viewerToken),
+      sha256Base64Url(privateToken),
+    ])
+
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO users (id, display_name, created_at, updated_at)
+         VALUES (?, ?, ?, ?)`,
+      ).bind('runtime-realtime-owner', 'リアルタイム大会管理者', now, now),
+      env.DB.prepare(
+        `INSERT INTO users (id, display_name, created_at, updated_at)
+         VALUES (?, ?, ?, ?)`,
+      ).bind('runtime-realtime-viewer', '運営閲覧端末', now, now),
+      env.DB.prepare(
+        `INSERT INTO users (id, display_name, created_at, updated_at)
+         VALUES (?, ?, ?, ?)`,
+      ).bind('runtime-realtime-private', 'プロテスト担当', now, now),
+      env.DB.prepare(
+        `INSERT INTO auth_sessions
+         (token_hash, user_id, created_at, expires_at, last_seen_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).bind(ownerTokenHash, 'runtime-realtime-owner', now, expiresAt, now),
+      env.DB.prepare(
+        `INSERT INTO auth_sessions
+         (token_hash, user_id, created_at, expires_at, last_seen_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).bind(viewerTokenHash, 'runtime-realtime-viewer', now, expiresAt, now),
+      env.DB.prepare(
+        `INSERT INTO auth_sessions
+         (token_hash, user_id, created_at, expires_at, last_seen_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).bind(privateTokenHash, 'runtime-realtime-private', now, expiresAt, now),
+      env.DB.prepare(
+        `INSERT INTO regattas
+         (id, slug, name, owner_user_id, starts_on, ends_on, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+      ).bind(eventId, 'runtime-realtime', '複数端末共有テスト大会', 'runtime-realtime-owner', '2026-07-18', '2026-07-19', now, now),
+      env.DB.prepare(
+        `INSERT INTO event_members
+         (id, regatta_id, user_id, display_name, role, assignment, status, joined_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'active', ?)`,
+      ).bind('runtime-realtime-owner-member', eventId, 'runtime-realtime-owner', 'リアルタイム大会管理者', 'owner', '大会管理者', now),
+      env.DB.prepare(
+        `INSERT INTO event_members
+         (id, regatta_id, user_id, display_name, role, assignment, status, joined_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'active', ?)`,
+      ).bind('runtime-realtime-viewer-member', eventId, 'runtime-realtime-viewer', '1マーク運営端末', 'mark-boat', '1マーク', now),
+      env.DB.prepare(
+        `INSERT INTO event_members
+         (id, regatta_id, user_id, display_name, role, assignment, status, joined_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'active', ?)`,
+      ).bind('runtime-realtime-private-member', eventId, 'runtime-realtime-private', 'プロテスト担当', 'protest', 'プロテスト', now),
+      env.DB.prepare(
+        `INSERT INTO race_areas (id, regatta_id, name, room_key, center_lng, center_lat)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).bind('runtime-realtime-area', eventId, 'A海面', 'runtime-realtime-room', 139.76, 35.25),
+      env.DB.prepare(
+        `INSERT INTO races
+         (id, regatta_id, race_area_id, race_number, race_order, class_name, course_code,
+          target_minutes, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'setup', ?, ?)`,
+      ).bind(raceId, eventId, 'runtime-realtime-area', '1R', 1, '470', 'L2', 50, now, now),
+      env.DB.prepare(
+        `INSERT INTO committee_boats
+         (id, regatta_id, name, role, call_sign, status)
+         VALUES (?, ?, ?, ?, ?, 'active')`,
+      ).bind(boatId, eventId, 'マークボートA', 'mark-boat', '1マーク'),
+      env.DB.prepare(
+        `INSERT INTO marks (id, regatta_id, race_area_id, label, mark_type, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).bind(markId, eventId, 'runtime-realtime-area', '1マーク', 'windward', now),
+      env.DB.prepare(
+        `INSERT INTO course_revisions
+         (id, race_id, revision, course_code, target_length_metres, gate_config_json,
+          status, created_by, created_at)
+         VALUES (?, ?, 1, 'L2', 2400, '{}', 'approved', ?, ?)`,
+      ).bind(courseId, raceId, 'runtime-realtime-owner', now),
+      env.DB.prepare(
+        `INSERT INTO course_nodes
+         (id, course_revision_id, node_order, label, node_type, target_lng, target_lat, mark_id)
+         VALUES (?, ?, 1, ?, 'single', ?, ?, ?)`,
+      ).bind('runtime-realtime-node', courseId, '1マーク', 139.761, 35.251, markId),
+      env.DB.prepare(
+        `INSERT INTO event_member_scopes
+         (id, event_member_id, race_area_id, race_id, committee_boat_id, mark_id, permission, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'operate', ?)`,
+      ).bind(
+        'runtime-realtime-viewer-scope',
+        'runtime-realtime-viewer-member',
+        'runtime-realtime-area',
+        raceId,
+        boatId,
+        markId,
+        now,
+      ),
+    ])
+
+    const ownerSocket = await connectEventRoom(eventId, ownerToken)
+    const viewerConnection = await openEventRoom(eventId, viewerToken)
+    const viewerSocket = viewerConnection.socket
+    const sequences: number[] = []
+    const share = async (operation: Record<string, unknown>) => {
+      const operationId = operation.id as string
+      const startedAt = Date.now()
+      const received = nextWebSocketMatching(viewerSocket, (message) => {
+        const event = message.event as { id?: unknown } | undefined
+        return message.type === 'event' && event?.id === operationId
+      })
+      ownerSocket.send(JSON.stringify(operation))
+      const frame = await received
+      expect(Date.now() - startedAt).toBeLessThan(2_000)
+      const event = frame.event as { sequence: number; type: string; payload: Record<string, unknown> }
+      sequences.push(event.sequence)
+      return event
+    }
+
+    const courseEvent = await share({
+      id: 'runtime-realtime-course-refresh',
+      type: 'course',
+      raceId,
+      clientTime: now,
+      payload: { revisionId: courseId },
+    })
+    expect(courseEvent).toMatchObject({ type: 'course', payload: { revisionId: courseId, courseCode: 'L2' } })
+
+    const positionEvent = await share({
+      id: 'runtime-realtime-position-update',
+      type: 'position',
+      raceId,
+      clientTime: now,
+      payload: {
+        committeeBoatId: boatId,
+        position: [139.7608, 35.2508],
+        speedKnots: 6.4,
+        courseDegrees: 18,
+        accuracyMetres: 2.8,
+      },
+    })
+    expect(positionEvent).toMatchObject({
+      type: 'position',
+      payload: { committeeBoatId: boatId, position: [139.7608, 35.2508], speedKnots: 6.4, courseDegrees: 18 },
+    })
+
+    const windEvent = await share({
+      id: 'runtime-realtime-wind-observation',
+      type: 'wind',
+      raceId,
+      clientTime: now,
+      payload: {
+        directionDegrees: 342,
+        speedKnots: 9.6,
+        gustKnots: 11.2,
+        observedAt: now,
+        committeeBoatId: boatId,
+        position: [139.7608, 35.2508],
+        confidence: 'high',
+      },
+    })
+    expect(windEvent).toMatchObject({ type: 'wind', payload: { directionDegrees: 342, speedKnots: 9.6, confidence: 'high' } })
+
+    const markEvent = await share({
+      id: 'runtime-realtime-mark-drop',
+      type: 'mark',
+      raceId,
+      clientTime: now,
+      payload: {
+        markId,
+        actual: [139.7612, 35.2511],
+        status: 'deployed',
+        recordedAt: now,
+        committeeBoatId: boatId,
+        accuracyMetres: 2.4,
+        positionSource: 'handheld-gps-manual',
+        coordinateEntryMode: 'dmm-tail-4',
+        coordinateDatum: 'WGS84',
+      },
+    })
+    expect(markEvent).toMatchObject({
+      type: 'mark',
+      payload: { markId, actual: [139.7612, 35.2511], status: 'deployed', positionSource: 'handheld-gps-manual' },
+    })
+    expect(sequences).toEqual([...sequences].sort((left, right) => left - right))
+    expect(new Set(sequences).size).toBe(sequences.length)
+
+    const lastViewerSequence = sequences.at(-1)!
+    viewerSocket.close(1000, 'temporary disconnect')
+
+    const privateMessageId = 'runtime-realtime-private-message'
+    const privateMessageOnOwner = nextWebSocketMatching(ownerSocket, (message) => {
+      const event = message.event as { id?: unknown } | undefined
+      return message.type === 'event' && event?.id === privateMessageId
+    })
+    ownerSocket.send(JSON.stringify({
+      id: privateMessageId,
+      type: 'message',
+      raceId,
+      clientTime: now,
+      payload: {
+        body: 'プロテスト担当だけに共有する内容',
+        targetType: 'member',
+        targetId: 'runtime-realtime-private-member',
+        priority: 'confirm',
+      },
+    }))
+    await privateMessageOnOwner
+
+    const roomStub = env.EVENT_ROOMS.getByName(eventId)
+    await evictDurableObject(roomStub)
+    const missedWindId = 'runtime-realtime-missed-wind'
+    const missedWindOnOwner = nextWebSocketMatching(ownerSocket, (message) => {
+      const event = message.event as { id?: unknown } | undefined
+      return message.type === 'event' && event?.id === missedWindId
+    })
+    ownerSocket.send(JSON.stringify({
+      id: missedWindId,
+      type: 'wind',
+      raceId,
+      clientTime: now,
+      payload: { directionDegrees: 350, speedKnots: 10.1, observedAt: now, confidence: 'medium' },
+    }))
+    await missedWindOnOwner
+
+    const reconnected = await openEventRoom(eventId, viewerToken, lastViewerSequence)
+    const replayEvents = reconnected.snapshot.events as Array<{ id: string; type: string; sequence: number }>
+    const replayPositions = reconnected.snapshot.positions as Array<{
+      id: string; type: string; payload: { committeeBoatId: string; position: number[] }
+    }>
+    expect(reconnected.snapshot).toMatchObject({
+      type: 'snapshot',
+      replayAfter: lastViewerSequence,
+      resyncRequired: false,
+    })
+    expect(replayEvents).toContainEqual(expect.objectContaining({ id: missedWindId, type: 'wind' }))
+    expect(replayEvents).not.toContainEqual(expect.objectContaining({ id: privateMessageId }))
+    expect(replayPositions).toContainEqual(expect.objectContaining({
+      id: 'runtime-realtime-position-update',
+      type: 'position',
+      payload: expect.objectContaining({ committeeBoatId: boatId, position: [139.7608, 35.2508] }),
+    }))
+
+    const privateConnection = await openEventRoom(eventId, privateToken)
+    const privateReplayEvents = privateConnection.snapshot.events as Array<{ id: string; type: string }>
+    expect(privateConnection.snapshot.positions).toEqual([])
+    expect(privateReplayEvents).toContainEqual(expect.objectContaining({ id: privateMessageId, type: 'message' }))
+    const privateBootstrapResponse = await exports.default.fetch(
+      `https://example.test/api/events/${eventId}/bootstrap`,
+      { headers: { Cookie: `srs_session=${privateToken}` } },
+    )
+    const privateBootstrap = await privateBootstrapResponse.json<{
+      boats: Array<{ id: string; lng: number | null; lat: number | null; speed_knots: number | null }>
+    }>()
+    expect(privateBootstrapResponse.status).toBe(200)
+    expect(privateBootstrap.boats).toContainEqual(expect.objectContaining({
+      id: boatId,
+      lng: null,
+      lat: null,
+      speed_knots: null,
+    }))
+
+    const persistence = await Promise.all([
+      env.DB.prepare('SELECT COUNT(*) AS count FROM position_samples WHERE id = ?').bind('runtime-realtime-position-update').first<{ count: number }>(),
+      env.DB.prepare('SELECT COUNT(*) AS count FROM wind_observations WHERE id IN (?, ?)').bind('runtime-realtime-wind-observation', missedWindId).first<{ count: number }>(),
+      env.DB.prepare('SELECT COUNT(*) AS count FROM mark_events WHERE id = ?').bind('runtime-realtime-mark-drop').first<{ count: number }>(),
+    ])
+    expect(persistence.map((row) => row?.count ?? 0)).toEqual([1, 2, 1])
+
+    reconnected.socket.close(1000, 'test complete')
+    privateConnection.socket.close(1000, 'test complete')
+    ownerSocket.close(1000, 'test complete')
   })
 
   it('requires the owner revision workflow for mark corrections after race finalization', async () => {
@@ -599,9 +933,16 @@ describe('Cloudflare Workers runtime integration', () => {
     })
 
     const roomSnapshot = await env.EVENT_ROOMS.getByName(eventId)
-      .fetch(`https://example.test/snapshot?race=${raceId}`)
-    const roomState = await roomSnapshot.json<{ events: Array<{ event_id: string; type: string }> }>()
-    expect(roomState.events).toContainEqual(expect.objectContaining({ event_id: notificationId, type: 'course' }))
+      .fetch(`https://example.test/snapshot?race=${raceId}`, {
+        headers: {
+          'x-srs-event-id': eventId,
+          'x-srs-member-id': 'runtime-finalized-owner-member',
+          'x-srs-role': 'owner',
+          'x-srs-owner': '1',
+        },
+      })
+    const roomState = await roomSnapshot.json<{ events: Array<{ id: string; type: string }> }>()
+    expect(roomState.events).toContainEqual(expect.objectContaining({ id: notificationId, type: 'course' }))
     expect(roomState.events).not.toContainEqual(expect.objectContaining({ type: 'mark' }))
 
     const disposableDraftResponse = await exports.default.fetch(

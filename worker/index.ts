@@ -44,6 +44,13 @@ interface ClientAttachment {
   joinedAt: string
   sessionTokenHash: string
   accessValidatedAt: number
+  allCommitteeBoatPositions?: boolean
+  committeeBoatIds?: string[]
+}
+
+interface CommitteeBoatPositionAccess {
+  all: boolean
+  committeeBoatIds: string[]
 }
 
 interface RoomMessage {
@@ -58,6 +65,27 @@ interface RoomMessage {
 interface SequencedMessage extends RoomMessage {
   sequence: number
   serverTime: string
+}
+
+interface StoredRoomEvent extends Record<string, string | number | null> {
+  sequence: number
+  event_id: string
+  type: string
+  race_id: string | null
+  member_id: string | null
+  payload_json: string
+  client_time: string | null
+  server_time: string
+}
+
+interface StoredPositionSnapshot extends Record<string, string | number | null> {
+  committee_boat_id: string
+  sequence: number
+  event_id: string
+  member_id: string
+  payload_json: string
+  client_time: string | null
+  server_time: string
 }
 
 interface PositionPersistenceSchedule {
@@ -83,6 +111,9 @@ const ROOM_MESSAGE_TYPES = new Set<RoomMessage['type']>([
   'finalize',
 ])
 
+const ROOM_REPLAY_LIMIT = 200
+const ALL_COMMITTEE_BOAT_POSITION_ROLES = new Set(['pro', 'ro', 'course-setter', 'safety-boat', 'jury'])
+
 function isRoomMessage(value: unknown): value is RoomMessage {
   if (!value || typeof value !== 'object') return false
   const candidate = value as Partial<RoomMessage>
@@ -95,12 +126,76 @@ function isRoomMessage(value: unknown): value is RoomMessage {
   )
 }
 
+function storedRoomEvent(row: StoredRoomEvent): SequencedMessage | undefined {
+  if (!ROOM_MESSAGE_TYPES.has(row.type as RoomMessage['type'])) return undefined
+  try {
+    return {
+      id: row.event_id,
+      type: row.type as RoomMessage['type'],
+      raceId: row.race_id ?? undefined,
+      memberId: row.member_id ?? undefined,
+      payload: JSON.parse(row.payload_json),
+      clientTime: row.client_time ?? undefined,
+      sequence: row.sequence,
+      serverTime: row.server_time,
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function storedPositionSnapshot(row: StoredPositionSnapshot): SequencedMessage | undefined {
+  try {
+    return {
+      id: row.event_id,
+      type: 'position',
+      memberId: row.member_id,
+      payload: JSON.parse(row.payload_json),
+      clientTime: row.client_time ?? undefined,
+      sequence: row.sequence,
+      serverTime: row.server_time,
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function replaySequence(value: string | null): number {
+  if (value == null || !/^\d+$/u.test(value)) return 0
+  const sequence = Number(value)
+  return Number.isSafeInteger(sequence) ? sequence : 0
+}
+
+async function committeeBoatPositionAccess(
+  env: AppEnv,
+  access: Pick<EventAccess, 'eventId' | 'memberId' | 'role' | 'isOwner'> & { assignment?: string },
+): Promise<CommitteeBoatPositionAccess> {
+  if (access.isOwner || ALL_COMMITTEE_BOAT_POSITION_ROLES.has(access.role)) {
+    return { all: true, committeeBoatIds: [] }
+  }
+  if (access.role === 'viewer') return { all: false, committeeBoatIds: [] }
+  const assignment = access.assignment?.trim() ?? ''
+  const scopes = await env.DB.prepare(
+    `SELECT DISTINCT boat.id AS committee_boat_id
+     FROM committee_boats boat
+     LEFT JOIN event_member_scopes scope
+       ON scope.committee_boat_id = boat.id AND scope.event_member_id = ?
+     WHERE boat.regatta_id = ?
+       AND (scope.id IS NOT NULL OR boat.name = ? OR boat.call_sign = ?)`,
+  ).bind(access.memberId, access.eventId, assignment, assignment).all<{ committee_boat_id: string }>()
+  return {
+    all: false,
+    committeeBoatIds: scopes.results.map((scope) => scope.committee_boat_id),
+  }
+}
+
 export class EventRoom extends DurableObject<AppEnv> {
   private sequence = 0
   private sequenceAllocationEnd = 0
   private readonly positionAuthorization = new Map<string, number>()
   private readonly positionPersistenceSchedule = new Map<string, PositionPersistenceSchedule>()
   private readonly lastPositionBroadcastAt = new Map<string, number>()
+  private readonly latestPositions = new Map<string, SequencedMessage>()
   private readonly socketMessageQueues = new WeakMap<WebSocket, Promise<void>>()
   private usageDay = new Date().toISOString().slice(0, 10)
   private roomEventWritesToday = 0
@@ -152,6 +247,14 @@ export class EventRoom extends DurableObject<AppEnv> {
     const positionRows = [...this.ctx.storage.sql.exec<{ sequence: number }>(
       'SELECT COALESCE(MAX(sequence), 0) AS sequence FROM current_positions',
     )]
+    for (const row of this.ctx.storage.sql.exec<StoredPositionSnapshot>(
+      `SELECT committee_boat_id, sequence, event_id, member_id, payload_json,
+              client_time, server_time
+       FROM current_positions ORDER BY committee_boat_id`,
+    )) {
+      const position = storedPositionSnapshot(row)
+      if (position) this.latestPositions.set(row.committee_boat_id, position)
+    }
     const allocationRows = [...this.ctx.storage.sql.exec<{ value: string }>(
       "SELECT value FROM room_meta WHERE key = 'sequence-allocation-end' LIMIT 1",
     )]
@@ -248,25 +351,60 @@ export class EventRoom extends DurableObject<AppEnv> {
       const [client, server] = Object.values(pair)
       const encodedDisplayName = request.headers.get('x-srs-display-name') ?? ''
       const encodedAssignment = request.headers.get('x-srs-assignment') ?? ''
+      const displayName = decodeURIComponent(encodedDisplayName)
+      const assignment = decodeURIComponent(encodedAssignment)
+      const positionAccess = await committeeBoatPositionAccess(this.env, {
+        eventId,
+        memberId,
+        role,
+        isOwner: request.headers.get('x-srs-owner') === '1',
+        assignment,
+      })
       const attachment: ClientAttachment = {
         eventId,
         eventSlug,
         userId,
         memberId,
-        displayName: decodeURIComponent(encodedDisplayName),
+        displayName,
         role,
-        assignment: decodeURIComponent(encodedAssignment),
+        assignment,
         isOwner: request.headers.get('x-srs-owner') === '1',
         joinedAt: new Date().toISOString(),
         sessionTokenHash,
         accessValidatedAt: Date.now(),
+        allCommitteeBoatPositions: positionAccess.all,
+        committeeBoatIds: positionAccess.committeeBoatIds,
       }
+
+      const since = replaySequence(url.searchParams.get('since'))
+      const replayRows = [...this.ctx.storage.sql.exec<StoredRoomEvent>(
+        `SELECT sequence, event_id, type, race_id, member_id, payload_json,
+                client_time, server_time
+         FROM room_events WHERE sequence > ?
+         ORDER BY sequence DESC LIMIT ?`,
+        since,
+        ROOM_REPLAY_LIMIT + 1,
+      )]
+      const replayTruncated = replayRows.length > ROOM_REPLAY_LIMIT
+      const replayEvents = replayRows
+        .slice(0, ROOM_REPLAY_LIMIT)
+        .reverse()
+        .map(storedRoomEvent)
+        .filter((event): event is SequencedMessage => Boolean(event))
+        .filter((event) => this.canReceiveReplayEvent(event, attachment))
+      const positions = [...this.latestPositions.values()]
+        .filter((position) => this.canReceivePosition(position, attachment))
+        .sort((left, right) => left.sequence - right.sequence)
 
       this.ctx.acceptWebSocket(server)
       server.serializeAttachment(attachment)
       server.send(JSON.stringify({
         type: 'snapshot',
         sequence: this.sequence,
+        replayAfter: since,
+        events: replayEvents,
+        positions,
+        resyncRequired: replayTruncated || since > this.sequence,
         members: this.ctx.getWebSockets().length,
         serverTime: new Date().toISOString(),
         budget: this.budgetStatus(),
@@ -284,18 +422,63 @@ export class EventRoom extends DurableObject<AppEnv> {
 
     if (url.pathname.endsWith('/snapshot')) {
       const raceId = url.searchParams.get('race')
+      const eventId = request.headers.get('x-srs-event-id')
+      const memberId = request.headers.get('x-srs-member-id')
+      const role = request.headers.get('x-srs-role')
+      const isOwner = request.headers.get('x-srs-owner') === '1'
+      if (!eventId || !memberId || !role) return json({ error: 'Missing authenticated event context' }, { status: 403 })
+      const since = replaySequence(url.searchParams.get('since'))
       const rows = raceId
-        ? [...this.ctx.storage.sql.exec(
-            'SELECT * FROM room_events WHERE race_id = ? ORDER BY sequence DESC LIMIT 200',
+        ? [...this.ctx.storage.sql.exec<StoredRoomEvent>(
+            `SELECT sequence, event_id, type, race_id, member_id, payload_json,
+                    client_time, server_time
+             FROM room_events WHERE race_id = ? AND sequence > ?
+             ORDER BY sequence DESC LIMIT ?`,
             raceId,
+            since,
+            ROOM_REPLAY_LIMIT + 1,
           )]
-        : [...this.ctx.storage.sql.exec(
-            'SELECT * FROM room_events ORDER BY sequence DESC LIMIT 200',
+        : [...this.ctx.storage.sql.exec<StoredRoomEvent>(
+            `SELECT sequence, event_id, type, race_id, member_id, payload_json,
+                    client_time, server_time
+             FROM room_events WHERE sequence > ?
+             ORDER BY sequence DESC LIMIT ?`,
+            since,
+            ROOM_REPLAY_LIMIT + 1,
           )]
-      const positions = [...this.ctx.storage.sql.exec(
-        'SELECT * FROM current_positions ORDER BY committee_boat_id',
+      const replayRecipient = { memberId, isOwner }
+      const events = rows
+        .slice(0, ROOM_REPLAY_LIMIT)
+        .reverse()
+        .map(storedRoomEvent)
+        .filter((event): event is SequencedMessage => Boolean(event))
+        .filter((event) => this.canReceiveReplayEvent(event, replayRecipient))
+      const positionAccess = await committeeBoatPositionAccess(this.env, {
+        eventId,
+        memberId,
+        role,
+        isOwner,
+        assignment: decodeURIComponent(request.headers.get('x-srs-assignment') ?? ''),
+      })
+      const positionRecipient = {
+        allCommitteeBoatPositions: positionAccess.all,
+        committeeBoatIds: positionAccess.committeeBoatIds,
+      }
+      const positions = [...this.ctx.storage.sql.exec<StoredPositionSnapshot>(
+        `SELECT committee_boat_id, sequence, event_id, member_id, payload_json,
+                client_time, server_time
+         FROM current_positions ORDER BY committee_boat_id`,
       )]
-      return json({ sequence: this.sequence, events: rows.reverse(), positions })
+        .map(storedPositionSnapshot)
+        .filter((position): position is SequencedMessage => Boolean(position))
+        .filter((position) => this.canReceivePosition(position, positionRecipient))
+      return json({
+        sequence: this.sequence,
+        replayAfter: since,
+        events,
+        positions,
+        resyncRequired: rows.length > ROOM_REPLAY_LIMIT || since > this.sequence,
+      })
     }
 
     return json({ error: 'Not found' }, { status: 404 })
@@ -576,6 +759,11 @@ export class EventRoom extends DurableObject<AppEnv> {
       serverTime: new Date().toISOString(),
     }
 
+    if (sequenced.type === 'position') {
+      const committeeBoatId = (sequenced.payload as { committeeBoatId?: unknown }).committeeBoatId
+      if (typeof committeeBoatId === 'string') this.latestPositions.set(committeeBoatId, sequenced)
+    }
+
     if (sequenced.type === 'position' && persistPositionSnapshot) {
       const payload = sequenced.payload as { committeeBoatId?: string; lastSampledAt?: string | null }
       if (payload.committeeBoatId) {
@@ -633,6 +821,8 @@ export class EventRoom extends DurableObject<AppEnv> {
         new Set(messagePayload.recipientMemberIds ?? []),
         messagePayload.senderMemberId ?? attachment.memberId,
       )
+    } else if (sequenced.type === 'position') {
+      this.broadcastPosition({ type: 'event', event: sequenced }, sequenced)
     } else {
       this.broadcast({ type: 'event', event: sequenced })
     }
@@ -699,6 +889,40 @@ export class EventRoom extends DurableObject<AppEnv> {
         socket.send(encoded)
       }
     }
+  }
+
+  private broadcastPosition(data: unknown, position: SequencedMessage): void {
+    const encoded = JSON.stringify(data)
+    for (const socket of this.ctx.getWebSockets()) {
+      const attachment = socket.deserializeAttachment() as ClientAttachment | null
+      if (attachment && this.canReceivePosition(position, attachment)) socket.send(encoded)
+    }
+  }
+
+  private canReceivePosition(
+    event: SequencedMessage,
+    attachment: Pick<ClientAttachment, 'allCommitteeBoatPositions' | 'committeeBoatIds'>,
+  ): boolean {
+    if (attachment.allCommitteeBoatPositions === true) return true
+    const committeeBoatId = event.payload && typeof event.payload === 'object'
+      ? (event.payload as { committeeBoatId?: unknown }).committeeBoatId
+      : undefined
+    return typeof committeeBoatId === 'string' && (attachment.committeeBoatIds ?? []).includes(committeeBoatId)
+  }
+
+  private canReceiveReplayEvent(
+    event: SequencedMessage,
+    attachment: Pick<ClientAttachment, 'isOwner' | 'memberId'>,
+  ): boolean {
+    if (event.type !== 'message') return true
+    const payload = event.payload && typeof event.payload === 'object'
+      ? event.payload as { body?: unknown; recipientMemberIds?: unknown; senderMemberId?: unknown }
+      : undefined
+    if (!payload?.body) return true
+    const recipients = Array.isArray(payload.recipientMemberIds)
+      ? payload.recipientMemberIds.filter((id): id is string => typeof id === 'string')
+      : []
+    return attachment.isOwner || payload.senderMemberId === attachment.memberId || recipients.includes(attachment.memberId)
   }
 
   private accessFromAttachment(attachment: ClientAttachment): EventAccess {
@@ -785,7 +1009,34 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
        )
        WHERE cb.regatta_id = ?
        ORDER BY cb.name`,
-    ).bind(regatta.id).all()
+    ).bind(regatta.id).all<{
+      id: string
+      name: string
+      role: string
+      call_sign: string | null
+      status: string
+      lng: number | null
+      lat: number | null
+      accuracy_metres: number | null
+      speed_knots: number | null
+      course_degrees: number | null
+      sampled_at: string | null
+    }>()
+    const boatPositionAccess = await committeeBoatPositionAccess(env, access)
+    const visibleBoatIds = new Set(boatPositionAccess.committeeBoatIds)
+    const visibleBoats = boats.results.map((boat) => (
+      boatPositionAccess.all || visibleBoatIds.has(boat.id)
+        ? boat
+        : {
+            ...boat,
+            lng: null,
+            lat: null,
+            accuracy_metres: null,
+            speed_knots: null,
+            course_degrees: null,
+            sampled_at: null,
+          }
+    ))
 
     const wind = await env.DB.prepare(
       `SELECT direction_degrees, speed_knots, gust_knots, lng, lat, observed_at, source, confidence
@@ -932,7 +1183,7 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
       raceAreas: raceAreas.results,
       courseNodes: courseNodes.results,
       markEvents: markEvents.results,
-      boats: boats.results,
+      boats: visibleBoats,
       wind,
       current,
       messages: messages.results,

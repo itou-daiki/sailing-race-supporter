@@ -587,6 +587,7 @@ export default function App() {
       if (error.code === 'AUTHENTICATION_REQUIRED' || error.code === 'RECENT_AUTHENTICATION_REQUIRED') setAuthOpen(true)
       setEventRefreshKey((current) => current + 1)
     },
+    onResyncRequired: () => setEventRefreshKey((current) => current + 1),
   })
   const sendRealtimeOperation = realtime.send
 

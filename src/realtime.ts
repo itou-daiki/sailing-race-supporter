@@ -86,18 +86,31 @@ interface UseRealtimeOptions {
   enabled?: boolean
   onEvent?: (event: SequencedOperation) => void
   onOperationError?: (error: RealtimeOperationError, operation?: OperationType) => void
+  onResyncRequired?: () => void
 }
 
-export function useEventRoom({ eventId, memberId, connectionKey = '', enabled = true, onEvent, onOperationError }: UseRealtimeOptions) {
+export function useEventRoom({
+  eventId,
+  memberId,
+  connectionKey = '',
+  enabled = true,
+  onEvent,
+  onOperationError,
+  onResyncRequired,
+}: UseRealtimeOptions) {
   const [status, setStatus] = useState<RealtimeStatus>(enabled ? 'connecting' : 'offline')
   const [pendingCount, setPendingCount] = useState(0)
-  const [lastSequence, setLastSequence] = useState(0)
+  const [sequenceState, setSequenceState] = useState({ eventId, sequence: 0 })
+  const lastSequence = sequenceState.eventId === eventId ? sequenceState.sequence : 0
   const [serverOffsetMs, setServerOffsetMs] = useState(0)
   const [budgetStatus, setBudgetStatus] = useState<RuntimeBudgetStatus>()
   const [connectedKey, setConnectedKey] = useState('')
   const socketRef = useRef<WebSocket | undefined>(undefined)
+  const lastSequenceRef = useRef(0)
+  const sequenceEventIdRef = useRef(eventId)
   const eventHandlerRef = useRef(onEvent)
   const errorHandlerRef = useRef(onOperationError)
+  const resyncHandlerRef = useRef(onResyncRequired)
   const pendingConfirmationsRef = useRef(new Map<string, PendingConfirmation>())
 
   useEffect(() => {
@@ -107,6 +120,10 @@ export function useEventRoom({ eventId, memberId, connectionKey = '', enabled = 
   useEffect(() => {
     errorHandlerRef.current = onOperationError
   }, [onOperationError])
+
+  useEffect(() => {
+    resyncHandlerRef.current = onResyncRequired
+  }, [onResyncRequired])
 
   const refreshPendingCount = useCallback(async () => {
     setPendingCount(await countQueuedOperations(eventId))
@@ -128,6 +145,10 @@ export function useEventRoom({ eventId, memberId, connectionKey = '', enabled = 
 
   useEffect(() => {
     if (!enabled) return
+    if (sequenceEventIdRef.current !== eventId) {
+      sequenceEventIdRef.current = eventId
+      lastSequenceRef.current = 0
+    }
     let socket: WebSocket | undefined
     let reconnectTimer: number | undefined
     let cancelled = false
@@ -136,6 +157,25 @@ export function useEventRoom({ eventId, memberId, connectionKey = '', enabled = 
       const operations = await listQueuedOperations(eventId)
       operations.forEach((operation) => transmit(operation))
       await refreshPendingCount()
+    }
+
+    const advanceSequence = (sequence: number | undefined) => {
+      if (typeof sequence !== 'number' || !Number.isSafeInteger(sequence) || sequence <= lastSequenceRef.current) return
+      lastSequenceRef.current = sequence
+      setSequenceState({ eventId, sequence })
+    }
+
+    const applySequencedEvent = (event: SequencedOperation, forceApply = false) => {
+      const isNew = Number.isSafeInteger(event.sequence) && event.sequence > lastSequenceRef.current
+      if (forceApply || isNew) eventHandlerRef.current?.(event)
+      advanceSequence(event.sequence)
+      void removeQueuedOperation(event.id).then(refreshPendingCount)
+      const confirmation = pendingConfirmationsRef.current.get(event.id)
+      if (confirmation) {
+        window.clearTimeout(confirmation.timeout)
+        pendingConfirmationsRef.current.delete(event.id)
+        confirmation.resolve(event)
+      }
     }
 
     const connect = () => {
@@ -150,7 +190,7 @@ export function useEventRoom({ eventId, memberId, connectionKey = '', enabled = 
       setConnectedKey('')
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       socket = new WebSocket(
-        `${protocol}//${window.location.host}/api/events/${encodeURIComponent(eventId)}/room?member=${encodeURIComponent(memberId)}`,
+        `${protocol}//${window.location.host}/api/events/${encodeURIComponent(eventId)}/room?member=${encodeURIComponent(memberId)}&since=${lastSequenceRef.current}`,
       )
       socketRef.current = socket
       socket.addEventListener('open', () => {
@@ -170,6 +210,9 @@ export function useEventRoom({ eventId, memberId, connectionKey = '', enabled = 
             sequence?: number
             serverTime?: string
             budget?: RuntimeBudgetStatus
+            events?: SequencedOperation[]
+            positions?: SequencedOperation[]
+            resyncRequired?: boolean
           }
           if (envelope.budget) setBudgetStatus(envelope.budget)
           const serverTime = envelope.type === 'event' ? envelope.event?.serverTime : envelope.serverTime
@@ -178,15 +221,7 @@ export function useEventRoom({ eventId, memberId, connectionKey = '', enabled = 
             if (Number.isFinite(measuredOffset)) setServerOffsetMs((current) => current === 0 ? measuredOffset : current * 0.75 + measuredOffset * 0.25)
           }
           if (envelope.type === 'event' && envelope.event) {
-            setLastSequence(envelope.event.sequence)
-            void removeQueuedOperation(envelope.event.id).then(refreshPendingCount)
-            eventHandlerRef.current?.(envelope.event)
-            const confirmation = pendingConfirmationsRef.current.get(envelope.event.id)
-            if (confirmation) {
-              window.clearTimeout(confirmation.timeout)
-              pendingConfirmationsRef.current.delete(envelope.event.id)
-              confirmation.resolve(envelope.event)
-            }
+            applySequencedEvent(envelope.event)
           } else if (envelope.type === 'error' && envelope.code && envelope.id) {
             const confirmation = pendingConfirmationsRef.current.get(envelope.id)
             const operationError = new RealtimeOperationError(envelope.code, envelope.id)
@@ -200,9 +235,17 @@ export function useEventRoom({ eventId, memberId, connectionKey = '', enabled = 
             }
           } else if (envelope.type === 'ack' && envelope.id) {
             void removeQueuedOperation(envelope.id).then(refreshPendingCount)
-            if (typeof envelope.sequence === 'number') setLastSequence(envelope.sequence)
+            advanceSequence(envelope.sequence)
+          } else if (envelope.type === 'snapshot') {
+            const replay = [
+              ...(envelope.events ?? []).map((event) => ({ event, forceApply: false })),
+              ...(envelope.positions ?? []).map((event) => ({ event, forceApply: true })),
+            ].sort((left, right) => left.event.sequence - right.event.sequence)
+            replay.forEach(({ event, forceApply }) => applySequencedEvent(event, forceApply))
+            if (envelope.resyncRequired) resyncHandlerRef.current?.()
+            advanceSequence(envelope.sequence)
           } else if (typeof envelope.sequence === 'number') {
-            setLastSequence(envelope.sequence)
+            advanceSequence(envelope.sequence)
           }
         } catch {
           // Malformed frames are ignored; the server remains authoritative.
