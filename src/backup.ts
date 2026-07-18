@@ -39,6 +39,57 @@ export interface BackupPayload {
   local?: unknown
 }
 
+export interface BackupRestorePreviewItem {
+  raceId: string
+  raceNumber: string
+  status: string
+  action: 'restore' | 'skip-finalized' | 'skip-unchanged' | 'skip-no-source'
+  sourceRevisionId: string | null
+  sourceRevision: number | null
+  sourceCourseCode: string | null
+  sourceNodeCount: number
+  currentRevision: number
+  currentCourseCode: string | null
+  createdRevision: number | null
+  differences: string[]
+}
+
+export interface BackupRestorePreview {
+  generatedAt: string
+  stateHash: string
+  backupHash: string
+  backupCreatedAt: string
+  backupSequence: number
+  items: BackupRestorePreviewItem[]
+  restorableCount: number
+  finalizedSkippedCount: number
+  unchangedSkippedCount: number
+  noSourceCount: number
+}
+
+export interface BackupRestoreReport {
+  format: 'srs-restore-report'
+  schemaVersion: 1
+  createdAt: string
+  createdBy: string
+  event: ServerBackup['event']
+  restoreId: string
+  reason: string
+  source: {
+    backupCreatedAt: string
+    dataHash: string
+    eventSequence: number
+    signatureKeyId: string | null
+  }
+  result: {
+    restored: Array<{ raceId: string; raceNumber: string; sourceRevision: number; revision: number; differences: string[] }>
+    finalizedSkipped: string[]
+    unchangedSkipped: string[]
+    noSourceSkipped: string[]
+  }
+  audit: { sequence: number; eventHash: string }
+}
+
 export interface BackupVerificationReport {
   valid: boolean
   event: ServerBackup['event']
@@ -326,13 +377,31 @@ export async function requestServerBackup(eventSlug: string): Promise<ServerBack
   )).backup
 }
 
+export async function requestBackupRestorePreview(
+  eventSlug: string,
+  backup: ServerBackup,
+): Promise<BackupRestorePreview> {
+  return (await apiJson<{ preview: BackupRestorePreview }>(
+    `/api/events/${encodeURIComponent(eventSlug)}/backups/restore-preview`,
+    { method: 'POST', body: JSON.stringify({ backup }) },
+  )).preview
+}
+
 export async function restoreServerBackup(
   eventSlug: string,
   backup: ServerBackup,
   reason: string,
-): Promise<{ restored: Array<{ raceId: string; revision: number }>; finalizedSkipped: string[]; restoreId: string }> {
+  previewStateHash: string,
+): Promise<{
+  restored: Array<{ raceId: string; raceNumber: string; sourceRevision: number; revision: number; differences: string[] }>
+  finalizedSkipped: string[]
+  unchangedSkipped: string[]
+  noSourceSkipped: string[]
+  restoreId: string
+  report: BackupRestoreReport
+}> {
   return apiJson(`/api/events/${encodeURIComponent(eventSlug)}/backups/restore`, {
     method: 'POST',
-    body: JSON.stringify({ backup, reason }),
+    body: JSON.stringify({ backup, reason, previewStateHash }),
   })
 }

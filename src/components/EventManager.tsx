@@ -2,6 +2,7 @@ import {
   CalendarDays,
   Archive,
   DatabaseBackup,
+  Download,
   Check,
   Clipboard,
   ExternalLink,
@@ -39,10 +40,13 @@ import { createInvite, listInvites, revokeInvite, type InviteRecord } from '../i
 import {
   decryptBackup,
   encryptBackup,
+  requestBackupRestorePreview,
   requestServerBackup,
   restoreServerBackup,
   verifyServerBackup,
   type BackupPayload,
+  type BackupRestorePreview,
+  type BackupRestoreReport,
   type BackupVerificationReport,
   type EncryptedBackup,
 } from '../backup'
@@ -114,6 +118,8 @@ export function EventManager({
   const [backupFile, setBackupFile] = useState<File>()
   const [verifiedBackup, setVerifiedBackup] = useState<BackupPayload>()
   const [backupVerification, setBackupVerification] = useState<BackupVerificationReport>()
+  const [backupRestorePreview, setBackupRestorePreview] = useState<BackupRestorePreview>()
+  const [restoreDownloadReport, setRestoreDownloadReport] = useState<BackupRestoreReport>()
   const [restoreReason, setRestoreReason] = useState('通信障害後の検証済みバックアップからコース版を復元')
   const [backupWorking, setBackupWorking] = useState(false)
   const [backupReport, setBackupReport] = useState<string>()
@@ -275,6 +281,8 @@ export function EventManager({
     setError(undefined)
     setBackupReport(undefined)
     setBackupVerification(undefined)
+    setBackupRestorePreview(undefined)
+    setRestoreDownloadReport(undefined)
     try {
       if (backupFile.size > 25 * 1_024 * 1_024) throw new Error('バックアップは25 MiB以下を選択してください')
       let encrypted: EncryptedBackup
@@ -290,7 +298,9 @@ export function EventManager({
       setBackupVerification(verification)
       if (!verification.valid) throw new Error('バックアップ内部の整合性検証に失敗しました。復元はできません')
       setVerifiedBackup(verified)
-      setBackupReport(`復元前検証に成功：${verification.event.name}・${verification.totalRecords}件・監査連番 ${verification.auditSequence}`)
+      const preview = await requestBackupRestorePreview(currentEventSlug, verified.server)
+      setBackupRestorePreview(preview)
+      setBackupReport(`復元前検証に成功：${verification.event.name}・差分あり ${preview.restorableCount}レース・監査連番 ${verification.auditSequence}`)
     } catch (reason) {
       setVerifiedBackup(undefined)
       setError(reason instanceof Error ? reason.message : 'バックアップを検証できません')
@@ -300,14 +310,21 @@ export function EventManager({
   }
 
   const restoreBackup = async () => {
-    if (!verifiedBackup) return
-    if (!window.confirm('現在のデータを上書きせず、未確定レースに新しいコース復元版を作成します。続けますか？')) return
+    if (!verifiedBackup || !backupRestorePreview) return
+    if (!window.confirm(`現在のデータを上書きせず、差分のある未確定 ${backupRestorePreview.restorableCount}レースに新しいコース復元版を作成します。続けますか？`)) return
     setBackupWorking(true)
     setError(undefined)
     try {
-      const report = await restoreServerBackup(currentEventSlug, verifiedBackup.server, restoreReason)
-      setBackupReport(`${report.restored.length}レースに復元版を作成しました。確定済みスキップ: ${report.finalizedSkipped.length}件`)
+      const result = await restoreServerBackup(
+        currentEventSlug,
+        verifiedBackup.server,
+        restoreReason,
+        backupRestorePreview.stateHash,
+      )
+      setRestoreDownloadReport(result.report)
+      setBackupReport(`${result.restored.length}レースに復元版を作成しました。監査連番 ${result.report.audit.sequence}・レポートを保存できます`)
       setVerifiedBackup(undefined)
+      setBackupRestorePreview(undefined)
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : 'バックアップを復元できません'
       setError(message)
@@ -315,6 +332,17 @@ export function EventManager({
     } finally {
       setBackupWorking(false)
     }
+  }
+
+  const downloadRestoreReport = () => {
+    if (!restoreDownloadReport) return
+    const content = JSON.stringify(restoreDownloadReport, null, 2)
+    const url = URL.createObjectURL(new Blob([content], { type: 'application/json' }))
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `${currentEventSlug}-restore-${restoreDownloadReport.restoreId}.json`
+    anchor.click()
+    URL.revokeObjectURL(url)
   }
 
   const saveRetention = async () => {
@@ -473,11 +501,11 @@ export function EventManager({
               <section className="backup-manager-section">
                 <div className="event-section-title"><span><DatabaseBackup size={17} />暗号化ローカルバックアップ</span><small>AES-GCM</small></div>
                 <div className="backup-manager-card">
-                  <label className="event-field"><span>端末内だけで使うパスフレーズ（10文字以上）</span><input type="password" value={backupPassphrase} onChange={(event) => { setBackupPassphrase(event.target.value); setVerifiedBackup(undefined); setBackupVerification(undefined) }} autoComplete="new-password" placeholder="忘れると復元できません" /></label>
+                  <label className="event-field"><span>端末内だけで使うパスフレーズ（10文字以上）</span><input type="password" value={backupPassphrase} onChange={(event) => { setBackupPassphrase(event.target.value); setVerifiedBackup(undefined); setBackupVerification(undefined); setBackupRestorePreview(undefined) }} autoComplete="new-password" placeholder="忘れると復元できません" /></label>
                   <p>パスフレーズと復号鍵はサーバーへ送信しません。認証Cookie、招待秘密、復元コード、パスキー秘密鍵もバックアップへ含めません。</p>
                   <button type="button" className="backup-primary" onClick={() => void downloadBackup()} disabled={backupWorking || backupPassphrase.length < 10}>{backupWorking ? <LoaderCircle className="is-spinning" size={17} /> : <DatabaseBackup size={17} />}大会記録を暗号化して保存</button>
                   <div className="backup-divider"><span>検証・復元</span></div>
-                  <label className="backup-file"><Upload size={18} /><span>{backupFile?.name ?? '.srs-backupファイルを選択（25 MiB以下）'}</span><input type="file" accept=".srs-backup,application/json" onChange={(event) => { setBackupFile(event.target.files?.[0]); setVerifiedBackup(undefined); setBackupVerification(undefined) }} /></label>
+                  <label className="backup-file"><Upload size={18} /><span>{backupFile?.name ?? '.srs-backupファイルを選択（25 MiB以下）'}</span><input type="file" accept=".srs-backup,application/json" onChange={(event) => { setBackupFile(event.target.files?.[0]); setVerifiedBackup(undefined); setBackupVerification(undefined); setBackupRestorePreview(undefined) }} /></label>
                   <button type="button" className="backup-secondary" onClick={() => void verifyBackup()} disabled={backupWorking || !backupFile || backupPassphrase.length < 10}>復号してハッシュをローカル検証</button>
                   {backupVerification && (
                     <div className={`backup-verification ${backupVerification.valid ? 'is-valid' : 'is-invalid'}`}>
@@ -499,7 +527,18 @@ export function EventManager({
                       <p>作成 {formatTimestamp(backupVerification.createdAt)}・形式 v{backupVerification.schemaVersion}。この検証は端末内で行われ、パスフレーズは送信されません。</p>
                     </div>
                   )}
-                  {verifiedBackup && <div className="backup-restore-controls"><label className="event-field"><span>復元理由（監査ログへ記録）</span><textarea value={restoreReason} onChange={(event) => setRestoreReason(event.target.value)} minLength={5} maxLength={500} /></label><button type="button" onClick={() => void restoreBackup()} disabled={backupWorking || restoreReason.trim().length < 5}>新しい復元版として大会へ反映</button></div>}
+                  {backupRestorePreview && (
+                    <div className="backup-restore-preview">
+                      <header><strong>現在の大会との差分</strong><small>復元 {backupRestorePreview.restorableCount}・確定済み {backupRestorePreview.finalizedSkippedCount}・同一 {backupRestorePreview.unchangedSkippedCount}</small></header>
+                      <div>{backupRestorePreview.items.map((item) => {
+                        const actionLabel = item.action === 'restore' ? `復元版 v${item.createdRevision}を作成` : item.action === 'skip-finalized' ? '確定済み・変更しない' : item.action === 'skip-unchanged' ? '同一・変更しない' : '元版なし'
+                        return <article className={item.action === 'restore' ? 'is-restore' : ''} key={item.raceId}><span><strong>{item.raceNumber}</strong><small>現在 v{item.currentRevision} {item.currentCourseCode ?? '—'} → 保存 v{item.sourceRevision ?? '—'} {item.sourceCourseCode ?? '—'}</small></span><span><b>{actionLabel}</b><small>{item.differences.length ? item.differences.join('・') : `${item.sourceNodeCount}ノード`}</small></span></article>
+                      })}</div>
+                      <p>差分確認後にコースや確定状態が変わった場合、復元は停止して再確認を求めます。</p>
+                    </div>
+                  )}
+                  {verifiedBackup && backupRestorePreview && <div className="backup-restore-controls"><label className="event-field"><span>復元理由（監査ログへ記録）</span><textarea value={restoreReason} onChange={(event) => setRestoreReason(event.target.value)} minLength={5} maxLength={500} /></label><button type="button" onClick={() => void restoreBackup()} disabled={backupWorking || restoreReason.trim().length < 5 || backupRestorePreview.restorableCount === 0}>{backupRestorePreview.restorableCount > 0 ? `${backupRestorePreview.restorableCount}レースを新しい復元版として反映` : '復元が必要な差分はありません'}</button></div>}
+                  {restoreDownloadReport && <button type="button" className="backup-report-download" onClick={downloadRestoreReport}><Download size={16} />監査情報付き復元レポートJSONを保存</button>}
                   {backupReport && <div className="backup-report"><Check size={16} />{backupReport}</div>}
                 </div>
               </section>
