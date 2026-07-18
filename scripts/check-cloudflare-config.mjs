@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
 
-const configuration = await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8')
+const configuration = await readFile(new URL('../wrangler.worker.jsonc', import.meta.url), 'utf8')
 const match = configuration.match(/"database_id"\s*:\s*"([^"]+)"/u)
 const archiveBucket = configuration.match(
   /"binding"\s*:\s*"BACKUP_ARCHIVES"[\s\S]*?"bucket_name"\s*:\s*"([^"]+)"/u,
@@ -12,7 +12,7 @@ if (!match || match[1] === '00000000-0000-0000-0000-000000000000') {
     'Cloudflare D1のdatabase_idが未設定です。',
     '1. npx wrangler login',
     '2. npx wrangler d1 create sailing-race-supporter',
-    '3. 表示されたdatabase_idをwrangler.jsoncへ設定',
+    '3. 表示されたdatabase_idをwrangler.worker.jsoncへ設定',
     '4. npx wrangler r2 bucket create sailing-race-supporter-backups',
     '5. npm run db:migrate:remote',
     '6. npm run deploy:worker',
@@ -21,7 +21,7 @@ if (!match || match[1] === '00000000-0000-0000-0000-000000000000') {
 }
 
 if (!archiveBucket) {
-  console.error('wrangler.jsoncにBACKUP_ARCHIVES R2バインディングがありません。')
+  console.error('wrangler.worker.jsoncにBACKUP_ARCHIVES R2バインディングがありません。')
   process.exit(1)
 }
 

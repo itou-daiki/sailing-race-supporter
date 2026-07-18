@@ -28,7 +28,13 @@ await Promise.all(
 
 await rm(clientDirectory, { recursive: true, force: true })
 
-const forbiddenFileNames = new Set(['.dev.vars', 'wrangler.json'])
+const forbiddenFileNames = new Set([
+  '.dev.vars',
+  'wrangler.json',
+  'wrangler.jsonc',
+  'wrangler.toml',
+  'wrangler.worker.jsonc',
+])
 
 async function collectFiles(directory, relativeDirectory = '') {
   const directoryEntries = await readdir(directory, { withFileTypes: true })
