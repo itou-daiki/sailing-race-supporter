@@ -3424,6 +3424,7 @@ select:focus-visible {
 .event-list-section,
 .event-create-form,
 .invite-manager-section,
+.member-assignment-section,
 .backup-manager-section,
 .retention-manager-section {
   margin: 15px;
@@ -3451,6 +3452,48 @@ select:focus-visible {
 
 .invite-manager-section {
   margin-bottom: 0;
+}
+
+.member-assignment-section {
+  margin-bottom: 0;
+}
+
+.member-assignment-section > p {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.member-assignment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.member-assignment-list > article {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 11px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+}
+
+.member-assignment-list > article > header span {
+  display: flex;
+  flex-direction: column;
+}
+
+.member-assignment-list > article > header strong {
+  color: var(--navy);
+  font-size: 11px;
+}
+
+.member-assignment-list > article > header small {
+  color: var(--muted);
+  font-size: 9px;
 }
 
 .backup-manager-section {

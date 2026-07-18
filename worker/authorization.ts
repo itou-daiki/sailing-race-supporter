@@ -12,6 +12,7 @@ export type OperationPermission =
   | 'message'
   | 'signal'
   | 'schedule'
+  | 'assignment'
   | 'finalize'
   | 'post-finalization-revision'
 
@@ -51,6 +52,7 @@ const ALL_OPERATIONS = new Set<OperationPermission>([
   'message',
   'signal',
   'schedule',
+  'assignment',
   'finalize',
   'post-finalization-revision',
 ])

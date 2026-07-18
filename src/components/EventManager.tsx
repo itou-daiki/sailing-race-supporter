@@ -69,6 +69,15 @@ interface EventManagerProps {
   currentEventName: string
   isCurrentEventOwner: boolean
   resources: EventResources
+  assignmentRealtimeAvailable: boolean
+  onUpdateAssignment: (input: {
+    memberId: string
+    assignment: string
+    raceAreaId?: string
+    committeeBoatId?: string
+    markId?: string
+    reason: string
+  }) => Promise<void>
   onRequestAuthentication: () => void
   onRecoverParticipation: () => void
   onClose: () => void
@@ -103,6 +112,8 @@ export function EventManager({
   currentEventName,
   isCurrentEventOwner,
   resources,
+  assignmentRealtimeAvailable,
+  onUpdateAssignment,
   onRequestAuthentication,
   onRecoverParticipation,
   onClose,
@@ -130,6 +141,10 @@ export function EventManager({
   const [inviteMaxUses, setInviteMaxUses] = useState(1)
   const [generatedInviteUrl, setGeneratedInviteUrl] = useState<string>()
   const [inviteWorking, setInviteWorking] = useState(false)
+  const [assignmentDrafts, setAssignmentDrafts] = useState<Record<string, {
+    assignment: string; raceAreaId: string; committeeBoatId: string; markId: string
+  }>>({})
+  const [assignmentWorkingMemberId, setAssignmentWorkingMemberId] = useState<string>()
   const [backupPassphrase, setBackupPassphrase] = useState('')
   const [backupFile, setBackupFile] = useState<File>()
   const [verifiedBackup, setVerifiedBackup] = useState<BackupPayload>()
@@ -298,6 +313,32 @@ export function EventManager({
       setError(reason instanceof Error ? reason.message : '招待を失効できません')
     } finally {
       setInviteWorking(false)
+    }
+  }
+
+  const updateMemberAssignment = async (memberId: string) => {
+    const draft = assignmentDrafts[memberId]
+    if (!draft?.assignment.trim()) return
+    setAssignmentWorkingMemberId(memberId)
+    setError(undefined)
+    try {
+      await onUpdateAssignment({
+        memberId,
+        assignment: draft.assignment.trim(),
+        raceAreaId: draft.raceAreaId || undefined,
+        committeeBoatId: draft.committeeBoatId || undefined,
+        markId: draft.markId || undefined,
+        reason: '大会管理者による担当・操作範囲の変更',
+      })
+      setAssignmentDrafts((current) => {
+        const next = { ...current }
+        delete next[memberId]
+        return next
+      })
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '担当変更を反映できません')
+    } finally {
+      setAssignmentWorkingMemberId(undefined)
     }
   }
 
@@ -576,7 +617,7 @@ export function EventManager({
                   <div className="event-form-grid">
                     <label className="event-field"><span>役割</span><select value={inviteRole} onChange={(event) => setInviteRole(event.target.value)}><option value="mark-boat">マークボート</option><option value="signal-boat">シグナルボート</option><option value="course-setter">コースセッター</option><option value="safety-boat">安全ボート</option><option value="jury">ジュリー</option><option value="protest">プロテスト</option><option value="pro">PRO</option><option value="ro">RO</option><option value="viewer">閲覧者</option></select></label>
                     <label className="event-field"><span>表示する担当</span><input value={inviteAssignment} onChange={(event) => setInviteAssignment(event.target.value)} maxLength={100} required /></label>
-                    <label className="event-field"><span>担当レースエリア</span><select value={inviteAreaId} onChange={(event) => setInviteAreaId(event.target.value)}><option value="">大会全体</option>{resources.areas.map((area) => <option value={area.id} key={area.id}>{area.name}</option>)}</select></label>
+                    <label className="event-field"><span>担当レースエリア</span><select value={inviteAreaId} onChange={(event) => { setInviteAreaId(event.target.value); setInviteMarkId('') }}><option value="">大会全体</option>{resources.areas.map((area) => <option value={area.id} key={area.id}>{area.name}</option>)}</select></label>
                     <label className="event-field"><span>担当運営ボート</span><select value={inviteBoatId} onChange={(event) => {
                       setInviteBoatId(event.target.value)
                       const boat = resources.boats.find((item) => item.id === event.target.value)
@@ -585,8 +626,8 @@ export function EventManager({
                     <label className="event-field"><span>担当マーク</span><select value={inviteMarkId} onChange={(event) => {
                       setInviteMarkId(event.target.value)
                       const mark = resources.marks.find((item) => item.id === event.target.value)
-                      if (mark) setInviteAssignment(mark.label)
-                    }}><option value="">指定なし</option>{resources.marks.map((mark) => <option value={mark.id} key={mark.id}>{mark.label}</option>)}</select></label>
+                      if (mark) { setInviteAssignment(mark.label); if (mark.raceAreaId) setInviteAreaId(mark.raceAreaId) }
+                    }}><option value="">指定なし</option>{resources.marks.filter((mark) => !inviteAreaId || !mark.raceAreaId || mark.raceAreaId === inviteAreaId).map((mark) => <option value={mark.id} key={mark.id}>{mark.label}</option>)}</select></label>
                     <label className="event-field"><span>使用可能人数</span><input type="number" min="1" max="500" value={inviteMaxUses} onChange={(event) => setInviteMaxUses(Number(event.target.value))} /></label>
                   </div>
                   <button type="submit" className="invite-issue-button" disabled={inviteWorking || !inviteAssignment.trim()}>{inviteWorking ? <LoaderCircle className="is-spinning" size={17} /> : <Link2 size={17} />}招待URLを発行</button>
@@ -604,6 +645,42 @@ export function EventManager({
                     {!invite.revoked_at && <button type="button" onClick={() => void removeInvite(invite.id)} aria-label="招待を失効"><Trash2 size={15} /></button>}
                   </div>
                 ))}</div>}
+              </section>
+            )}
+
+            {isCurrentEventOwner && resources.members.some((member) => member.role !== 'owner') && (
+              <section className="member-assignment-section">
+                <div className="event-section-title"><span><UserPlus size={17} />参加者の現在担当</span><small>即時反映・追記監査</small></div>
+                <p>変更対象の旧接続を切り、最新の海面・運営ボート・マーク権限で自動再接続します。</p>
+                <div className="member-assignment-list">
+                  {resources.members.filter((member) => member.role !== 'owner').map((member) => {
+                    const draft = assignmentDrafts[member.id] ?? {
+                      assignment: member.assignment,
+                      raceAreaId: member.raceAreaId ?? '',
+                      committeeBoatId: member.committeeBoatId ?? '',
+                      markId: member.markId ?? '',
+                    }
+                    const marksForArea = resources.marks.filter((mark) => !draft.raceAreaId || !mark.raceAreaId || mark.raceAreaId === draft.raceAreaId)
+                    return <article key={member.id}>
+                      <header><span><strong>{member.displayName}</strong><small>{member.role}・現在 {member.assignment}</small></span></header>
+                      <div className="event-form-grid">
+                        <label className="event-field"><span>表示する担当</span><input value={draft.assignment} maxLength={100} onChange={(event) => setAssignmentDrafts((current) => ({ ...current, [member.id]: { ...draft, assignment: event.target.value } }))} /></label>
+                        <label className="event-field"><span>レースエリア</span><select value={draft.raceAreaId} onChange={(event) => setAssignmentDrafts((current) => ({ ...current, [member.id]: { ...draft, raceAreaId: event.target.value, markId: '' } }))}><option value="">大会全体</option>{resources.areas.map((area) => <option value={area.id} key={area.id}>{area.name}</option>)}</select></label>
+                        <label className="event-field"><span>運営ボート</span><select value={draft.committeeBoatId} onChange={(event) => {
+                          const boat = resources.boats.find((candidate) => candidate.id === event.target.value)
+                          setAssignmentDrafts((current) => ({ ...current, [member.id]: { ...draft, committeeBoatId: event.target.value, assignment: boat?.assignment ?? draft.assignment } }))
+                        }}><option value="">指定なし</option>{resources.boats.map((boat) => <option value={boat.id} key={boat.id}>{boat.name}／{boat.assignment}</option>)}</select></label>
+                        <label className="event-field"><span>マーク</span><select value={draft.markId} onChange={(event) => {
+                          const mark = resources.marks.find((candidate) => candidate.id === event.target.value)
+                          setAssignmentDrafts((current) => ({ ...current, [member.id]: { ...draft, markId: event.target.value, raceAreaId: mark?.raceAreaId ?? draft.raceAreaId, assignment: mark?.label ?? draft.assignment } }))
+                        }}><option value="">指定なし</option>{marksForArea.map((mark) => <option value={mark.id} key={mark.id}>{mark.label}</option>)}</select></label>
+                      </div>
+                      <button type="button" className="invite-issue-button" disabled={!assignmentRealtimeAvailable || assignmentWorkingMemberId === member.id || !draft.assignment.trim()} onClick={() => void updateMemberAssignment(member.id)}>
+                        {assignmentWorkingMemberId === member.id ? <LoaderCircle className="is-spinning" size={17} /> : <ShieldCheck size={17} />}担当と権限を反映
+                      </button>
+                    </article>
+                  })}
+                </div>
               </section>
             )}
 

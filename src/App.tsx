@@ -71,6 +71,7 @@ const operationLabels: Record<string, string> = {
   position: '運営ボート位置', wind: '風向風速', current: '潮流', mark: 'マーク操作',
   'leading-passage': '先頭通過', finish: 'フィニッシュ', task: '運用タスク', message: 'メッセージ',
   signal: 'レース信号', 'signal-audio': '公式音響', schedule: '予告予定', finalize: 'レース確定',
+  assignment: '担当変更',
 }
 
 interface CachedAppState {
@@ -404,6 +405,25 @@ export default function App() {
         confidence: payload.confidence ?? 'low',
         position: payload.position,
       })
+    }
+
+    if (event.type === 'assignment') {
+      const payload = event.payload as {
+        memberId?: string; assignment?: string; raceAreaId?: string
+        committeeBoatId?: string; markId?: string
+      }
+      if (!payload.memberId || !payload.assignment) return
+      setEventResources((current) => ({
+        ...current,
+        members: current.members.map((member) => member.id === payload.memberId ? {
+          ...member,
+          assignment: payload.assignment as string,
+          raceAreaId: payload.raceAreaId,
+          committeeBoatId: payload.committeeBoatId,
+          markId: payload.markId,
+        } : member),
+      }))
+      setEventRefreshKey((current) => current + 1)
     }
 
     if (event.type === 'message') {
@@ -1554,6 +1574,8 @@ export default function App() {
             currentEventName={eventName}
             isCurrentEventOwner={eventAccess?.isOwner ?? false}
             resources={eventResources}
+            assignmentRealtimeAvailable={realtime.status === 'live'}
+            onUpdateAssignment={async (input) => { await realtime.sendConfirmed('assignment', input) }}
             onRequestAuthentication={() => { setEventManagerOpen(false); setAuthOpen(true) }}
             onRecoverParticipation={() => { setEventManagerOpen(false); setRecoveryOpen(true) }}
             onClose={() => setEventManagerOpen(false)}

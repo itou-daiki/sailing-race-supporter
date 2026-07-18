@@ -9,7 +9,7 @@ import { geodesicDistanceMetres } from '../shared/geo.js'
 
 export interface RealtimeOperation {
   id: string
-  type: 'presence' | 'position' | 'wind' | 'current' | 'mark' | 'leading-passage' | 'finish' | 'task' | 'message' | 'signal' | 'signal-audio' | 'schedule' | 'finalize'
+  type: 'presence' | 'position' | 'wind' | 'current' | 'mark' | 'leading-passage' | 'finish' | 'task' | 'message' | 'signal' | 'signal-audio' | 'schedule' | 'assignment' | 'finalize'
   raceId?: string
   payload: unknown
   clientTime?: string
@@ -97,7 +97,6 @@ export async function authorizeCommitteeBoat(
      WHERE event_member_id = ? AND committee_boat_id = ? LIMIT 1`,
   ).bind(access.memberId, committeeBoatId).first<{ allowed: number }>()
   if (scoped) return
-  if (access.assignment === boat.name || access.assignment === boat.call_sign) return
   throw new Response('Operating boat assignment required', { status: 403 })
 }
 
@@ -252,8 +251,7 @@ async function markForRace(
       `SELECT 1 AS allowed FROM event_member_scopes
        WHERE event_member_id = ? AND mark_id = ? LIMIT 1`,
     ).bind(access.memberId, markId).first<{ allowed: number }>()
-    const assignmentMatches = access.assignment === mark.label || access.assignment.startsWith(mark.label.replace('マーク', ''))
-    if (!scoped && !assignmentMatches) throw new Response('Mark assignment required', { status: 403 })
+    if (!scoped) throw new Response('Mark assignment required', { status: 403 })
   }
   return { markId: mark.mark_id, nodeId: mark.node_id, label: mark.label, target: [mark.target_lng, mark.target_lat] }
 }
@@ -1180,6 +1178,85 @@ async function persistTask(env: AppEnv, access: EventAccess, operation: Realtime
   return { taskId, status, revision, changedBy: access.displayName, changedAt: serverTime }
 }
 
+async function persistAssignment(env: AppEnv, access: EventAccess, operation: RealtimeOperation): Promise<Record<string, unknown>> {
+  if (!access.isOwner) throw new Response('Event owner required', { status: 403 })
+  const payload = objectPayload(operation.payload)
+  const memberId = stringValue(payload.memberId, 'memberId', 160)
+  const assignment = stringValue(payload.assignment, 'assignment', 100)
+  const requestedAreaId = optionalString(payload.raceAreaId, 160)
+  const committeeBoatId = optionalString(payload.committeeBoatId, 160)
+  const markId = optionalString(payload.markId, 160)
+  const member = await env.DB.prepare(
+    `SELECT id, display_name, role, assignment FROM event_members
+     WHERE id = ? AND regatta_id = ? AND status = 'active' LIMIT 1`,
+  ).bind(memberId, access.eventId).first<{
+    id: string; display_name: string; role: string; assignment: string
+  }>()
+  if (!member) throw new Response('Active event member not found', { status: 404 })
+  if (member.role === 'owner') throw new Response('Event owner assignment cannot be changed here', { status: 409 })
+
+  let raceAreaId = requestedAreaId
+  if (raceAreaId) {
+    const area = await env.DB.prepare(
+      'SELECT id FROM race_areas WHERE id = ? AND regatta_id = ? LIMIT 1',
+    ).bind(raceAreaId, access.eventId).first()
+    if (!area) throw new Response('Race area not found', { status: 404 })
+  }
+  if (committeeBoatId) {
+    const boat = await env.DB.prepare(
+      'SELECT id FROM committee_boats WHERE id = ? AND regatta_id = ? AND status = \'active\' LIMIT 1',
+    ).bind(committeeBoatId, access.eventId).first()
+    if (!boat) throw new Response('Operating boat not found', { status: 404 })
+  }
+  if (markId) {
+    const mark = await env.DB.prepare(
+      'SELECT id, race_area_id FROM marks WHERE id = ? AND regatta_id = ? LIMIT 1',
+    ).bind(markId, access.eventId).first<{ id: string; race_area_id: string }>()
+    if (!mark) throw new Response('Mark not found', { status: 404 })
+    if (raceAreaId && mark.race_area_id !== raceAreaId) throw new Response('Mark is outside the selected race area', { status: 409 })
+    raceAreaId ??= mark.race_area_id
+  }
+
+  const existingScopes = (await env.DB.prepare(
+    `SELECT race_area_id, race_id, committee_boat_id, mark_id, permission
+     FROM event_member_scopes WHERE event_member_id = ? ORDER BY created_at, id`,
+  ).bind(memberId).all()).results
+  const changedAt = new Date().toISOString()
+  const statements: D1PreparedStatement[] = [
+    env.DB.prepare(
+      'UPDATE event_members SET assignment = ? WHERE id = ? AND regatta_id = ?',
+    ).bind(assignment, memberId, access.eventId),
+    env.DB.prepare('DELETE FROM event_member_scopes WHERE event_member_id = ?').bind(memberId),
+  ]
+  if (raceAreaId || committeeBoatId || markId) {
+    statements.push(env.DB.prepare(
+      `INSERT INTO event_member_scopes
+       (id, event_member_id, race_area_id, committee_boat_id, mark_id, permission, created_at)
+       VALUES (?, ?, ?, ?, ?, 'operate', ?)`,
+    ).bind(crypto.randomUUID(), memberId, raceAreaId, committeeBoatId, markId, changedAt))
+  }
+  await env.DB.batch(statements)
+  const after = { assignment, raceAreaId, committeeBoatId, markId }
+  await appendAuditEvent(env, {
+    access,
+    action: 'member.assignment.update',
+    entityType: 'event_member',
+    entityId: memberId,
+    before: { assignment: member.assignment, scopes: existingScopes },
+    after,
+    reason: optionalString(payload.reason, 300) ?? '大会中の担当変更',
+    clientTime: operation.clientTime,
+  })
+  return {
+    memberId,
+    displayName: member.display_name,
+    role: member.role,
+    ...after,
+    changedBy: access.displayName,
+    changedAt,
+  }
+}
+
 export async function persistRealtimeOperation(
   env: AppEnv,
   access: EventAccess,
@@ -1204,6 +1281,7 @@ export async function persistRealtimeOperation(
     case 'signal': return persistSignal(env, access, operation)
     case 'signal-audio': return persistSignalAudio(env, access, operation)
     case 'schedule': return persistSchedule(env, access, operation)
+    case 'assignment': return persistAssignment(env, access, operation)
     case 'task': return persistTask(env, access, operation)
     case 'finalize': throw new Response('Finalize uses the finalization workflow', { status: 400 })
   }

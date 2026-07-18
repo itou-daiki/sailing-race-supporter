@@ -22,6 +22,7 @@ export type OperationType =
   | 'signal'
   | 'signal-audio'
   | 'schedule'
+  | 'assignment'
   | 'finalize'
 
 export interface SequencedOperation {

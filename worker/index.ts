@@ -47,7 +47,7 @@ interface ClientAttachment {
 
 interface RoomMessage {
   id: string
-  type: 'presence' | 'position' | 'wind' | 'current' | 'mark' | 'leading-passage' | 'finish' | 'task' | 'message' | 'signal' | 'signal-audio' | 'schedule' | 'finalize'
+  type: 'presence' | 'position' | 'wind' | 'current' | 'mark' | 'leading-passage' | 'finish' | 'task' | 'message' | 'signal' | 'signal-audio' | 'schedule' | 'assignment' | 'finalize'
   raceId?: string
   memberId?: string
   payload: unknown
@@ -77,6 +77,7 @@ const ROOM_MESSAGE_TYPES = new Set<RoomMessage['type']>([
   'signal',
   'signal-audio',
   'schedule',
+  'assignment',
   'finalize',
 ])
 
@@ -416,7 +417,7 @@ export class EventRoom extends DurableObject<AppEnv> {
           samplePosition,
           skipCommitteeBoatAuthorization: parsed.type === 'position',
         })
-        if (parsed.type !== 'position' && parsed.type !== 'presence') {
+        if (parsed.type !== 'position' && parsed.type !== 'presence' && parsed.type !== 'assignment') {
           await appendAuditEvent(this.env, {
             access,
             raceId: parsed.raceId,
@@ -508,6 +509,18 @@ export class EventRoom extends DurableObject<AppEnv> {
       )
     } else {
       this.broadcast({ type: 'event', event: sequenced })
+    }
+    if (sequenced.type === 'assignment') {
+      const targetMemberId = (sequenced.payload as { memberId?: unknown }).memberId
+      if (typeof targetMemberId === 'string') {
+        for (const key of this.positionAuthorization.keys()) {
+          if (key.startsWith(`${targetMemberId}:`)) this.positionAuthorization.delete(key)
+        }
+        for (const connected of this.ctx.getWebSockets()) {
+          const connectedAccess = connected.deserializeAttachment() as ClientAttachment | null
+          if (connectedAccess?.memberId === targetMemberId) connected.close(4003, 'Assignment changed')
+        }
+      }
     }
   }
 
@@ -720,9 +733,18 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
     ).bind(regatta.id).all()
 
     const availableMembers = await env.DB.prepare(
-      `SELECT id, display_name, role, assignment
-       FROM event_members WHERE regatta_id = ? AND status = 'active'
-       ORDER BY role, display_name`,
+      `SELECT member.id, member.display_name, member.role, member.assignment,
+              (SELECT scope.race_area_id FROM event_member_scopes scope
+               WHERE scope.event_member_id = member.id AND scope.race_area_id IS NOT NULL
+               ORDER BY scope.created_at DESC, scope.id DESC LIMIT 1) AS race_area_id,
+              (SELECT scope.committee_boat_id FROM event_member_scopes scope
+               WHERE scope.event_member_id = member.id AND scope.committee_boat_id IS NOT NULL
+               ORDER BY scope.created_at DESC, scope.id DESC LIMIT 1) AS committee_boat_id,
+              (SELECT scope.mark_id FROM event_member_scopes scope
+               WHERE scope.event_member_id = member.id AND scope.mark_id IS NOT NULL
+               ORDER BY scope.created_at DESC, scope.id DESC LIMIT 1) AS mark_id
+       FROM event_members member WHERE member.regatta_id = ? AND member.status = 'active'
+       ORDER BY member.role, member.display_name`,
     ).bind(regatta.id).all()
 
     const raceCorrections = await env.DB.prepare(

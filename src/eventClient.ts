@@ -54,7 +54,15 @@ export interface EventResources {
   areas: Array<{ id: string; name: string }>
   boats: Array<{ id: string; name: string; assignment: string; role: string }>
   marks: Array<{ id: string; label: string; raceAreaId?: string }>
-  members: Array<{ id: string; displayName: string; role: string; assignment: string }>
+  members: Array<{
+    id: string
+    displayName: string
+    role: string
+    assignment: string
+    raceAreaId?: string
+    committeeBoatId?: string
+    markId?: string
+  }>
 }
 
 export interface CreateEventInput {
@@ -186,7 +194,10 @@ interface BootstrapResponse {
     race_id: string; revision: number; patch_json: string; reason: string; state_hash: string; created_at: string
   }>
   availableMarks: Array<{ id: string; label: string; mark_type: string; race_area_id: string }>
-  availableMembers: Array<{ id: string; display_name: string; role: string; assignment: string }>
+  availableMembers: Array<{
+    id: string; display_name: string; role: string; assignment: string
+    race_area_id: string | null; committee_boat_id: string | null; mark_id: string | null
+  }>
 }
 
 export class EventApiError extends Error {
@@ -495,6 +506,9 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
         displayName: member.display_name,
         role: member.role,
         assignment: member.assignment,
+        raceAreaId: member.race_area_id ?? undefined,
+        committeeBoatId: member.committee_boat_id ?? undefined,
+        markId: member.mark_id ?? undefined,
       })),
     },
     wind: response.wind ? {

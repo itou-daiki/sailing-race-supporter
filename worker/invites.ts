@@ -118,6 +118,7 @@ async function createInvite(request: Request, env: AppEnv, eventReference: strin
   const maxUses = body.maxUses == null ? null : Math.trunc(body.maxUses)
   if (maxUses != null && (maxUses < 1 || maxUses > 500)) return json({ error: '使用回数は1〜500で指定してください' }, { status: 400 })
   const expiresAt = body.expiresAt ? new Date(body.expiresAt) : null
+  let raceAreaId = body.raceAreaId ?? null
   if (expiresAt && (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= Date.now())) {
     return json({ error: '有効期限は将来の日時にしてください' }, { status: 400 })
   }
@@ -128,17 +129,19 @@ async function createInvite(request: Request, env: AppEnv, eventReference: strin
     ).bind(body.committeeBoatId, access.eventId).first()
     if (!boat) return json({ error: '運営ボートが大会に存在しません' }, { status: 400 })
   }
-  if (body.raceAreaId) {
+  if (raceAreaId) {
     const area = await env.DB.prepare(
       'SELECT id FROM race_areas WHERE id = ? AND regatta_id = ? LIMIT 1',
-    ).bind(body.raceAreaId, access.eventId).first()
+    ).bind(raceAreaId, access.eventId).first()
     if (!area) return json({ error: 'レースエリアが大会に存在しません' }, { status: 400 })
   }
   if (body.markId) {
     const mark = await env.DB.prepare(
-      'SELECT id FROM marks WHERE id = ? AND regatta_id = ? LIMIT 1',
-    ).bind(body.markId, access.eventId).first()
+      'SELECT id, race_area_id FROM marks WHERE id = ? AND regatta_id = ? LIMIT 1',
+    ).bind(body.markId, access.eventId).first<{ id: string; race_area_id: string }>()
     if (!mark) return json({ error: 'マークが大会に存在しません' }, { status: 400 })
+    if (raceAreaId && mark.race_area_id !== raceAreaId) return json({ error: 'マークとレースエリアが一致しません' }, { status: 400 })
+    raceAreaId ??= mark.race_area_id
   }
 
   const id = crypto.randomUUID()
@@ -156,7 +159,7 @@ async function createInvite(request: Request, env: AppEnv, eventReference: strin
     tokenHash,
     role,
     JSON.stringify({ assignment: assigned }),
-    body.raceAreaId ?? null,
+    raceAreaId,
     body.committeeBoatId ?? null,
     body.markId ?? null,
     maxUses,
@@ -169,7 +172,7 @@ async function createInvite(request: Request, env: AppEnv, eventReference: strin
     action: 'invite.create',
     entityType: 'invite',
     entityId: id,
-    after: { role, assignment: assigned, maxUses, expiresAt: expiresAt?.toISOString() ?? null },
+    after: { role, assignment: assigned, raceAreaId, committeeBoatId: body.committeeBoatId, markId: body.markId, maxUses, expiresAt: expiresAt?.toISOString() ?? null },
   })
   return json({
     invite: { id, role, assignment: assigned, maxUses, useCount: 0, expiresAt: expiresAt?.toISOString() ?? null },
