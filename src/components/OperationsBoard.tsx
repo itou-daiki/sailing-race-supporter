@@ -36,6 +36,9 @@ import { signalDefinition } from '../signals'
 import { FirstFinishPanel } from './FirstFinishPanel'
 import type { FreeTierBudgetEstimate, RuntimeBudgetStatus } from '../../shared/freeTierBudget'
 import type { LatestPassageSummary } from '../passages'
+import { buildRaceTimeline, deriveRacePhases, type RacePhaseState } from '../racePhases'
+import { formatTrueBearing } from '../../shared/trueBearing'
+import { summarizeReadiness } from '../readiness'
 
 interface OperationsBoardProps {
   race: RaceDefinition
@@ -83,6 +86,31 @@ const detailLabels: Record<BoardDetail, string> = {
   detail: '詳細',
 }
 
+const phaseStateLabels: Record<RacePhaseState, string> = {
+  'not-started': '未着手',
+  'in-progress': '進行中',
+  waiting: '確認待ち',
+  completed: '完了',
+  warning: '要注意',
+  stopped: '停止',
+}
+
+function phaseStateIcon(state: RacePhaseState) {
+  if (state === 'completed') return <Check size={13} />
+  if (state === 'warning') return <AlertTriangle size={13} />
+  if (state === 'stopped') return <TimerReset size={13} />
+  if (state === 'in-progress') return <CircleDot size={13} />
+  if (state === 'waiting') return <Clock3 size={13} />
+  return <MoreHorizontal size={13} />
+}
+
+function operationTime(value: string | undefined): string {
+  if (!value || !Number.isFinite(Date.parse(value))) return '—'
+  return new Intl.DateTimeFormat('ja-JP', {
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).format(new Date(value))
+}
+
 export function OperationsBoard({
   race,
   marks,
@@ -117,15 +145,17 @@ export function OperationsBoard({
 }: OperationsBoardProps) {
   const confirmedMarks = marks.filter((mark) => mark.status === 'confirmed').length
   const liveBoats = boats.filter((boat) => boat.status !== 'offline').length
-  const blockers = tasks.filter((task) => task.status === 'blocked')
-  const completion = tasks.length
-    ? Math.round((tasks.filter((task) => task.status === 'done').length / tasks.length) * 100)
-    : 0
+  const readiness = summarizeReadiness(tasks)
+  const orderedTasks = [...readiness.required, ...readiness.reference]
   const controlSignal = latestSignal && signalDefinition(latestSignal.action).group !== 'sequence' ? latestSignal : undefined
   const raceMessages = messages.filter((message) => !message.raceId || message.raceId === race.id)
   const unresolvedUrgent = raceMessages.filter((message) => (
     message.priority === 'urgent' && (message.ownReceipt === 'unread' || message.acknowledgement === 'pending')
   )).length
+  const phaseContext = { race, marks, tasks, postponed, latestPassage, firstFinish }
+  const phases = deriveRacePhases(phaseContext)
+  const currentPhase = phases.find((phase) => phase.isCurrent) ?? phases[0]!
+  const timelineEvents = buildRaceTimeline(phaseContext)
 
   const setScale = (next: number) => onScaleChange(Math.min(200, Math.max(75, next)))
 
@@ -188,6 +218,29 @@ export function OperationsBoard({
           )}
         </div>
 
+        <section className="race-phase-card" aria-label="レースフェーズ">
+          <header>
+            <div>
+              <span className="eyebrow">現在フェーズ</span>
+              <strong>{race.number}・{currentPhase.label}</strong>
+            </div>
+            <span className={`race-phase-current state-${currentPhase.state}`}>
+              {phaseStateIcon(currentPhase.state)} {phaseStateLabels[currentPhase.state]}・{currentPhase.progress}
+            </span>
+          </header>
+          <div className="race-phase-list">
+            {phases.map((phase, index) => (
+              <article className={`race-phase state-${phase.state} ${phase.isCurrent ? 'is-current' : ''}`} key={phase.id} aria-current={phase.isCurrent ? 'step' : undefined}>
+                <span className="race-phase__index">{phaseStateIcon(phase.state)} {index + 1}</span>
+                <strong>{phase.label}</strong>
+                <small>{phaseStateLabels[phase.state]}・{phase.progress}</small>
+                {detail !== 'overview' && <small>担当 {phase.owner}</small>}
+                {detail === 'detail' && <small>期限 {operationTime(phase.dueAt)}・更新 {operationTime(phase.lastUpdatedAt)}</small>}
+              </article>
+            ))}
+          </div>
+        </section>
+
         <div className="metric-grid">
           <article className="metric-card">
             <span><Route size={16} /> コース</span>
@@ -206,12 +259,12 @@ export function OperationsBoard({
           </article>
           <article className="metric-card">
             <span><Wind size={16} /> 5分平均風</span>
-            <strong>{wind.directionDegrees}° <small>{wind.speedKnots.toFixed(1)}kt</small></strong>
+            <strong>{formatTrueBearing(wind.directionDegrees)} <small>{wind.speedKnots.toFixed(1)}kt</small></strong>
             <small>ガスト {wind.gustKnots.toFixed(1)}kt・安定</small>
           </article>
           <article className="metric-card">
             <span><Waves size={16} /> 潮流（流向）</span>
-            <strong>{current.directionDegrees}°T <small>{current.speedKnots.toFixed(1)}kt</small></strong>
+            <strong>{formatTrueBearing(current.directionDegrees)} <small>{current.speedKnots.toFixed(1)}kt</small></strong>
             <small>{current.source}・信頼度 {current.confidence === 'high' ? '高' : current.confidence === 'medium' ? '中' : '低'}</small>
           </article>
           <article className={`metric-card budget-stage-${runtimeBudget?.stage ?? freeTierBudget.stage}`}>
@@ -252,15 +305,22 @@ export function OperationsBoard({
           <header>
             <div>
               <span className="eyebrow">スタート準備度</span>
-              <strong>{completion}%</strong>
+              <strong>{readiness.completion}%</strong>
             </div>
-            <span className={blockers.length ? 'readiness-state is-blocked' : 'readiness-state'}>
-              {blockers.length ? <><AlertTriangle size={14} /> ブロッカー {blockers.length}件</> : <><Check size={14} /> 準備完了候補</>}
+            <span className={`readiness-state is-${readiness.state}`}>
+              {readiness.state === 'unconfigured' ? <><AlertTriangle size={14} /> 準備項目未設定</>
+                : readiness.state === 'blocked' ? <><AlertTriangle size={14} /> ブロッカー {readiness.blockers.length}件</>
+                  : readiness.state === 'incomplete' ? <><Clock3 size={14} /> 必須残り {readiness.remainingRequired}件</>
+                    : <><Check size={14} /> 準備完了候補</>}
             </span>
           </header>
-          <div className="progress-track"><span style={{ width: `${completion}%` }} /></div>
+          <small className="readiness-breakdown">
+            必須 {readiness.requiredDone}/{readiness.required.length}・参考 {readiness.referenceDone}/{readiness.reference.length}
+          </small>
+          <div className="progress-track"><span style={{ width: `${readiness.completion}%` }} /></div>
           <div className="task-list">
-            {tasks.map((task) => (
+            {!orderedTasks.length && <p className="task-list-empty">このレースの必須準備項目を設定してください。</p>}
+            {orderedTasks.map((task) => (
               <div
                 className={`task-row task-row--${task.status}`}
                 key={task.id}
@@ -276,7 +336,7 @@ export function OperationsBoard({
                     {task.status === 'done' ? <Check size={15} /> : task.status === 'blocked' ? <AlertTriangle size={15} /> : <Clock3 size={15} />}
                   </span>
                   <span className="task-body">
-                    <strong>{task.title}</strong>
+                    <strong><span className={`task-priority is-${task.priority}`}>{task.priority === 'required' ? '必須' : '参考'}</span>{task.title}</strong>
                     <small>{task.owner}・{task.dueLabel}</small>
                   </span>
                   <span className={`task-state state-${task.status}`}>{taskStatusLabel[task.status]}</span>
@@ -313,7 +373,7 @@ export function OperationsBoard({
                     </span>
                     <span className="boat-motion">
                       <strong>{boat.speedKnots.toFixed(1)}</strong><small>kt</small>
-                      {boat.courseDegrees !== undefined && <small>{boat.courseDegrees}°T</small>}
+                      {boat.courseDegrees !== undefined && <small>COG {formatTrueBearing(boat.courseDegrees)}</small>}
                     </span>
                   </div>
                 ))}
@@ -326,7 +386,7 @@ export function OperationsBoard({
                 <button type="button" className="text-button" onClick={onOpenMessages}>すべて</button>
               </header>
               <div className="message-list">
-                {messages.map((message) => (
+                {raceMessages.map((message) => (
                   <div className={`message-row priority-${message.priority}`} key={message.id}>
                     <span className="message-icon">
                       {message.priority === 'urgent' ? <ShieldAlert size={16} /> : message.priority === 'confirm' ? <BellRing size={16} /> : <MessageSquareText size={16} />}
@@ -356,14 +416,17 @@ export function OperationsBoard({
           <article className="timeline-card">
             <header className="panel-header">
               <div><span className="eyebrow">時系列</span><strong>予定と実績</strong></div>
-              <span className="timeline-range">30分</span>
+              <span className="timeline-range">{timelineEvents.length}件</span>
             </header>
-            <div className="timeline-track">
-              <div className="timeline-now"><span>現在</span></div>
-              <div className="timeline-item is-done" style={{ left: '7%' }}><i /><span>コース承認<small>09:43</small></span></div>
-              <div className="timeline-item is-done" style={{ left: '26%' }}><i /><span>1マーク確認<small>09:49</small></span></div>
-              <div className="timeline-item is-next" style={{ left: '58%' }}><i /><span>予告信号<small>10:00</small></span></div>
-              <div className="timeline-item" style={{ left: '77%' }}><i /><span>スタート<small>10:05</small></span></div>
+            <div className="race-timeline-events">
+              {timelineEvents.map((event) => (
+                <div className={`race-timeline-event kind-${event.kind}`} key={event.id}>
+                  <i aria-hidden="true" />
+                  <span><strong>{event.label}</strong><small>{event.kind === 'planned' ? '予定' : '実績'}</small></span>
+                  <time dateTime={event.at}>{operationTime(event.at)}</time>
+                </div>
+              ))}
+              {timelineEvents.length === 0 && <p>予定・実績はまだありません</p>}
             </div>
           </article>
         )}

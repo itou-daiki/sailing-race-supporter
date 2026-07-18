@@ -11,6 +11,7 @@ export interface CourseMark {
   verificationPosition?: LngLat
   recoveryPosition?: LngLat
   status: MarkStatus
+  lastUpdatedAt?: string
   assignedBoatId?: string
   isGate?: boolean
   gateSide?: 'S' | 'P'
@@ -138,6 +139,7 @@ export interface OperationalTask {
   status: 'blocked' | 'waiting' | 'doing' | 'done'
   dueLabel: string
   dueAt?: string
+  lastUpdatedAt?: string
   markId?: string
   priority: 'required' | 'reference'
 }
@@ -385,6 +387,7 @@ export const DEMO_BOATS: readonly CommitteeBoat[] = [
 export const DEMO_TASKS: readonly OperationalTask[] = [
   {
     id: 'task-line',
+    raceId: 'race-1',
     title: 'スタートライン方位を再確認',
     owner: 'シグナルボート',
     status: 'blocked',
@@ -393,6 +396,7 @@ export const DEMO_TASKS: readonly OperationalTask[] = [
   },
   {
     id: 'task-mark-2',
+    raceId: 'race-1',
     title: '2マークを投下して位置確定',
     owner: 'マークボートB',
     status: 'doing',
@@ -402,6 +406,7 @@ export const DEMO_TASKS: readonly OperationalTask[] = [
   },
   {
     id: 'task-wind',
+    raceId: 'race-1',
     title: '5分平均風を更新',
     owner: 'コースセッター',
     status: 'waiting',
@@ -410,6 +415,7 @@ export const DEMO_TASKS: readonly OperationalTask[] = [
   },
   {
     id: 'task-audio',
+    raceId: 'race-1',
     title: '公式音響端末を準備',
     owner: 'シグナルボート',
     status: 'done',
@@ -436,7 +442,7 @@ export const DEMO_MESSAGES: readonly OperationalMessage[] = [
     raceId: 'race-1',
     sender: 'PRO',
     channel: '1R・全運営',
-    text: '風向350°で安定。コースO2を継続します。',
+    text: '風向350°Tで安定。コースO2を継続します。',
     sentAt: new Date(Date.now() - 34_000).toISOString(),
     priority: 'confirm',
     acknowledgement: 'pending',

@@ -1071,7 +1071,9 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
 
     const tasks = await env.DB.prepare(
       `SELECT task.id, task.race_id, task.title, task.status, task.priority, task.due_at,
-              COALESCE(member.display_name, boat.name, '未割当') AS owner
+              COALESCE(member.display_name, boat.name, '未割当') AS owner,
+              (SELECT event.server_time FROM operational_task_events event
+               WHERE event.task_id = task.id ORDER BY event.revision DESC LIMIT 1) AS last_updated_at
        FROM operational_tasks task
        JOIN races race ON race.id = task.race_id
        LEFT JOIN event_members member ON member.id = task.assignee_member_id

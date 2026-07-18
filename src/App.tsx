@@ -74,6 +74,7 @@ import { raceFinalizationPhrase } from '../shared/finalization'
 import { estimateRegattaFreeTierUsage, STANDARD_REGATTA_LOAD } from '../shared/freeTierBudget'
 import { normalizeBoatMotion } from './boatMotion'
 import type { CoordinateEntryMode } from './coordinateEntry'
+import { formatTrueBearing } from '../shared/trueBearing'
 
 const DETAIL_KEY = 'srs-board-detail'
 const SCALE_KEY = 'srs-board-scale'
@@ -169,10 +170,6 @@ function formatCourseRevisionTime(iso: string): string {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(iso))
-}
-
-function formatGateBearing(value: number): string {
-  return String(Math.round(value) % 360).padStart(3, '0')
 }
 
 function dateTimeLocalValue(iso: string): string {
@@ -281,7 +278,7 @@ export default function App() {
     return stored === 'overview' || stored === 'detail' ? stored : 'standard'
   })
   const [mapSplit, setMapSplit] = useState(() => storedNumber(SPLIT_KEY, 58))
-  const [selectedClass, setSelectedClass] = useState<SailingClass>('470')
+  const [selectedClassOverrides, setSelectedClassOverrides] = useState<Partial<Record<string, SailingClass>>>({})
   const [windSpeed, setWindSpeed] = useState(INITIAL_WIND.speedKnots)
   const [windDirection, setWindDirection] = useState(INITIAL_WIND.directionDegrees)
   const [windDetails, setWindDetails] = useState<WindObservation>(INITIAL_WIND)
@@ -336,7 +333,7 @@ export default function App() {
     }
 
     if (event.type === 'mark') {
-      const payload = event.payload as { markId?: string; actual?: LngLat; status?: MarkStatus }
+      const payload = event.payload as { markId?: string; actual?: LngLat; status?: MarkStatus; recordedAt?: string }
       if (!event.raceId || !payload.markId || !payload.actual) return
       setRaces((current) => current.map((race) => (
         race.id === event.raceId
@@ -345,15 +342,16 @@ export default function App() {
               marks: race.marks.map((mark) => (
                 mark.id === payload.markId
                   ? payload.status === 'confirmed'
-                    ? { ...mark, verificationPosition: payload.actual, status: 'confirmed' }
+                    ? { ...mark, verificationPosition: payload.actual, status: 'confirmed', lastUpdatedAt: payload.recordedAt ?? event.serverTime }
                     : payload.status === 'recovered'
-                      ? { ...mark, recoveryPosition: payload.actual, status: 'recovered' }
+                      ? { ...mark, recoveryPosition: payload.actual, status: 'recovered', lastUpdatedAt: payload.recordedAt ?? event.serverTime }
                       : {
                           ...mark,
                           actual: payload.actual,
                           verificationPosition: undefined,
                           recoveryPosition: undefined,
                           status: payload.status ?? 'deployed',
+                          lastUpdatedAt: payload.recordedAt ?? event.serverTime,
                         }
                   : mark
               )),
@@ -411,10 +409,12 @@ export default function App() {
     }
 
     if (event.type === 'task') {
-      const payload = event.payload as { taskId?: string; status?: OperationalTask['status'] }
+      const payload = event.payload as { taskId?: string; status?: OperationalTask['status']; changedAt?: string }
       if (!payload.taskId || !payload.status) return
       setTasks((current) => current.map((task) => (
-        task.id === payload.taskId ? { ...task, status: payload.status as OperationalTask['status'] } : task
+        task.id === payload.taskId
+          ? { ...task, status: payload.status as OperationalTask['status'], lastUpdatedAt: payload.changedAt ?? event.serverTime }
+          : task
       )))
     }
 
@@ -603,6 +603,10 @@ export default function App() {
   const sendRealtimeOperation = realtime.send
 
   const activeRace = races.find((race) => race.id === activeRaceId) ?? races[0]
+  const selectedClass = selectedClassOverrides[activeRace.id] ?? activeRace.className
+  const setSelectedClass = (className: SailingClass) => {
+    setSelectedClassOverrides((current) => ({ ...current, [activeRace.id]: className }))
+  }
   const revisionDraft = revisionDrafts[activeRace.id]
   const postponed = isRaceSignalHeld(activeRace.latestSignal)
   const marks = useMemo(() => {
@@ -837,8 +841,9 @@ export default function App() {
     const nextStatus: OperationalTask['status'] = task.status === 'done'
       ? 'waiting'
       : task.status === 'doing' ? 'done' : 'doing'
+    const changedAt = new Date().toISOString()
     setTasks((current) => current.map((candidate) => (
-      candidate.id === taskId ? { ...candidate, status: nextStatus } : candidate
+      candidate.id === taskId ? { ...candidate, status: nextStatus, lastUpdatedAt: changedAt } : candidate
     )))
     void sendRealtimeOperation('task', { taskId, status: nextStatus }, task.raceId ?? activeRace.id)
   }
@@ -898,15 +903,16 @@ export default function App() {
         marks: sourceMarks.map((mark) => (
           mark.id === markId
             ? lifecycleStatus === 'confirmed'
-              ? { ...mark, verificationPosition: actual, status: 'confirmed' as const }
+              ? { ...mark, verificationPosition: actual, status: 'confirmed' as const, lastUpdatedAt: new Date().toISOString() }
               : lifecycleStatus === 'recovered'
-                ? { ...mark, recoveryPosition: actual, status: 'recovered' as const }
+                ? { ...mark, recoveryPosition: actual, status: 'recovered' as const, lastUpdatedAt: new Date().toISOString() }
                 : {
                     ...mark,
                     actual,
                     verificationPosition: undefined,
                     recoveryPosition: undefined,
                     status: 'deployed' as const,
+                    lastUpdatedAt: new Date().toISOString(),
                   }
             : mark
         )),
@@ -1796,12 +1802,12 @@ export default function App() {
             <button type="button" className="sheet-secondary" onClick={() => void shareRaceSchedule()} disabled={!canScheduleRace || realtime.status !== 'live' || scheduleWorking}>
               <BellRing size={17} /> {scheduleWorking ? '予告予定を共有中…' : '予告予定を全運営へ共有'}
             </button>
-            <label><span>風向（真方位）</span><input type="number" min="0" max="360" value={windDirection} onChange={(event) => setWindDirection(Number(event.target.value))} /></label>
+            <label><span>風向（真方位・°T）</span><input type="number" min="0" max="359" value={windDirection} onChange={(event) => setWindDirection(Number(event.target.value))} /></label>
             <div className="settings-subsection">
               <span className="eyebrow">潮流観測</span>
               <small>流向は海水が流れていく方向を真方位で入力</small>
             </div>
-            <label><span>流向（真方位・行き先）</span><input type="number" min="0" max="360" value={seaCurrent.directionDegrees} onChange={(event) => setSeaCurrent((current) => ({ ...current, directionDegrees: Number(event.target.value) }))} /></label>
+            <label><span>流向（真方位・行き先・°T）</span><input type="number" min="0" max="359" value={seaCurrent.directionDegrees} onChange={(event) => setSeaCurrent((current) => ({ ...current, directionDegrees: Number(event.target.value) }))} /></label>
             <label><span>流速（kt）</span><input type="number" min="0" max="20" step="0.1" value={seaCurrent.speedKnots} onChange={(event) => setSeaCurrent((current) => ({ ...current, speedKnots: Number(event.target.value) }))} /></label>
             <label><span>信頼度</span><select value={seaCurrent.confidence} onChange={(event) => setSeaCurrent((current) => ({ ...current, confidence: event.target.value as CurrentObservation['confidence'] }))}><option value="low">低・目測</option><option value="medium">中・複数回確認</option><option value="high">高・機器観測</option></select></label>
             <button type="button" className="sheet-secondary" onClick={shareEnvironment} disabled={!canShareEnvironment}>
@@ -1826,7 +1832,7 @@ export default function App() {
                     <strong>{revision.courseCode}</strong>
                     <small>{revision.createdBy ?? '運営メンバー'}・{formatCourseRevisionTime(revision.createdAt)}・{revision.nodeCount}点</small>
                     {revision.gateConfig.gates?.map((gate) => <small className="course-history-gate" key={gate.key}>
-                      {gate.label}: {Math.round(gate.widthMetres)}m / {formatGateBearing(gate.bearingDegreesTrue)}°T（S→P）・中央 {gate.center[1].toFixed(5)}, {gate.center[0].toFixed(5)}
+                      {gate.label}: {Math.round(gate.widthMetres)}m / {formatTrueBearing(gate.bearingDegreesTrue, { padInteger: 3 })}（S→P）・中央 {gate.center[1].toFixed(5)}, {gate.center[0].toFixed(5)}
                     </small>)}
                     {revision.basedOnRevision != null && <small>第{revision.basedOnRevision}版を基に作成</small>}
                   </div>

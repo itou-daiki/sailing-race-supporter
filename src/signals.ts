@@ -1,4 +1,5 @@
 import type { RaceSignalAction, RaceSignalEvent } from './domain.js'
+import { formatTrueBearing } from '../shared/trueBearing.js'
 
 export interface SignalDefinition {
   action: RaceSignalAction
@@ -72,7 +73,7 @@ export function signalFlagDescription(
 ): string {
   if (action === 'course-change') {
     const changes = [
-      typeof details.newBearing === 'number' ? `新方位 ${String(Math.round(details.newBearing)).padStart(3, '0')}°T` : null,
+      typeof details.newBearing === 'number' ? `新方位 ${formatTrueBearing(details.newBearing, { padInteger: 3 })}` : null,
       details.directionChange === 'starboard' ? '緑三角・右へ変更' : details.directionChange === 'port' ? '赤長方形・左へ変更' : null,
       details.lengthChange === 'increase' ? '距離 +' : details.lengthChange === 'decrease' ? '距離 −' : null,
     ].filter(Boolean)

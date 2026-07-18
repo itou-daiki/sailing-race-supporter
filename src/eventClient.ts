@@ -205,7 +205,8 @@ export interface BootstrapResponse {
   }>
   markEvents: Array<{
     race_id: string; mark_id: string; event_type: string; lng: number | null; lat: number | null
-    accuracy_metres: number | null; committee_boat_id: string | null; sequence: number; payload_json: string
+    accuracy_metres: number | null; committee_boat_id: string | null; client_time?: string; server_time?: string
+    sequence: number; payload_json: string
   }>
   boats: Array<{
     id: string; name: string; role: string; call_sign: string | null; status: string
@@ -229,7 +230,7 @@ export interface BootstrapResponse {
   }>
   tasks: Array<{
     id: string; race_id: string; title: string; status: OperationalTask['status']
-    priority: OperationalTask['priority']; due_at: string; owner: string
+    priority: OperationalTask['priority']; due_at: string; owner: string; last_updated_at?: string | null
   }>
   leadingPassages: Array<{
     id: string; race_id: string; mark_id: string; lap_number: number; passed_at: string; recorded_by: string
@@ -356,6 +357,7 @@ export function bootstrapMarks(response: MarkBootstrapSource, raceId: string): C
           ? [event.lng, event.lat]
           : undefined,
         status,
+        lastUpdatedAt: event?.server_time ?? event?.client_time,
         assignedBoatId: placement?.committee_boat_id ?? undefined,
         isGate: node.node_type === 'gate',
         gateSide: node.label.endsWith('S') ? 'S' : node.label.endsWith('P') ? 'P' : undefined,
@@ -581,6 +583,7 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
       status: task.status,
       dueLabel: `${formatClock(task.due_at)}まで`,
       dueAt: task.due_at,
+      lastUpdatedAt: task.last_updated_at ?? undefined,
       priority: task.priority,
     })),
     leadingPassages: bootstrapLeadingPassages(response.leadingPassages ?? []),

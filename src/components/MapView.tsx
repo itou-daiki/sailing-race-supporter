@@ -28,6 +28,7 @@ import {
   positionFromFullDecimal,
   type CoordinateEntryMode,
 } from '../coordinateEntry'
+import { formatTrueBearing } from '../../shared/trueBearing'
 
 interface MapViewProps {
   marks: readonly CourseMark[]
@@ -489,12 +490,12 @@ export function MapView({
         <div className="map-environment">
           <div className="map-weather">
             <Wind size={17} />
-            <span>風 <strong>{wind.directionDegrees}°T</strong> / {wind.speedKnots.toFixed(1)} kt</span>
+            <span>風 <strong>{formatTrueBearing(wind.directionDegrees)}</strong> / {wind.speedKnots.toFixed(1)} kt</span>
             <span className={`freshness ${windAgeSeconds > 30 ? 'is-stale' : ''}`}>{windAgeSeconds > 30 ? '古い・' : ''}{freshnessLabel(windAgeSeconds)}</span>
           </div>
           <div className="map-weather map-current">
             <span className="current-direction" style={{ transform: `rotate(${current.directionDegrees}deg)` }} aria-hidden="true">↑</span>
-            <span>潮流 <strong>{current.directionDegrees}°T</strong> → / {current.speedKnots.toFixed(1)} kt</span>
+            <span>潮流 <strong>{formatTrueBearing(current.directionDegrees)}</strong> → / {current.speedKnots.toFixed(1)} kt</span>
             <span className={`freshness ${currentAgeSeconds > 30 ? 'is-stale' : ''}`}>{currentAgeSeconds > 30 ? '古い・' : ''}{freshnessLabel(currentAgeSeconds)}</span>
           </div>
         </div>
@@ -546,16 +547,16 @@ export function MapView({
             {selfBoat ? <>
               <strong>{formatDistance(selectedDistance ?? 0)}</strong>
               <small className="selected-mark__navigation">
-                目標方位 {Math.round(selectedBearing ?? 0)}°T・{formatEta(selectedEta)}
+                目標方位 {formatTrueBearing(selectedBearing ?? 0)}・{formatEta(selectedEta)}
               </small>
               <small className="selected-mark__navigation">
-                {selfBoat.courseDegrees === undefined ? 'COG —（低速または取得不可）' : `COG ${Math.round(selfBoat.courseDegrees)}°T・方位差 ${headingDifference === undefined || Math.abs(headingDifference) < 1 ? '0°' : `${headingDifference > 0 ? '右' : '左'}${Math.round(Math.abs(headingDifference))}°`}`}
+                {selfBoat.courseDegrees === undefined ? 'COG —（低速または取得不可）' : `COG ${formatTrueBearing(selfBoat.courseDegrees)}・方位差 ${headingDifference === undefined || Math.abs(headingDifference) < 1 ? '0°' : `${headingDifference > 0 ? '右' : '左'}${Math.round(Math.abs(headingDifference))}°`}`}
                 {selectedMark.actual && `・計画差 ${Math.round(distanceMetres(selectedMark.target, selectedMark.actual))}m`}
               </small>
             </> : <small className="selected-mark__navigation">運営ボート位置未取得・時刻記録は利用可能</small>}
             {verificationDifference !== undefined && <small className="mark-verification-status"><BadgeCheck size={12} /> 別位置観測との差 {verificationDifference.toFixed(1)}m</small>}
             {selectedMark.recoveryPosition && <small className="mark-recovery-status"><Anchor size={12} /> 回収地点 {selectedMark.recoveryPosition[1].toFixed(5)}, {selectedMark.recoveryPosition[0].toFixed(5)}</small>}
-            {selectedGate && <small className="gate-metrics">{selectedGate.actual ? '実測' : '計画'}ゲート 幅 {Math.round(distanceMetres(selectedGate.positions[0], selectedGate.positions[1]))}m・方位 {Math.round(bearingDegrees(selectedGate.positions[0], selectedGate.positions[1]))}°T・中央 {selectedGate.center[1].toFixed(5)}, {selectedGate.center[0].toFixed(5)}</small>}
+            {selectedGate && <small className="gate-metrics">{selectedGate.actual ? '実測' : '計画'}ゲート 幅 {Math.round(distanceMetres(selectedGate.positions[0], selectedGate.positions[1]))}m・方位 {formatTrueBearing(bearingDegrees(selectedGate.positions[0], selectedGate.positions[1]))}・中央 {selectedGate.center[1].toFixed(5)}, {selectedGate.center[0].toFixed(5)}</small>}
             {selectedAdoptedPassage && <small className="passage-recorded">採用 先頭通過 {new Date(selectedAdoptedPassage.passedAt).toLocaleTimeString('ja-JP')}</small>}
             {selectedPassageObservations.length > 0 && (
               <div className="passage-observations" aria-label="先頭通過の観測候補">

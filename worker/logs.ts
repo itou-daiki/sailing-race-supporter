@@ -2,6 +2,7 @@ import { eventAccess, requirePermission, type EventAccess } from './authorizatio
 import { json } from './http.js'
 import type { AppEnv } from './index.js'
 import { requireSession } from './security.js'
+import { formatTrueBearing } from '../shared/trueBearing.js'
 
 export type LogCategory = 'audit' | 'mark' | 'wind' | 'current' | 'signal' | 'schedule' | 'passage' | 'finish' | 'task' | 'message' | 'position'
 
@@ -110,7 +111,7 @@ function signalDetail(row: Row): string {
     typeof payload.finishAt === 'string' ? `短縮フィニッシュ ${payload.finishAt}` : null,
     typeof payload.changeFromMarkLabel === 'string' ? `変更信号位置 ${payload.changeFromMarkLabel}` : null,
     typeof payload.targetMarkLabel === 'string' ? `対象 ${payload.targetMarkLabel}` : null,
-    typeof payload.newBearing === 'number' ? `新方位 ${String(Math.round(payload.newBearing)).padStart(3, '0')}°T` : null,
+    typeof payload.newBearing === 'number' ? `新方位 ${formatTrueBearing(payload.newBearing, { padInteger: 3 })}` : null,
     payload.directionChange === 'starboard' ? '右へ変更' : payload.directionChange === 'port' ? '左へ変更' : null,
     payload.lengthChange === 'increase' ? '距離を延長' : payload.lengthChange === 'decrease' ? '距離を短縮' : null,
     typeof payload.replacementObject === 'string' ? `代替物 ${payload.replacementObject}` : null,
@@ -312,14 +313,14 @@ async function collectLogs(env: AppEnv, access: EventAccess, raceId: string | nu
       id: text(row.id), raceId: nullableText(row.race_id), raceNumber: nullableText(row.race_number),
       sequence: null, occurredAt: text(row.occurred_at), category: 'wind' as const, title: '風向風速観測',
       actor: text(row.actor, '不明'),
-      detail: `${row.direction_degrees}°・${row.speed_knots}kt${row.gust_knots == null ? '' : `・ガスト${row.gust_knots}kt`}`,
+      detail: `風向 ${formatTrueBearing(Number(row.direction_degrees))}・${row.speed_knots}kt${row.gust_knots == null ? '' : `・ガスト${row.gust_knots}kt`}`,
       eventHash: null,
     })),
     ...current.map((row) => ({
       id: text(row.id), raceId: nullableText(row.race_id), raceNumber: nullableText(row.race_number),
       sequence: null, occurredAt: text(row.occurred_at), category: 'current' as const, title: '潮流観測',
       actor: text(row.actor, '不明'),
-      detail: `流向 ${row.direction_degrees}°T→・${row.speed_knots}kt・信頼度 ${confidenceLabel(row.confidence)}・位置 ${coordinates(row)}`,
+      detail: `流向 ${formatTrueBearing(Number(row.direction_degrees))}→・${row.speed_knots}kt・信頼度 ${confidenceLabel(row.confidence)}・位置 ${coordinates(row)}`,
       eventHash: null,
     })),
     ...signals.map((row) => ({
@@ -366,7 +367,7 @@ async function collectLogs(env: AppEnv, access: EventAccess, raceId: string | nu
       id: text(row.id), raceId: nullableText(row.race_id), raceNumber: nullableText(row.race_number),
       sequence: null, occurredAt: text(row.occurred_at), category: 'position' as const,
       title: `${text(row.actor)} 位置サンプル`, actor: text(row.actor, '不明'),
-      detail: `位置 ${coordinates(row)}・${row.speed_knots ?? '—'}kt・${row.course_degrees ?? '—'}°`, eventHash: null,
+      detail: `位置 ${coordinates(row)}・SOG ${row.speed_knots ?? '—'}kt・${typeof row.course_degrees === 'number' ? `COG ${formatTrueBearing(row.course_degrees)}` : 'COG —（低速または取得不可）'}`, eventHash: null,
     })),
   ]
   return entries.sort((left, right) => right.occurredAt.localeCompare(left.occurredAt)).slice(0, limit)
