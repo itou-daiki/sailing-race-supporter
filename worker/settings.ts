@@ -109,7 +109,7 @@ export async function handleSettingsRequest(request: Request, env: AppEnv): Prom
     assertSameOrigin(request)
     const { access, session } = await owner(request, env, decodeURIComponent(runMatch[1]))
     if (!hasRecentAuthentication(session)) return recentAuthenticationRequiredResponse()
-    return json({ report: await runRetentionForEvent(env, access.eventId, 'manual') })
+    return json({ report: await runRetentionForEvent(env, access.eventId, 'manual', new Date(), access) })
   }
   const match = pathname.match(/^\/api\/events\/([^/]+)\/settings\/retention$/)
   if (!match) return null

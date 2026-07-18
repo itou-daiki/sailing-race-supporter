@@ -1,4 +1,6 @@
 import type { AppEnv } from './index.js'
+import type { EventAccess } from './authorization.js'
+import { appendAuditEvent, appendSystemAuditEvent } from './audit.js'
 import { sha256Base64Url } from './security.js'
 
 export interface RetentionPolicy {
@@ -220,6 +222,7 @@ export async function runRetentionForEvent(
   eventId: string,
   triggerType: 'cron' | 'manual',
   now = new Date(),
+  auditAccess?: EventAccess,
 ): Promise<RetentionReport> {
   const row = await eventRow(env, eventId)
   if (!row) throw new Error('Retention event not found')
@@ -239,15 +242,38 @@ export async function runRetentionForEvent(
     await env.DB.prepare(
       `UPDATE retention_runs SET status = ?, counts_json = ?, detail = ?, completed_at = ? WHERE id = ?`,
     ).bind(status, JSON.stringify(counts), detail, completedAt, runId).run()
-    return { runId, eventId, status, counts, detail, startedAt, completedAt }
+    const report = { runId, eventId, status, counts, detail, startedAt, completedAt }
+    const auditFields = {
+      action: `retention.run.${status}`,
+      entityType: 'retention_run',
+      entityId: runId,
+      after: {
+        triggerType,
+        status,
+        counts,
+        startedAt,
+        completedAt,
+      },
+      reason: detail,
+    }
+    if (auditAccess) {
+      await appendAuditEvent(env, { access: auditAccess, ...auditFields })
+    } else {
+      await appendSystemAuditEvent(env, { eventId, ...auditFields })
+    }
+    return report
   }
 
   try {
     const nowTime = now.getTime()
     const end = eventEnd(row.ends_on)
-    if (nowTime <= end) return finish('skipped', {}, '大会終了前のため自動削除しません')
+    if (nowTime <= end) {
+      const report = await finish('skipped', {}, '大会終了前のため自動削除しません')
+      return report
+    }
     if (row.retention_hold_until && Date.parse(row.retention_hold_until) > nowTime) {
-      return finish('skipped', {}, `保存ホールド中：${row.retention_hold_reason ?? '理由未記入'}`)
+      const report = await finish('skipped', {}, `保存ホールド中：${row.retention_hold_reason ?? '理由未記入'}`)
+      return report
     }
     const policy = JSON.parse(row.retention_json) as RetentionPolicy
     const counts: Record<string, number> = {}
@@ -316,7 +342,8 @@ export async function runRetentionForEvent(
       ).bind(eventId).run())
     }
 
-    return finish('completed', counts, '大会終了日と保存期間ポリシーに基づく日次処理を完了しました')
+    const report = await finish('completed', counts, '大会終了日と保存期間ポリシーに基づく日次処理を完了しました')
+    return report
   } catch (error) {
     const detail = error instanceof Error ? error.message : 'Unknown retention error'
     await finish('failed', {}, detail)

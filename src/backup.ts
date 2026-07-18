@@ -184,7 +184,7 @@ async function auditHash(row: Record<string, unknown>): Promise<string> {
     regattaId: String(row.regatta_id),
     raceId: nullable(row.race_id),
     sequence: Number(row.sequence),
-    actorUserId: String(row.actor_user_id),
+    actorUserId: nullable(row.actor_user_id),
     action: String(row.action),
     entityType: String(row.entity_type),
     entityId: String(row.entity_id),

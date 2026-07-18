@@ -1,7 +1,9 @@
 import { env, exports } from 'cloudflare:workers'
 import { evictDurableObject, runInDurableObject } from 'cloudflare:test'
 import { describe, expect, it } from 'vitest'
+import { canonical } from '../worker/audit.js'
 import { EventRoom } from '../worker/index.js'
+import { runRetentionForEvent } from '../worker/retention.js'
 import { sha256Base64Url } from '../worker/security.js'
 
 function nextWebSocketMessage(socket: WebSocket): Promise<Record<string, unknown>> {
@@ -575,6 +577,170 @@ describe('Cloudflare Workers runtime integration', () => {
 
     memberSocket.close(1000, 'test complete')
     ownerSocket.close(1000, 'test complete')
+  })
+
+  it('deletes expired R2 archives and appends a system audit-chain event', async () => {
+    const eventId = 'runtime-retention-event'
+    const ownerId = 'runtime-retention-owner'
+    const archiveId = 'runtime-retention-archive'
+    const objectKey = `${eventId}/2020-01-02/${archiveId}.srs-backup`
+    const createdAt = '2020-01-02T00:00:00.000Z'
+    const retentionAt = new Date('2026-07-18T10:00:00.000Z')
+    const policy = {
+      finalizedRecordsDays: 36_500,
+      observationsDays: 36_500,
+      sampledPositionsDays: 36_500,
+      localHighFrequencyTrackDays: 7,
+      cloudBackupDays: 1,
+      regularMessagesDays: 36_500,
+      memberProfilesDays: 36_500,
+      authSecretsAfterEventDays: 36_500,
+      securityLogsDays: 36_500,
+    }
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO users (id, display_name, created_at, updated_at)
+         VALUES (?, ?, ?, ?)`,
+      ).bind(ownerId, '保存期間テスト管理者', createdAt, createdAt),
+      env.DB.prepare(
+        `INSERT INTO regattas
+         (id, slug, name, owner_user_id, starts_on, ends_on, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'archived', ?, ?)`,
+      ).bind(eventId, 'runtime-retention', '保存期間テスト大会', ownerId, '2020-01-01', '2020-01-02', createdAt, createdAt),
+      env.DB.prepare(
+        `INSERT INTO regatta_settings
+         (regatta_id, retention_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?)`,
+      ).bind(eventId, JSON.stringify(policy), createdAt, createdAt),
+    ])
+    const stored = await env.BACKUP_ARCHIVES.put(objectKey, new Uint8Array([7, 6, 5, 4]), {
+      customMetadata: { encrypted: 'true', eventId },
+    })
+    await env.DB.prepare(
+      `INSERT INTO backup_archives
+       (id, regatta_id, object_key, ciphertext_hash, server_data_hash, event_sequence,
+        size_bytes, etag, created_by, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      archiveId,
+      eventId,
+      objectKey,
+      'runtime-ciphertext-hash',
+      'runtime-server-data-hash',
+      0,
+      4,
+      stored.etag,
+      ownerId,
+      createdAt,
+    ).run()
+
+    const report = await runRetentionForEvent(env, eventId, 'cron', retentionAt)
+
+    expect(report).toMatchObject({
+      eventId,
+      status: 'completed',
+      counts: { cloudBackups: 1 },
+      startedAt: retentionAt.toISOString(),
+    })
+    expect(await env.BACKUP_ARCHIVES.get(objectKey)).toBeNull()
+    const archive = await env.DB.prepare(
+      'SELECT deleted_at FROM backup_archives WHERE id = ? LIMIT 1',
+    ).bind(archiveId).first<{ deleted_at: string | null }>()
+    expect(archive?.deleted_at).toBe(retentionAt.toISOString())
+
+    const audit = await env.DB.prepare(
+      `SELECT id, sequence, actor_user_id, actor_member_id, action, entity_type,
+              entity_id, before_hash, after_hash, reason, client_time, server_time,
+              previous_event_hash, event_hash
+       FROM audit_events WHERE regatta_id = ? ORDER BY sequence`,
+    ).bind(eventId).first<{
+      id: string
+      sequence: number
+      actor_user_id: string | null
+      actor_member_id: string | null
+      action: string
+      entity_type: string
+      entity_id: string
+      before_hash: string | null
+      after_hash: string
+      reason: string
+      client_time: string | null
+      server_time: string
+      previous_event_hash: string | null
+      event_hash: string
+    }>()
+    expect(audit).toMatchObject({
+      sequence: 1,
+      actor_user_id: null,
+      actor_member_id: null,
+      action: 'retention.run.completed',
+      entity_type: 'retention_run',
+      entity_id: report.runId,
+      before_hash: null,
+      reason: report.detail,
+      client_time: null,
+      previous_event_hash: null,
+    })
+    const afterHash = await sha256Base64Url(JSON.stringify(canonical({
+      triggerType: 'cron',
+      status: 'completed',
+      counts: report.counts,
+      startedAt: report.startedAt,
+      completedAt: report.completedAt,
+    })))
+    expect(audit?.after_hash).toBe(afterHash)
+    const expectedEventHash = await sha256Base64Url(JSON.stringify(canonical({
+      id: audit?.id,
+      regattaId: eventId,
+      raceId: null,
+      sequence: 1,
+      actorUserId: null,
+      action: 'retention.run.completed',
+      entityType: 'retention_run',
+      entityId: report.runId,
+      beforeHash: null,
+      afterHash,
+      reason: report.detail,
+      clientTime: null,
+      serverTime: audit?.server_time,
+      previousHash: null,
+    })))
+    expect(audit?.event_hash).toBe(expectedEventHash)
+
+    const manualReport = await runRetentionForEvent(
+      env,
+      eventId,
+      'manual',
+      new Date('2026-07-19T10:00:00.000Z'),
+      {
+        eventId,
+        eventSlug: 'runtime-retention',
+        eventName: '保存期間テスト大会',
+        userId: ownerId,
+        memberId: `owner:${ownerId}`,
+        displayName: '保存期間テスト管理者',
+        role: 'owner',
+        assignment: '大会管理者',
+        isOwner: true,
+      },
+    )
+    const manualAudit = await env.DB.prepare(
+      `SELECT sequence, actor_user_id, actor_member_id, action, entity_id
+       FROM audit_events WHERE regatta_id = ? ORDER BY sequence DESC LIMIT 1`,
+    ).bind(eventId).first<{
+      sequence: number
+      actor_user_id: string | null
+      actor_member_id: string | null
+      action: string
+      entity_id: string
+    }>()
+    expect(manualAudit).toEqual({
+      sequence: 2,
+      actor_user_id: ownerId,
+      actor_member_id: null,
+      action: 'retention.run.completed',
+      entity_id: manualReport.runId,
+    })
   })
 
   it('uses the configured R2 binding for encrypted archive objects', async () => {

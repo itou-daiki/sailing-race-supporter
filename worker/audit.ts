@@ -3,8 +3,7 @@ import type { AppEnv } from './index.js'
 import { sha256Base64Url } from './security.js'
 import { isFinalizationPhraseValid } from '../shared/finalization.js'
 
-interface AuditInput {
-  access: EventAccess
+interface AuditFields {
   raceId?: string
   action: string
   entityType: string
@@ -13,6 +12,20 @@ interface AuditInput {
   after?: unknown
   reason?: string
   clientTime?: string
+}
+
+interface AuditInput extends AuditFields {
+  access: EventAccess
+}
+
+interface SystemAuditInput extends AuditFields {
+  eventId: string
+}
+
+interface AuditActor {
+  eventId: string
+  userId: string | null
+  memberId: string | null
 }
 
 interface PreviousAudit {
@@ -36,7 +49,7 @@ async function hashValue(value: unknown): Promise<string | null> {
   return value === undefined ? null : sha256Base64Url(JSON.stringify(canonical(value)))
 }
 
-export async function appendAuditEvent(env: AppEnv, input: AuditInput): Promise<{
+async function appendAuditRecord(env: AppEnv, actor: AuditActor, input: AuditFields): Promise<{
   id: string
   sequence: number
   eventHash: string
@@ -46,7 +59,7 @@ export async function appendAuditEvent(env: AppEnv, input: AuditInput): Promise<
       `SELECT sequence, event_hash
        FROM audit_events WHERE regatta_id = ?
        ORDER BY sequence DESC LIMIT 1`,
-    ).bind(input.access.eventId).first<PreviousAudit>()
+    ).bind(actor.eventId).first<PreviousAudit>()
     const sequence = (previous?.sequence ?? 0) + 1
     const serverTime = new Date().toISOString()
     const id = crypto.randomUUID()
@@ -55,10 +68,10 @@ export async function appendAuditEvent(env: AppEnv, input: AuditInput): Promise<
     const previousHash = previous?.event_hash ?? null
     const eventHash = await sha256Base64Url(JSON.stringify(canonical({
       id,
-      regattaId: input.access.eventId,
+      regattaId: actor.eventId,
       raceId: input.raceId ?? null,
       sequence,
-      actorUserId: input.access.userId,
+      actorUserId: actor.userId,
       action: input.action,
       entityType: input.entityType,
       entityId: input.entityId,
@@ -79,11 +92,11 @@ export async function appendAuditEvent(env: AppEnv, input: AuditInput): Promise<
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(
         id,
-        input.access.eventId,
+        actor.eventId,
         input.raceId ?? null,
         sequence,
-        input.access.userId,
-        input.access.memberId.startsWith('owner:') ? null : input.access.memberId,
+        actor.userId,
+        actor.memberId,
         input.action,
         input.entityType,
         input.entityId,
@@ -101,6 +114,34 @@ export async function appendAuditEvent(env: AppEnv, input: AuditInput): Promise<
     }
   }
   throw new Error('Unable to append audit event')
+}
+
+export async function appendAuditEvent(env: AppEnv, input: AuditInput): Promise<{
+  id: string
+  sequence: number
+  eventHash: string
+}> {
+  return appendAuditRecord(env, {
+    eventId: input.access.eventId,
+    userId: input.access.userId,
+    memberId: input.access.memberId.startsWith('owner:') ? null : input.access.memberId,
+  }, input)
+}
+
+/**
+ * Scheduled retention work has no authenticated human actor, but it must share
+ * the same append-only, hash-linked audit chain as operator actions.
+ */
+export async function appendSystemAuditEvent(env: AppEnv, input: SystemAuditInput): Promise<{
+  id: string
+  sequence: number
+  eventHash: string
+}> {
+  return appendAuditRecord(env, {
+    eventId: input.eventId,
+    userId: null,
+    memberId: null,
+  }, input)
 }
 
 /**
