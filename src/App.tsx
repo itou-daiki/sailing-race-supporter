@@ -142,6 +142,7 @@ function messageTargetLabel(value: string, raceNumber: string, resources: EventR
 
 export default function App() {
   const [eventId] = useState(eventSlugFromLocation)
+  const [eventDatabaseId, setEventDatabaseId] = useState<string>()
   const [eventName, setEventName] = useState('2026 江の島サマーレガッタ')
   const [memberId, setMemberId] = useState(localMemberId)
   const [activeRaceId, setActiveRaceId] = useState(DEMO_RACES[0].id)
@@ -414,6 +415,7 @@ export default function App() {
     void loadEventBootstrap(eventId)
       .then((bootstrap) => {
         if (!active) return
+        setEventDatabaseId(bootstrap.event.id)
         setEventName(bootstrap.event.name)
         setEventAccess(bootstrap.access)
         setEventResources(bootstrap.resources)
@@ -1049,6 +1051,7 @@ export default function App() {
           <EventManager
             session={session}
             currentEventSlug={eventId}
+            currentEventId={eventDatabaseId}
             currentEventName={eventName}
             isCurrentEventOwner={eventAccess?.isOwner ?? false}
             resources={eventResources}

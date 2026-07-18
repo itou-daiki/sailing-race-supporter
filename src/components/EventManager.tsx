@@ -41,7 +41,9 @@ import {
   encryptBackup,
   requestServerBackup,
   restoreServerBackup,
+  verifyServerBackup,
   type BackupPayload,
+  type BackupVerificationReport,
   type EncryptedBackup,
 } from '../backup'
 import { exportLocalEventData } from '../offlineStore'
@@ -49,6 +51,7 @@ import { exportLocalEventData } from '../offlineStore'
 interface EventManagerProps {
   session: SessionState
   currentEventSlug: string
+  currentEventId?: string
   currentEventName: string
   isCurrentEventOwner: boolean
   resources: EventResources
@@ -77,6 +80,7 @@ function formatTimestamp(value: string): string {
 export function EventManager({
   session,
   currentEventSlug,
+  currentEventId,
   currentEventName,
   isCurrentEventOwner,
   resources,
@@ -109,6 +113,7 @@ export function EventManager({
   const [backupPassphrase, setBackupPassphrase] = useState('')
   const [backupFile, setBackupFile] = useState<File>()
   const [verifiedBackup, setVerifiedBackup] = useState<BackupPayload>()
+  const [backupVerification, setBackupVerification] = useState<BackupVerificationReport>()
   const [restoreReason, setRestoreReason] = useState('通信障害後の検証済みバックアップからコース版を復元')
   const [backupWorking, setBackupWorking] = useState(false)
   const [backupReport, setBackupReport] = useState<string>()
@@ -269,12 +274,23 @@ export function EventManager({
     setBackupWorking(true)
     setError(undefined)
     setBackupReport(undefined)
+    setBackupVerification(undefined)
     try {
-      const encrypted = JSON.parse(await backupFile.text()) as EncryptedBackup
+      if (backupFile.size > 25 * 1_024 * 1_024) throw new Error('バックアップは25 MiB以下を選択してください')
+      let encrypted: EncryptedBackup
+      try {
+        encrypted = JSON.parse(await backupFile.text()) as EncryptedBackup
+      } catch {
+        throw new Error('バックアップファイルが正しいJSONではありません')
+      }
       const verified = await decryptBackup(encrypted, backupPassphrase)
       if (verified.server.event.slug !== currentEventSlug) throw new Error('選択中の大会とは異なるバックアップです')
+      if (currentEventId && verified.server.event.id !== currentEventId) throw new Error('大会IDが選択中の大会と一致しません')
+      const verification = await verifyServerBackup(verified.server)
+      setBackupVerification(verification)
+      if (!verification.valid) throw new Error('バックアップ内部の整合性検証に失敗しました。復元はできません')
       setVerifiedBackup(verified)
-      setBackupReport(`ローカル検証成功：${verified.server.event.name}・監査連番 ${verified.server.manifest.eventSequence}・${Object.values(verified.server.manifest.counts).reduce((sum, count) => sum + count, 0)}件`)
+      setBackupReport(`復元前検証に成功：${verification.event.name}・${verification.totalRecords}件・監査連番 ${verification.auditSequence}`)
     } catch (reason) {
       setVerifiedBackup(undefined)
       setError(reason instanceof Error ? reason.message : 'バックアップを検証できません')
@@ -457,12 +473,31 @@ export function EventManager({
               <section className="backup-manager-section">
                 <div className="event-section-title"><span><DatabaseBackup size={17} />暗号化ローカルバックアップ</span><small>AES-GCM</small></div>
                 <div className="backup-manager-card">
-                  <label className="event-field"><span>端末内だけで使うパスフレーズ（10文字以上）</span><input type="password" value={backupPassphrase} onChange={(event) => { setBackupPassphrase(event.target.value); setVerifiedBackup(undefined) }} autoComplete="new-password" placeholder="忘れると復元できません" /></label>
+                  <label className="event-field"><span>端末内だけで使うパスフレーズ（10文字以上）</span><input type="password" value={backupPassphrase} onChange={(event) => { setBackupPassphrase(event.target.value); setVerifiedBackup(undefined); setBackupVerification(undefined) }} autoComplete="new-password" placeholder="忘れると復元できません" /></label>
                   <p>パスフレーズと復号鍵はサーバーへ送信しません。認証Cookie、招待秘密、復元コード、パスキー秘密鍵もバックアップへ含めません。</p>
                   <button type="button" className="backup-primary" onClick={() => void downloadBackup()} disabled={backupWorking || backupPassphrase.length < 10}>{backupWorking ? <LoaderCircle className="is-spinning" size={17} /> : <DatabaseBackup size={17} />}大会記録を暗号化して保存</button>
                   <div className="backup-divider"><span>検証・復元</span></div>
-                  <label className="backup-file"><Upload size={18} /><span>{backupFile?.name ?? '.srs-backupファイルを選択'}</span><input type="file" accept=".srs-backup,application/json" onChange={(event) => { setBackupFile(event.target.files?.[0]); setVerifiedBackup(undefined) }} /></label>
+                  <label className="backup-file"><Upload size={18} /><span>{backupFile?.name ?? '.srs-backupファイルを選択（25 MiB以下）'}</span><input type="file" accept=".srs-backup,application/json" onChange={(event) => { setBackupFile(event.target.files?.[0]); setVerifiedBackup(undefined); setBackupVerification(undefined) }} /></label>
                   <button type="button" className="backup-secondary" onClick={() => void verifyBackup()} disabled={backupWorking || !backupFile || backupPassphrase.length < 10}>復号してハッシュをローカル検証</button>
+                  {backupVerification && (
+                    <div className={`backup-verification ${backupVerification.valid ? 'is-valid' : 'is-invalid'}`}>
+                      <header><span>{backupVerification.valid ? <Check size={17} /> : <X size={17} />}<strong>{backupVerification.valid ? '復元可能' : '整合性エラー'}</strong></span><small>{backupVerification.totalRecords}件・{backupVerification.sectionCount}セクション</small></header>
+                      <div className="backup-verification__checks">
+                        {[
+                          ['eventIdentity', '大会ID・固定URL・大会名'],
+                          ['dataHash', '大会データ全体 SHA-256'],
+                          ['sectionCounts', 'セクション別レコード件数'],
+                          ['auditChain', '監査ログの連番・ハッシュチェーン'],
+                          ['auditRoot', `監査最終ルート（連番 ${backupVerification.auditSequence}）`],
+                        ].map(([key, label]) => {
+                          const valid = backupVerification.checks[key as keyof BackupVerificationReport['checks']]
+                          return <span className={valid ? 'is-valid' : 'is-invalid'} key={key}>{valid ? <Check size={13} /> : <X size={13} />}{label}</span>
+                        })}
+                      </div>
+                      {backupVerification.issues.length > 0 && <ul>{backupVerification.issues.map((issue) => <li key={issue}>{issue}</li>)}</ul>}
+                      <p>作成 {formatTimestamp(backupVerification.createdAt)}・形式 v{backupVerification.schemaVersion}。この検証は端末内で行われ、パスフレーズは送信されません。</p>
+                    </div>
+                  )}
                   {verifiedBackup && <div className="backup-restore-controls"><label className="event-field"><span>復元理由（監査ログへ記録）</span><textarea value={restoreReason} onChange={(event) => setRestoreReason(event.target.value)} minLength={5} maxLength={500} /></label><button type="button" onClick={() => void restoreBackup()} disabled={backupWorking || restoreReason.trim().length < 5}>新しい復元版として大会へ反映</button></div>}
                   {backupReport && <div className="backup-report"><Check size={16} />{backupReport}</div>}
                 </div>
