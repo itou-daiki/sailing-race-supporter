@@ -8,7 +8,8 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "npm run build:cloudflare && node scripts/prepare-pages.mjs",
+    "build": "npm run build:pages",
+    "build:pages": "tsc -b && vite build --config vite.pages.config.ts && node scripts/prepare-pages.mjs",
     "build:cloudflare": "tsc -b && vite build",
     "lint": "eslint .",
     "test": "vitest run",

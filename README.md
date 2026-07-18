@@ -24,7 +24,7 @@ npm run build
 npm run preview
 ```
 
-`npm run build` はPagesへ公開する静的クライアントだけを `dist` に残します。
+`npm run build` はWranglerに依存しないPages専用ビルドで、静的クライアントだけを `dist` に生成します。
 Worker統合成果物を確認する場合は `npm run build:cloudflare`、Workers
 Runtimeで確認する場合は `npm run preview` を使用します。
 
