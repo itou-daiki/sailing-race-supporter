@@ -31,18 +31,17 @@ npx wrangler whoami
 
 CIから公開する場合だけ、必要最小権限の `CLOUDFLARE_API_TOKEN` をGitHub ActionsのSecretへ登録します。`.env`やソースコードには置きません。
 
-## 3. D1とR2を作成
+## 3. D1を作成
 
-R2を初めて使うアカウントでは、先にCloudflare Dashboardの `Storage & databases → R2 → Overview` でR2サブスクリプションのチェックアウトを完了します。無料利用量を超えた分は従量課金になるため、Standardストレージを使用し、アプリ内の世代数・容量上限を変更する場合は事前に費用を確認してください。Infrequent AccessとR2 Data Catalogは本アプリには不要です。
+本構成では支払い・決済登録を必要としないCloudflare Freeプランだけを使用します。R2は無料利用量があってもsubscription checkoutが必要なため、設定もバインドもしません。
 
 ```bash
 npx wrangler d1 create sailing-race-supporter
-npx wrangler r2 bucket create sailing-race-supporter-backups
 ```
 
 出力された `database_id` を [wrangler.worker.jsonc](./wrangler.worker.jsonc) の `database_id` に設定します。初期値のゼロUUIDのままでは、デプロイ前検査が停止します。
 
-R2には端末でAES-GCM暗号化済みの大会バックアップだけを保管します。平文とパスフレーズは送信しません。バケット名を変更する場合は `wrangler.worker.jsonc` の `BACKUP_ARCHIVES` バインディングも同時に変更してください。
+D1 Time TravelはFreeプランでも自動的に有効で、過去7日以内の任意の時点へ復旧できます。長期保管は大会管理画面から端末へダウンロードする暗号化 `.srs-backup` を使用します。
 
 ## 4. バックアップ署名鍵を準備
 
@@ -68,11 +67,9 @@ npm run cf:preflight
 npm run deploy:worker
 ```
 
-`npm run cf:preflight` はCloudflare上のD1とR2を読み取り、R2未有効、バケット欠落、D1未適用マイグレーション、ローカル署名鍵の欠落を本番公開前に停止します。`npm run deploy:worker` も同じ検査を再実行してからビルド・公開します。
+`npm run cf:preflight` はCloudflare上のD1を読み取り、D1未適用マイグレーションとローカル署名鍵の欠落を本番公開前に停止します。`npm run deploy:worker` も同じ検査を再実行してからビルド・公開します。R2の有効化状態には依存しません。
 
-R2バケットは暗号化大会バックアップに使用するため必須です。1大会20世代、1世代25MiB、合計500MiBをアプリ側で上限とし、初期保存期間は大会終了後365日です。
-
-`wrangler.worker.jsonc` は `BACKUP_SIGNING_PRIVATE_KEY` を必須Secretとして宣言し、デプロイスクリプトはその値をコードと同じアップロードへ渡します。値が欠けていればWorker公開前に停止します。Pagesの画面確認ビルドには秘密鍵を設定しません。Workers設定を専用ファイルへ分離しているため、PagesのGitビルドがD1・R2・Durable Objects設定をPages設定として誤検出することもありません。
+`wrangler.worker.jsonc` は `BACKUP_SIGNING_PRIVATE_KEY` を必須Secretとして宣言し、デプロイスクリプトはその値をコードと同じアップロードへ渡します。値が欠けていればWorker公開前に停止します。Pagesの画面確認ビルドには秘密鍵を設定しません。Workers設定を専用ファイルへ分離しているため、PagesのGitビルドがD1・Durable Objects設定をPages設定として誤検出することもありません。
 
 ## 6. 公開後の確認
 
@@ -84,7 +81,16 @@ curl https://sailing-race-supporter.<subdomain>.workers.dev/api/health
 
 JSONの `status` が `ok`、`version` が `0.3.0` であることを確認します。そのURLをブラウザーで開き、パスキー登録後に最初の大会URLを発行します。
 
-大会管理画面から暗号化バックアップを一度ローカルとR2へ保存し、R2一覧から端末へ再取得して選択してください。「大会データ全体 SHA-256」「監査ログの連番・ハッシュチェーン」「監査最終ルート」「Ed25519 サーバー署名」がすべて成功し、復元操作が有効になることを確認します。
+大会管理画面から暗号化バックアップを端末へ保存し、別ブラウザーまたは別端末で同じファイルを選択してください。「大会データ全体 SHA-256」「監査ログの連番・ハッシュチェーン」「監査最終ルート」「Ed25519 サーバー署名」がすべて成功し、復元操作が有効になることを確認します。暗号化ファイルは少なくとも2か所へ複製し、パスフレーズは別経路で保管します。
+
+D1を過去時点へ戻す必要がある場合は、まず現在状態をローカルへエクスポートし、対象時刻を確認してから次を実行します。復元はデータベース全体を上書きするため、通常の大会内ロールバックではなく災害復旧に限定します。
+
+```bash
+npx wrangler d1 time-travel info sailing-race-supporter --timestamp="2026-07-19T00:00:00+09:00" --config wrangler.worker.jsonc
+npx wrangler d1 time-travel restore sailing-race-supporter --timestamp="2026-07-19T00:00:00+09:00" --config wrangler.worker.jsonc
+```
+
+Freeプランで指定できる時点は過去7日以内です。復元後に表示される「復元前のbookmark」は、操作を取り消すため必ず保存します。
 
 大会管理者の有効なパスキーが1個だけの場合、最初の大会URL発行直後にオーナー復旧キットが一度だけ表示されます。10文字以上のパスフレーズで暗号化ファイルを保存し、画面のスクリーンショットも別の安全な保管先へ保存してから確認を完了してください。サーバーには復旧コードのハッシュだけが残ります。可能なら本人確認画面から別端末またはセキュリティキーへ2個目のパスキーも追加します。
 

@@ -57,19 +57,15 @@ async function readSettings() {
 }
 
 async function checkRemoteResources(settings) {
-  const [bucket, migrations] = await Promise.all([
-    wrangler(['r2', 'bucket', 'info', settings.bucketName, '--json'], { echo: false }),
-    wrangler([
-      'd1', 'migrations', 'list', settings.databaseName,
-      '--remote', '--config', 'wrangler.worker.jsonc',
-    ], { echo: false }),
-  ])
-  JSON.parse(bucket.stdout)
+  const migrations = await wrangler([
+    'd1', 'migrations', 'list', settings.databaseName,
+    '--remote', '--config', 'wrangler.worker.jsonc',
+  ], { echo: false })
   const migrationOutput = `${migrations.stdout}\n${migrations.stderr}`
   if (!hasNoPendingMigrations(migrationOutput)) {
     throw new Error('D1に未適用マイグレーションがあります。先に npm run db:migrate:remote を実行してください')
   }
-  console.log(`本番事前検査: D1 ${settings.databaseName} / R2 ${settings.bucketName} / 未適用migration 0`)
+  console.log(`本番事前検査: D1 ${settings.databaseName} / 未適用migration 0 / R2不使用（無課金構成）`)
 }
 
 async function runBuild() {
@@ -104,23 +100,7 @@ async function deploy(settings) {
 
 export async function main(args = process.argv.slice(2)) {
   const settings = await readSettings()
-  try {
-    await checkRemoteResources(settings)
-  } catch (error) {
-    if (error instanceof CommandError && /enable R2|code:\s*10042/iu.test(error.message)) {
-      throw new Error(
-        'Cloudflare R2が未有効です。Dashboardの Storage & databases → R2 → Overview で利用開始を完了してください',
-        { cause: error },
-      )
-    }
-    if (error instanceof CommandError && /code:\s*1000[67]|bucket[^\n]*(?:not found|does not exist)/iu.test(error.message)) {
-      throw new Error(
-        `R2バケット ${settings.bucketName} が見つかりません。npx wrangler r2 bucket create ${settings.bucketName} を実行してください`,
-        { cause: error },
-      )
-    }
-    throw error
-  }
+  await checkRemoteResources(settings)
   if (args.includes('--check')) return
   await runBuild()
   await deploy(settings)

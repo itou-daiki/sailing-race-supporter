@@ -10,7 +10,6 @@ const RETENTION_KEYS = [
   'observationsDays',
   'sampledPositionsDays',
   'localHighFrequencyTrackDays',
-  'cloudBackupDays',
   'regularMessagesDays',
   'memberProfilesDays',
   'authSecretsAfterEventDays',

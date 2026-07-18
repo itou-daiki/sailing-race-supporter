@@ -6,15 +6,11 @@ const configuration = `{
   "d1_databases": [{
     "database_name": "sailing-race-supporter",
     "database_id": "20c2f73c-06d5-460c-a3e8-74d888585975"
-  }],
-  "r2_buckets": [{
-    "binding": "BACKUP_ARCHIVES",
-    "bucket_name": "sailing-race-supporter-backups"
   }]
 }`
 
 describe('Cloudflare production deployment preflight', () => {
-  it('loads only the declared D1, R2 and signing-secret settings', () => {
+  it('loads only the declared D1 and signing-secret settings', () => {
     const settings = readDeploymentSettings(
       configuration,
       'BACKUP_SIGNING_PRIVATE_KEY="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"\nUNRELATED_SECRET="do-not-upload"\n',
@@ -22,7 +18,6 @@ describe('Cloudflare production deployment preflight', () => {
     expect(settings).toEqual({
       databaseId: '20c2f73c-06d5-460c-a3e8-74d888585975',
       databaseName: 'sailing-race-supporter',
-      bucketName: 'sailing-race-supporter-backups',
       signingPrivateKey: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
     })
     expect(settings).not.toHaveProperty('UNRELATED_SECRET')

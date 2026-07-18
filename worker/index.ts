@@ -13,7 +13,6 @@ import { handleAudioDeviceRequest } from './audioDevices.js'
 import { handleRaceAreaRequest } from './areas.js'
 import { can, eventAccess, requirePermission, type EventAccess } from './authorization.js'
 import { appendAuditEvent, finalizeRace } from './audit.js'
-import { handleBackupArchiveRequest } from './backupArchives.js'
 import { handleBackupRequest } from './backups.js'
 import { handleCourseRequest } from './courses.js'
 import { handleEventCollectionRequest } from './events.js'
@@ -1250,9 +1249,6 @@ export default {
 
       const backupResponse = await handleBackupRequest(request, env)
       if (backupResponse) return backupResponse
-
-      const backupArchiveResponse = await handleBackupArchiveRequest(request, env)
-      if (backupArchiveResponse) return backupArchiveResponse
 
       const revisionResponse = await handleRevisionRequest(request, env)
       if (revisionResponse) return revisionResponse

@@ -15,7 +15,6 @@ const RETENTION_DEFAULTS = {
   observationsDays: 365,
   sampledPositionsDays: 90,
   localHighFrequencyTrackDays: 7,
-  cloudBackupDays: 365,
   regularMessagesDays: 90,
   memberProfilesDays: 365,
   authSecretsAfterEventDays: 30,

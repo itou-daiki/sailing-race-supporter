@@ -134,7 +134,6 @@ export interface RetentionPolicy {
   observationsDays: number
   sampledPositionsDays: number
   localHighFrequencyTrackDays: number
-  cloudBackupDays: number
   regularMessagesDays: number
   memberProfilesDays: number
   authSecretsAfterEventDays: number

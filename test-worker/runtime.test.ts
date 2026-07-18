@@ -993,11 +993,9 @@ describe('Cloudflare Workers runtime integration', () => {
     ownerSocket.close(1000, 'test complete')
   })
 
-  it('deletes expired R2 archives and appends a system audit-chain event', async () => {
+  it('runs retention without object storage and appends a system audit-chain event', async () => {
     const eventId = 'runtime-retention-event'
     const ownerId = 'runtime-retention-owner'
-    const archiveId = 'runtime-retention-archive'
-    const objectKey = `${eventId}/2020-01-02/${archiveId}.srs-backup`
     const createdAt = '2020-01-02T00:00:00.000Z'
     const retentionAt = new Date('2026-07-18T10:00:00.000Z')
     const policy = {
@@ -1005,7 +1003,6 @@ describe('Cloudflare Workers runtime integration', () => {
       observationsDays: 36_500,
       sampledPositionsDays: 36_500,
       localHighFrequencyTrackDays: 7,
-      cloudBackupDays: 1,
       regularMessagesDays: 36_500,
       memberProfilesDays: 36_500,
       authSecretsAfterEventDays: 36_500,
@@ -1027,40 +1024,15 @@ describe('Cloudflare Workers runtime integration', () => {
          VALUES (?, ?, ?, ?)`,
       ).bind(eventId, JSON.stringify(policy), createdAt, createdAt),
     ])
-    const stored = await env.BACKUP_ARCHIVES.put(objectKey, new Uint8Array([7, 6, 5, 4]), {
-      customMetadata: { encrypted: 'true', eventId },
-    })
-    await env.DB.prepare(
-      `INSERT INTO backup_archives
-       (id, regatta_id, object_key, ciphertext_hash, server_data_hash, event_sequence,
-        size_bytes, etag, created_by, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(
-      archiveId,
-      eventId,
-      objectKey,
-      'runtime-ciphertext-hash',
-      'runtime-server-data-hash',
-      0,
-      4,
-      stored.etag,
-      ownerId,
-      createdAt,
-    ).run()
 
     const report = await runRetentionForEvent(env, eventId, 'cron', retentionAt)
 
     expect(report).toMatchObject({
       eventId,
       status: 'completed',
-      counts: { cloudBackups: 1 },
       startedAt: retentionAt.toISOString(),
     })
-    expect(await env.BACKUP_ARCHIVES.get(objectKey)).toBeNull()
-    const archive = await env.DB.prepare(
-      'SELECT deleted_at FROM backup_archives WHERE id = ? LIMIT 1',
-    ).bind(archiveId).first<{ deleted_at: string | null }>()
-    expect(archive?.deleted_at).toBe(retentionAt.toISOString())
+    expect(report.counts).toEqual({})
 
     const audit = await env.DB.prepare(
       `SELECT id, sequence, actor_user_id, actor_member_id, action, entity_type,
@@ -1155,17 +1127,6 @@ describe('Cloudflare Workers runtime integration', () => {
       action: 'retention.run.completed',
       entity_id: manualReport.runId,
     })
-  })
-
-  it('uses the configured R2 binding for encrypted archive objects', async () => {
-    const key = 'runtime-test/event/archive.srsbackup'
-    await env.BACKUP_ARCHIVES.put(key, new Uint8Array([1, 2, 3, 4]), {
-      customMetadata: { encrypted: 'true' },
-    })
-
-    const object = await env.BACKUP_ARCHIVES.get(key)
-    expect(object?.customMetadata?.encrypted).toBe('true')
-    expect([...new Uint8Array(await object!.arrayBuffer())]).toEqual([1, 2, 3, 4])
   })
 
   it('rotates a member recovery card once and revokes both the invite and active sessions', async () => {

@@ -1,8 +1,6 @@
 import {
   CalendarDays,
   Archive,
-  CloudDownload,
-  CloudUpload,
   DatabaseBackup,
   Download,
   Check,
@@ -43,18 +41,12 @@ import {
 } from '../eventClient'
 import { createInvite, listInvites, revokeInvite, type InviteRecord } from '../inviteClient'
 import {
-  archiveEncryptedBackup,
-  deleteBackupArchive,
   decryptBackup,
-  downloadBackupArchive,
   encryptBackup,
-  listBackupArchives,
   requestBackupRestorePreview,
   requestServerBackup,
   restoreServerBackup,
   verifyServerBackup,
-  type BackupArchive,
-  type BackupArchiveLimits,
   type BackupPayload,
   type BackupRestorePreview,
   type BackupRestoreReport,
@@ -164,15 +156,11 @@ export function EventManager({
   const [restoreReason, setRestoreReason] = useState('通信障害後の検証済みバックアップからコース版を復元')
   const [backupWorking, setBackupWorking] = useState(false)
   const [backupReport, setBackupReport] = useState<string>()
-  const [storeBackupInCloud, setStoreBackupInCloud] = useState(true)
-  const [backupArchives, setBackupArchives] = useState<BackupArchive[]>([])
-  const [backupArchiveLimits, setBackupArchiveLimits] = useState<BackupArchiveLimits>()
   const [retention, setRetention] = useState<RetentionPolicy>({
     finalizedRecordsDays: 1_826,
     observationsDays: 365,
     sampledPositionsDays: 90,
     localHighFrequencyTrackDays: 7,
-    cloudBackupDays: 365,
     regularMessagesDays: 90,
     memberProfilesDays: 365,
     authSecretsAfterEventDays: 30,
@@ -216,13 +204,6 @@ export function EventManager({
         setLatestBackupAt(loaded.latestBackup?.created_at)
       })
       .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : '保存期間を取得できません') })
-    void listBackupArchives(currentEventSlug)
-      .then((loaded) => {
-        if (!active) return
-        setBackupArchives(loaded.archives)
-        setBackupArchiveLimits(loaded.limits)
-      })
-      .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : 'R2バックアップ一覧を取得できません') })
     return () => { active = false }
   }, [currentEventSlug, isCurrentEventOwner, session.mode])
 
@@ -424,65 +405,9 @@ export function EventManager({
       anchor.click()
       URL.revokeObjectURL(url)
       const size = new Blob([content]).size
-      if (storeBackupInCloud) {
-        try {
-          const archive = await archiveEncryptedBackup(
-            currentEventSlug,
-            encrypted,
-            server.manifest.dataHash,
-            server.manifest.eventSequence,
-          )
-          setBackupArchives((current) => [archive, ...current])
-          setBackupArchiveLimits((current) => current ? { ...current, currentBytes: current.currentBytes + archive.sizeBytes } : current)
-          setBackupReport(`ローカル保存と暗号化R2保管を完了しました（${formatBytes(size)}・監査連番 ${server.manifest.eventSequence}）`)
-        } catch (reason) {
-          throw new Error(
-            `ローカル保存は完了しましたが、R2保管に失敗しました：${reason instanceof Error ? reason.message : '不明なエラー'}`,
-            { cause: reason },
-          )
-        }
-      } else {
-        setBackupReport(`暗号化バックアップをローカル保存しました（${formatBytes(size)}・監査連番 ${server.manifest.eventSequence}）`)
-      }
+      setBackupReport(`暗号化バックアップを端末へ保存しました（${formatBytes(size)}・監査連番 ${server.manifest.eventSequence}）`)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'バックアップを作成できません')
-    } finally {
-      setBackupWorking(false)
-    }
-  }
-
-  const downloadCloudBackup = async (archive: BackupArchive) => {
-    setBackupWorking(true)
-    setError(undefined)
-    try {
-      const blob = await downloadBackupArchive(currentEventSlug, archive.id)
-      const url = URL.createObjectURL(blob)
-      const anchor = document.createElement('a')
-      anchor.href = url
-      anchor.download = `${currentEventSlug}-${archive.createdAt.slice(0, 10)}-${archive.id.slice(0, 8)}.srs-backup`
-      anchor.click()
-      URL.revokeObjectURL(url)
-      setBackupReport(`R2から暗号化バックアップを取得しました（${formatBytes(archive.sizeBytes)}）`)
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'R2バックアップを取得できません')
-    } finally {
-      setBackupWorking(false)
-    }
-  }
-
-  const removeCloudBackup = async (archive: BackupArchive) => {
-    if (!window.confirm(`${formatTimestamp(archive.createdAt)} の暗号化R2バックアップを削除します。ローカル保存済みか確認してください。`)) return
-    setBackupWorking(true)
-    setError(undefined)
-    try {
-      await deleteBackupArchive(currentEventSlug, archive.id)
-      setBackupArchives((current) => current.filter((item) => item.id !== archive.id))
-      setBackupArchiveLimits((current) => current ? { ...current, currentBytes: Math.max(0, current.currentBytes - archive.sizeBytes) } : current)
-      setBackupReport('R2バックアップを削除し、監査ログへ記録しました')
-    } catch (reason) {
-      const message = reason instanceof Error ? reason.message : 'R2バックアップを削除できません'
-      setError(message)
-      if (message.includes('再認証')) onRequestAuthentication()
     } finally {
       setBackupWorking(false)
     }
@@ -784,17 +709,9 @@ export function EventManager({
                 <div className="backup-manager-card">
                   <label className="event-field"><span>端末内だけで使うパスフレーズ（10文字以上）</span><input type="password" value={backupPassphrase} onChange={(event) => { setBackupPassphrase(event.target.value); setVerifiedBackup(undefined); setBackupVerification(undefined); setBackupRestorePreview(undefined) }} autoComplete="new-password" placeholder="忘れると復元できません" /></label>
                   <p>パスフレーズと復号鍵はサーバーへ送信しません。認証Cookie、招待秘密、復元コード、パスキー秘密鍵もバックアップへ含めません。</p>
-                  <label className="backup-cloud-option"><input type="checkbox" checked={storeBackupInCloud} onChange={(event) => setStoreBackupInCloud(event.target.checked)} /><CloudUpload size={19} /><span><strong>同じ暗号化ファイルをR2にも保管</strong><small>平文とパスフレーズは送信しません。最大20世代・1世代25 MiB</small></span></label>
+                  <div className="backup-cloud-option"><ShieldCheck size={19} /><span><strong>課金のない端末保存</strong><small>R2は使用しません。ファイルを2台以上の端末や外部メディアへコピーしてください</small></span></div>
                   <button type="button" className="backup-primary" onClick={() => void downloadBackup()} disabled={backupWorking || backupPassphrase.length < 10}>{backupWorking ? <LoaderCircle className="is-spinning" size={17} /> : <DatabaseBackup size={17} />}大会記録を暗号化して保存</button>
-                  <div className="backup-cloud-archives">
-                    <header><span><CloudDownload size={17} /><strong>R2暗号化バックアップ</strong></span><small>{backupArchives.length}/{backupArchiveLimits?.maxArchives ?? 20}世代・{formatBytes(backupArchiveLimits?.currentBytes ?? 0)}</small></header>
-                    {backupArchives.length ? <div>{backupArchives.map((archive) => (
-                      <article key={archive.id}>
-                        <span><strong>{formatTimestamp(archive.createdAt)}</strong><small>{formatBytes(archive.sizeBytes)}・監査連番 {archive.eventSequence}・ID {archive.id.slice(0, 8)}</small></span>
-                        <span><button type="button" onClick={() => void downloadCloudBackup(archive)} disabled={backupWorking} aria-label="R2バックアップを端末へ保存"><CloudDownload size={15} /></button><button type="button" className="is-danger" onClick={() => void removeCloudBackup(archive)} disabled={backupWorking} aria-label="R2バックアップを削除"><Trash2 size={15} /></button></span>
-                      </article>
-                    ))}</div> : <p>まだR2に保管された世代はありません。大会後も復号には同じパスフレーズが必要です。</p>}
-                  </div>
+                  <p>Cloudflare D1には無料のTime Travelが常時有効で、過去7日以内のサーバーデータを管理者が復旧できます。長期保管はこの暗号化ファイルを使います。</p>
                   <div className="backup-divider"><span>検証・復元</span></div>
                   <label className="backup-file"><Upload size={18} /><span>{backupFile?.name ?? '.srs-backupファイルを選択（25 MiB以下）'}</span><input type="file" accept=".srs-backup,application/json" onChange={(event) => { setBackupFile(event.target.files?.[0]); setVerifiedBackup(undefined); setBackupVerification(undefined); setBackupRestorePreview(undefined) }} /></label>
                   <button type="button" className="backup-secondary" onClick={() => void verifyBackup()} disabled={backupWorking || !backupFile || backupPassphrase.length < 10}>復号してハッシュをローカル検証</button>
@@ -843,12 +760,11 @@ export function EventManager({
                     <label className="event-field"><span>確定版・監査記録（日）</span><input type="number" min="1" max="36500" value={retention.finalizedRecordsDays} onChange={(event) => setRetention((current) => ({ ...current, finalizedRecordsDays: Number(event.target.value) }))} /></label>
                     <label className="event-field"><span>風・潮流観測（日）</span><input type="number" min="1" max="36500" value={retention.observationsDays} onChange={(event) => setRetention((current) => ({ ...current, observationsDays: Number(event.target.value) }))} /></label>
                     <label className="event-field"><span>D1位置サンプル（日）</span><input type="number" min="1" max="36500" value={retention.sampledPositionsDays} onChange={(event) => setRetention((current) => ({ ...current, sampledPositionsDays: Number(event.target.value) }))} /></label>
-                    <label className="event-field"><span>暗号化R2バックアップ（日）</span><input type="number" min="1" max="36500" value={retention.cloudBackupDays} onChange={(event) => setRetention((current) => ({ ...current, cloudBackupDays: Number(event.target.value) }))} /></label>
                     <label className="event-field"><span>通常メッセージ（日）</span><input type="number" min="1" max="36500" value={retention.regularMessagesDays} onChange={(event) => setRetention((current) => ({ ...current, regularMessagesDays: Number(event.target.value) }))} /></label>
                     <label className="event-field"><span>名前・担当（日）</span><input type="number" min="1" max="36500" value={retention.memberProfilesDays} onChange={(event) => setRetention((current) => ({ ...current, memberProfilesDays: Number(event.target.value) }))} /></label>
                     <label className="event-field"><span>招待・復元秘密（日）</span><input type="number" min="1" max="36500" value={retention.authSecretsAfterEventDays} onChange={(event) => setRetention((current) => ({ ...current, authSecretsAfterEventDays: Number(event.target.value) }))} /></label>
                   </div>
-                  <p>初期推奨は確定・監査5年、観測・R2バックアップ・名前・担当1年、位置・通常メッセージ90日、招待・復元秘密30日です。短縮前にローカルへも暗号化バックアップを保存してください。</p>
+                  <p>初期推奨は確定・監査5年、観測・名前・担当1年、位置・通常メッセージ90日、招待・復元秘密30日です。期間短縮前に暗号化バックアップを端末へ保存してください。</p>
                   <div className={`retention-hold ${retentionHold.active ? 'is-active' : ''}`}>
                     <div className="retention-hold__status">
                       <ShieldCheck size={19} />

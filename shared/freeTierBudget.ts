@@ -6,9 +6,6 @@ export interface CloudflareFreeTierLimits {
   durableObjectRowsWrittenPerDay: number
   d1RowsReadPerDay: number
   d1RowsWrittenPerDay: number
-  r2StorageGbMonth: number
-  r2ClassAOperationsPerMonth: number
-  r2ClassBOperationsPerMonth: number
 }
 
 export interface RegattaLoadModel {
@@ -24,9 +21,6 @@ export interface RegattaLoadModel {
   operationalEvents: number
   averageD1RowsWrittenPerOperationalEvent: number
   durableObjectActiveMillisecondsPerMessage: number
-  r2StorageGbMonth: number
-  r2ClassAOperationsPerMonth: number
-  r2ClassBOperationsPerMonth: number
 }
 
 export type BudgetStage = 'normal' | 'observe' | 'warning' | 'protect' | 'critical'
@@ -82,9 +76,6 @@ export const DEFAULT_CLOUDFLARE_FREE_LIMITS: CloudflareFreeTierLimits = {
   durableObjectRowsWrittenPerDay: 100_000,
   d1RowsReadPerDay: 5_000_000,
   d1RowsWrittenPerDay: 100_000,
-  r2StorageGbMonth: 10,
-  r2ClassAOperationsPerMonth: 1_000_000,
-  r2ClassBOperationsPerMonth: 10_000_000,
 }
 
 export const STANDARD_REGATTA_LOAD: RegattaLoadModel = {
@@ -100,9 +91,6 @@ export const STANDARD_REGATTA_LOAD: RegattaLoadModel = {
   operationalEvents: 1_500,
   averageD1RowsWrittenPerOperationalEvent: 2,
   durableObjectActiveMillisecondsPerMessage: 20,
-  r2StorageGbMonth: 2.5,
-  r2ClassAOperationsPerMonth: 20_000,
-  r2ClassBOperationsPerMonth: 200_000,
 }
 
 export function budgetStage(percent: number): BudgetStage {
@@ -195,9 +183,6 @@ export function estimateRegattaFreeTierUsage(
       d1PositionWrites + model.operationalEvents * model.averageD1RowsWrittenPerOperationalEvent,
       limits.d1RowsWrittenPerDay,
     ),
-    metric('r2-storage', 'R2保存容量', model.r2StorageGbMonth, limits.r2StorageGbMonth, '月'),
-    metric('r2-class-a', 'R2 Class A', model.r2ClassAOperationsPerMonth, limits.r2ClassAOperationsPerMonth, '月'),
-    metric('r2-class-b', 'R2 Class B', model.r2ClassBOperationsPerMonth, limits.r2ClassBOperationsPerMonth, '月'),
   ]
   const limitingMetric = metrics.reduce((highest, candidate) => candidate.percent > highest.percent ? candidate : highest)
   return {

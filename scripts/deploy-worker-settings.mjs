@@ -15,11 +15,6 @@ function dotenvValue(source, name) {
 export function readDeploymentSettings(configuration, devVars) {
   const databaseId = configuredValue(configuration, /"database_id"\s*:\s*"([^"]+)"/u, 'D1 database_id')
   const databaseName = configuredValue(configuration, /"database_name"\s*:\s*"([^"]+)"/u, 'D1 database_name')
-  const bucketName = configuredValue(
-    configuration,
-    /"binding"\s*:\s*"BACKUP_ARCHIVES"[\s\S]*?"bucket_name"\s*:\s*"([^"]+)"/u,
-    'BACKUP_ARCHIVES R2バケット',
-  )
   if (databaseId === '00000000-0000-0000-0000-000000000000') {
     throw new Error('D1 database_idが初期値のままです')
   }
@@ -30,7 +25,7 @@ export function readDeploymentSettings(configuration, devVars) {
   if (!signingPrivateKey || Buffer.from(signingPrivateKey, 'base64url').byteLength < 32) {
     throw new Error(`.dev.varsの${requiredSecretName}が未設定または不正です`)
   }
-  return { databaseId, databaseName, bucketName, signingPrivateKey }
+  return { databaseId, databaseName, signingPrivateKey }
 }
 
 export function hasNoPendingMigrations(output) {
