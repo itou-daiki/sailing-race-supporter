@@ -2504,7 +2504,8 @@ select:focus-visible {
 }
 
 .drawer-backdrop--map-visible > div,
-.drawer-backdrop--map-visible > .settings-sheet {
+.drawer-backdrop--map-visible > .settings-sheet,
+.drawer-backdrop--map-visible > .message-drawer {
   height: 100%;
 }
 
@@ -5822,7 +5823,7 @@ select:focus-visible {
 
   .drawer-backdrop--map-visible > div {
     width: 100%;
-    height: min(76dvh, 720px);
+    height: min(46dvh, 620px);
   }
 
   .log-drawer {
@@ -5831,7 +5832,8 @@ select:focus-visible {
     border-radius: 16px 16px 0 0;
   }
 
-  .drawer-backdrop--map-visible > .settings-sheet {
+  .drawer-backdrop--map-visible > .settings-sheet,
+  .drawer-backdrop--map-visible > .message-drawer {
     width: 100%;
     height: min(46dvh, 620px);
     border-radius: 16px 16px 0 0;

@@ -1439,7 +1439,7 @@ export default function App() {
       </div>
 
       {messagesOpen && (
-        <div className="drawer-backdrop" role="presentation" onMouseDown={() => setMessagesOpen(false)}>
+        <div className="drawer-backdrop drawer-backdrop--map-visible" role="presentation" onMouseDown={() => setMessagesOpen(false)}>
           <aside className="message-drawer" aria-label="大会メッセージ" onMouseDown={(event) => event.stopPropagation()}>
             <header>
               <div><span className="eyebrow">{eventName}</span><strong>運営メッセージ</strong></div>
