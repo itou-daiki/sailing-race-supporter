@@ -283,6 +283,12 @@ async function markForRace(
 
 async function persistMark(env: AppEnv, access: EventAccess, operation: RealtimeOperation): Promise<Record<string, unknown>> {
   const raceId = await requireRace(env, access, operation.raceId)
+  const race = await env.DB.prepare(
+    'SELECT status FROM races WHERE id = ? AND regatta_id = ? LIMIT 1',
+  ).bind(raceId, access.eventId).first<{ status: string }>()
+  if (race?.status === 'finalized' && !access.isOwner) {
+    throw new Response('Finalized race marks can only be edited by the event owner', { status: 409 })
+  }
   const payload = objectPayload(operation.payload)
   const markId = stringValue(payload.markId, 'markId')
   const mark = await markForRace(env, access, raceId, markId)
@@ -307,6 +313,14 @@ async function persistMark(env: AppEnv, access: EventAccess, operation: Realtime
   const clientTime = isoTime(payload.recordedAt ?? operation.clientTime, new Date().toISOString())
   const serverTime = new Date().toISOString()
   const accuracyMetres = optionalNumber(payload.accuracyMetres, 'accuracyMetres', 0, 10_000)
+  const positionSource = payload.positionSource === 'handheld-gps-manual' ? 'handheld-gps-manual' : 'device-geolocation'
+  const coordinateEntryMode = positionSource === 'handheld-gps-manual'
+    ? stringValue(payload.coordinateEntryMode, 'coordinateEntryMode')
+    : null
+  if (coordinateEntryMode && !['decimal-tail-4', 'decimal-full'].includes(coordinateEntryMode)) {
+    throw new Response('Invalid coordinateEntryMode', { status: 400 })
+  }
+  const positionNote = optionalString(payload.note, 120)
   const targetDifferenceMetres = Math.round(geodesicDistanceMetres(mark.target, coordinates) * 100) / 100
   await env.DB.prepare(
     `INSERT INTO mark_events
@@ -326,15 +340,24 @@ async function persistMark(env: AppEnv, access: EventAccess, operation: Realtime
     clientTime,
     serverTime,
     sequence?.sequence ?? 1,
-    JSON.stringify({ source: 'web', originalStatus: payload.status ?? 'deployed', targetDifferenceMetres }),
+    JSON.stringify({
+      source: positionSource,
+      coordinateEntryMode,
+      note: positionNote,
+      originalStatus: payload.status ?? 'deployed',
+      targetDifferenceMetres,
+    }),
   ).run()
   return {
     markId,
     actual: coordinates,
-    status: eventType === 'dropped' ? 'deployed' : eventType,
+    status: eventType === 'dropped' || eventType === 'moved' ? 'deployed' : eventType,
     recordedAt: clientTime,
     committeeBoatId,
     accuracyMetres,
+    positionSource,
+    coordinateEntryMode,
+    note: positionNote,
     targetDifferenceMetres,
   }
 }

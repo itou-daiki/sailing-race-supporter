@@ -776,7 +776,7 @@ export default function App() {
   }
 
   const advanceTask = (taskId: string) => {
-    if (locked) return
+    if (locked && !eventAccess?.isOwner) return
     const task = tasks.find((candidate) => candidate.id === taskId)
     if (!task) return
     const nextStatus: OperationalTask['status'] = task.status === 'done'
@@ -795,10 +795,19 @@ export default function App() {
     setMessagesOpen(true)
   }
 
-  const recordMarkDrop = (markId: string) => {
+  const recordMarkPosition = (
+    markId: string,
+    actual: LngLat,
+    metadata: {
+      source: 'device-geolocation' | 'handheld-gps-manual'
+      entryMode?: 'decimal-tail-4' | 'decimal-full'
+      accuracyMetres?: number
+      note?: string
+      committeeBoatId?: string
+    },
+  ) => {
     if (locked) return
-    const selfBoat = boats.find((boat) => boat.isSelf)
-    if (!selfBoat) return
+    const existingMark = marks.find((mark) => mark.id === markId)
     setRaces((current) => current.map((race) => {
       if (race.id !== activeRace.id) return race
       const sourceMarks = race.marks.length ? race.marks : marks
@@ -806,19 +815,45 @@ export default function App() {
         ...race,
         marks: sourceMarks.map((mark) => (
           mark.id === markId
-            ? { ...mark, actual: selfBoat.position, status: 'deployed' as const }
+            ? { ...mark, actual, status: 'deployed' as const }
             : mark
         )),
       }
     }))
     void sendRealtimeOperation('mark', {
       markId,
-      actual: selfBoat.position,
-      status: 'deployed',
+      actual,
+      status: existingMark?.actual ? 'moved' : 'deployed',
       recordedAt: new Date().toISOString(),
+      committeeBoatId: metadata.committeeBoatId,
+      accuracyMetres: metadata.accuracyMetres,
+      positionSource: metadata.source,
+      coordinateEntryMode: metadata.entryMode,
+      note: metadata.note,
+    }, activeRace.id)
+  }
+
+  const recordMarkDrop = (markId: string) => {
+    const selfBoat = boats.find((boat) => boat.isSelf)
+    if (!selfBoat) return
+    recordMarkPosition(markId, selfBoat.position, {
+      source: 'device-geolocation',
       committeeBoatId: selfBoat.id,
       accuracyMetres: selfBoat.accuracyMetres,
-    }, activeRace.id)
+    })
+  }
+
+  const recordManualMarkPosition = (
+    markId: string,
+    actual: LngLat,
+    metadata: { entryMode: 'decimal-tail-4' | 'decimal-full'; accuracyMetres?: number; note?: string },
+  ) => {
+    const selfBoat = boats.find((boat) => boat.isSelf)
+    recordMarkPosition(markId, actual, {
+      source: 'handheld-gps-manual',
+      committeeBoatId: selfBoat?.id,
+      ...metadata,
+    })
   }
 
   const recordLeadingPassage = (markId: string) => {
@@ -1360,12 +1395,13 @@ export default function App() {
               onSelectMark={setSelectedMarkId}
               onUseCurrentLocation={updateSelfLocation}
               onRecordDrop={recordMarkDrop}
+              onRecordManualPosition={recordManualMarkPosition}
               onRecordLeadingPassage={recordLeadingPassage}
               onAdoptLeadingPassage={adoptLeadingPassage}
               leadingPassages={leadingPassages}
               raceId={activeRace.id}
               raceAreaName={activeRace.raceAreaName}
-              locked={locked}
+              locked={locked && !eventAccess?.isOwner}
               passageLocked={locked && !eventAccess?.isOwner}
               canAdoptLeadingPassage={canAdoptLeadingPassage}
             />

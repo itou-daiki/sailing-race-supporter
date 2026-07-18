@@ -1174,6 +1174,7 @@ select:focus-visible {
 
 .selected-mark__actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 5px;
   margin-left: auto;
 }
@@ -1202,6 +1203,154 @@ select:focus-visible {
 .selected-mark__actions button:disabled {
   opacity: 0.48;
   cursor: not-allowed;
+}
+
+.manual-position-editor {
+  width: min(650px, 100%);
+  flex: 1 0 100%;
+  order: 5;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 7px 10px;
+  padding: 9px;
+  color: var(--navy);
+  background: rgba(247, 252, 255, 0.96);
+  border: 1px solid #a9d5ef;
+  border-radius: 9px;
+}
+
+.manual-position-editor > header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.manual-position-editor > header span {
+  display: grid;
+}
+
+.manual-position-editor > header strong {
+  font-size: 11px;
+}
+
+.manual-position-editor > header button,
+.manual-position-modes button,
+.manual-position-submit {
+  padding: 5px 8px;
+  color: var(--dodger-strong);
+  background: #e6f4fd;
+  border: 1px solid #b8daef;
+  border-radius: 6px;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.manual-position-modes {
+  display: flex;
+  align-self: start;
+  gap: 3px;
+}
+
+.manual-position-modes button.is-active {
+  color: #fff;
+  background: var(--dodger-strong);
+  border-color: var(--dodger-strong);
+}
+
+.manual-position-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr minmax(100px, 0.65fr);
+  gap: 6px;
+}
+
+.manual-position-fields label,
+.manual-position-note {
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.coordinate-input {
+  height: 31px;
+  display: flex;
+  align-items: center;
+  padding-left: 7px;
+  color: #31546b;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.coordinate-input b {
+  font-size: 11px;
+}
+
+.coordinate-input input,
+.manual-position-fields > label > input,
+.manual-position-note input {
+  min-width: 0;
+  height: 29px;
+  padding: 0 6px;
+  color: var(--navy);
+  background: transparent;
+  border: 0;
+  outline: 0;
+  font-size: 11px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.coordinate-input input {
+  width: 0;
+  flex: 1;
+}
+
+.manual-position-fields > label > input,
+.manual-position-note input {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.manual-position-note {
+  grid-column: 2;
+}
+
+.manual-position-preview,
+.manual-position-confirm,
+.manual-position-error {
+  grid-column: 1 / -1;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.manual-position-preview {
+  color: #176591 !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.manual-position-confirm {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #8c5b17;
+}
+
+.manual-position-error {
+  color: var(--danger) !important;
+}
+
+.manual-position-submit {
+  grid-column: 1 / -1;
+  min-height: 31px;
+  color: #fff;
+  background: var(--dodger-strong);
+  border-color: var(--dodger-strong);
 }
 
 .map-error {
@@ -5833,8 +5982,48 @@ select:focus-visible {
   }
 
   .selected-mark__actions button {
-    flex: 1;
+    flex: 1 1 30%;
     justify-content: center;
+  }
+
+  .selected-mark--editing > .selected-mark__icon,
+  .selected-mark--editing > .selected-mark__body,
+  .selected-mark--editing > .selected-mark__actions {
+    display: none;
+  }
+
+  .selected-mark--editing {
+    top: 9px;
+    bottom: 139px;
+    overflow: hidden;
+  }
+
+  .manual-position-editor {
+    grid-template-columns: 1fr;
+    height: 100%;
+    max-height: none;
+    min-width: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .manual-position-modes,
+  .manual-position-fields,
+  .manual-position-note {
+    grid-column: 1;
+  }
+
+  .manual-position-fields {
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .manual-position-fields label {
+    min-width: 0;
+  }
+
+  .manual-position-fields label:last-child {
+    grid-column: 1;
   }
 
   .segmented-control button,
