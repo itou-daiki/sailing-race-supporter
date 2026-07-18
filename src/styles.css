@@ -1231,6 +1231,13 @@ select:focus-visible {
   display: grid;
 }
 
+.manual-position-header-actions {
+  flex: none;
+  display: flex !important;
+  grid-template-columns: auto auto;
+  gap: 4px;
+}
+
 .manual-position-editor > header strong {
   font-size: 11px;
 }
@@ -1249,6 +1256,7 @@ select:focus-visible {
 
 .manual-position-modes {
   display: flex;
+  flex-wrap: wrap;
   align-self: start;
   gap: 3px;
 }
@@ -1257,6 +1265,40 @@ select:focus-visible {
   color: #fff;
   background: var(--dodger-strong);
   border-color: var(--dodger-strong);
+}
+
+.manual-position-editor > header .manual-position-quick-save {
+  color: #fff;
+  background: var(--dodger-strong);
+  border-color: var(--dodger-strong);
+}
+
+.manual-position-datum {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #31546b;
+  font-size: 9px;
+  font-weight: 850;
+}
+
+.manual-position-datum.is-error {
+  padding: 4px 6px;
+  color: var(--danger);
+  background: #fff1ec;
+  border: 1px solid #f3b6a5;
+  border-radius: 6px;
+}
+
+.manual-position-datum small {
+  margin-left: auto;
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.manual-position-datum input {
+  accent-color: var(--dodger-strong);
 }
 
 .manual-position-fields {
@@ -1288,6 +1330,7 @@ select:focus-visible {
 
 .coordinate-input b {
   font-size: 11px;
+  white-space: nowrap;
 }
 
 .coordinate-input input,
@@ -6008,6 +6051,7 @@ select:focus-visible {
   }
 
   .manual-position-modes,
+  .manual-position-datum,
   .manual-position-fields,
   .manual-position-note {
     grid-column: 1;

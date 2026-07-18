@@ -48,18 +48,18 @@ describe('mark drop persistence', () => {
       payload: {
         markId: 'mark-1', actual: [139.46638, 35.29455], status: 'deployed',
         committeeBoatId: 'boat-1', accuracyMetres: 3.2, recordedAt: '2026-07-18T01:00:00.000Z',
-        positionSource: 'handheld-gps-manual', coordinateEntryMode: 'decimal-tail-4',
+        positionSource: 'handheld-gps-manual', coordinateEntryMode: 'dmm-tail-4', coordinateDatum: 'WGS84',
         note: 'Garmin表示から転記',
       },
-    }) as { accuracyMetres: number; targetDifferenceMetres: number; positionSource: string; coordinateEntryMode: string }
+    }) as { accuracyMetres: number; targetDifferenceMetres: number; positionSource: string; coordinateEntryMode: string; coordinateDatum: string }
 
     expect(result.accuracyMetres).toBe(3.2)
     expect(result.targetDifferenceMetres).toBeCloseTo(37.7, 0)
-    expect(result).toMatchObject({ positionSource: 'handheld-gps-manual', coordinateEntryMode: 'decimal-tail-4' })
+    expect(result).toMatchObject({ positionSource: 'handheld-gps-manual', coordinateEntryMode: 'dmm-tail-4', coordinateDatum: 'WGS84' })
     const insert = inserts.find((item) => item.sql.includes('INSERT INTO mark_events'))
     expect(insert?.values[6]).toBe(3.2)
     expect(JSON.parse(insert?.values[12] as string)).toMatchObject({
-      source: 'handheld-gps-manual', coordinateEntryMode: 'decimal-tail-4', note: 'Garmin表示から転記',
+      source: 'handheld-gps-manual', coordinateEntryMode: 'dmm-tail-4', coordinateDatum: 'WGS84', note: 'Garmin表示から転記',
       originalStatus: 'deployed', targetDifferenceMetres: result.targetDifferenceMetres,
     })
   })

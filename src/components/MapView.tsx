@@ -18,7 +18,14 @@ import { bearingDegrees, distanceMetres, estimateEtaSeconds, formatDistance, hea
 import type { CommitteeBoat, CourseMark, CurrentObservation, LeadingPassageVisit, LngLat, WindObservation } from '../domain'
 import { buildCourseFeatures, findGatePairs } from '../mapCourseFeatures'
 import { passageVisitKey } from '../passages'
-import { decimalTailParts, positionFromDecimalTails, positionFromFullDecimal } from '../coordinateEntry'
+import {
+  decimalMinuteTailParts,
+  decimalTailParts,
+  positionFromDecimalMinuteTails,
+  positionFromDecimalTails,
+  positionFromFullDecimal,
+  type CoordinateEntryMode,
+} from '../coordinateEntry'
 
 interface MapViewProps {
   marks: readonly CourseMark[]
@@ -32,7 +39,7 @@ interface MapViewProps {
   onRecordManualPosition: (
     markId: string,
     position: LngLat,
-    metadata: { entryMode: 'decimal-tail-4' | 'decimal-full'; accuracyMetres?: number; note?: string },
+    metadata: { entryMode: CoordinateEntryMode; accuracyMetres?: number; note?: string },
   ) => void
   onRecordLeadingPassage: (markId: string) => void
   onAdoptLeadingPassage: (markId: string, observationId: string) => void
@@ -62,6 +69,8 @@ const MAP_STYLE: maplibregl.StyleSpecification = {
     { id: 'gsi-map', type: 'raster', source: 'gsi', paint: { 'raster-opacity': 0.76 } },
   ],
 }
+
+const DATUM_CONFIRMATION_ERROR = 'ハンディGPSの測地系がWGS 84であることを確認してください'
 
 function formatEta(seconds: number | undefined): string {
   if (seconds === undefined) return 'ETA —（0.5kt未満）'
@@ -103,18 +112,20 @@ export function MapView({
   const mapRef = useRef<MapLibreMap | null>(null)
   const markerRefs = useRef<maplibregl.Marker[]>([])
   const watchRef = useRef<number | undefined>(undefined)
+  const manualEditorRef = useRef<HTMLFormElement>(null)
   const firstTrackingFix = useRef(true)
   const [mapReady, setMapReady] = useState(false)
   const [basemapUnavailable, setBasemapUnavailable] = useState(false)
   const [locationError, setLocationError] = useState<string>()
   const [tracking, setTracking] = useState(false)
   const [manualEditorMarkId, setManualEditorMarkId] = useState<string>()
-  const [manualEntryMode, setManualEntryMode] = useState<'decimal-tail-4' | 'decimal-full'>('decimal-tail-4')
+  const [manualEntryMode, setManualEntryMode] = useState<CoordinateEntryMode>('dmm-tail-4')
   const [manualLatitude, setManualLatitude] = useState('')
   const [manualLongitude, setManualLongitude] = useState('')
   const [manualAccuracy, setManualAccuracy] = useState('')
   const [manualNote, setManualNote] = useState('ハンディGPSから転記')
   const [manualDifferenceConfirmed, setManualDifferenceConfirmed] = useState(false)
+  const [manualDatumConfirmed, setManualDatumConfirmed] = useState(false)
   const [manualEntryError, setManualEntryError] = useState<string>()
   const [freshnessNow, setFreshnessNow] = useState(() => Date.now())
   const features = useMemo(() => buildCourseFeatures(marks), [marks])
@@ -140,7 +151,9 @@ export function MapView({
     try {
       return manualEntryMode === 'decimal-tail-4'
         ? positionFromDecimalTails(manualReference, manualLatitude, manualLongitude)
-        : positionFromFullDecimal(manualLatitude, manualLongitude)
+        : manualEntryMode === 'dmm-tail-4'
+          ? positionFromDecimalMinuteTails(manualReference, manualLatitude, manualLongitude)
+          : positionFromFullDecimal(manualLatitude, manualLongitude)
     } catch {
       return undefined
     }
@@ -148,6 +161,7 @@ export function MapView({
   const manualTargetDifference = selectedMark && manualPreview
     ? distanceMetres(selectedMark.target, manualPreview)
     : undefined
+  const manualDatumError = manualEntryError === DATUM_CONFIRMATION_ERROR
 
   useEffect(() => {
     const interval = window.setInterval(() => setFreshnessNow(Date.now()), 15_000)
@@ -305,9 +319,9 @@ export function MapView({
 
   const openManualEditor = () => {
     if (!manualReference || !selectedMark) return
-    const latitude = decimalTailParts(manualReference[1])
-    const longitude = decimalTailParts(manualReference[0])
-    setManualEntryMode('decimal-tail-4')
+    const latitude = decimalMinuteTailParts(manualReference[1], 'latitude')
+    const longitude = decimalMinuteTailParts(manualReference[0], 'longitude')
+    setManualEntryMode('dmm-tail-4')
     setManualLatitude(latitude.tail)
     setManualLongitude(longitude.tail)
     setManualAccuracy('')
@@ -317,16 +331,19 @@ export function MapView({
     setManualEditorMarkId(selectedMark.id)
   }
 
-  const changeManualEntryMode = (mode: 'decimal-tail-4' | 'decimal-full') => {
+  const changeManualEntryMode = (mode: CoordinateEntryMode) => {
     if (!manualReference) return
-    setManualEntryMode(mode)
-    if (mode === 'decimal-tail-4') {
+    if (mode === 'dmm-tail-4') {
+      setManualLatitude(decimalMinuteTailParts(manualReference[1], 'latitude').tail)
+      setManualLongitude(decimalMinuteTailParts(manualReference[0], 'longitude').tail)
+    } else if (mode === 'decimal-tail-4') {
       setManualLatitude(decimalTailParts(manualReference[1]).tail)
       setManualLongitude(decimalTailParts(manualReference[0]).tail)
     } else {
       setManualLatitude(manualReference[1].toFixed(6))
       setManualLongitude(manualReference[0].toFixed(6))
     }
+    setManualEntryMode(mode)
     setManualDifferenceConfirmed(false)
     setManualEntryError(undefined)
   }
@@ -334,10 +351,17 @@ export function MapView({
   const submitManualPosition = (event: React.FormEvent) => {
     event.preventDefault()
     if (!selectedMark || !manualReference) return
+    if (!manualDatumConfirmed) {
+      setManualEntryError(DATUM_CONFIRMATION_ERROR)
+      requestAnimationFrame(() => manualEditorRef.current?.scrollTo({ top: 0, behavior: 'smooth' }))
+      return
+    }
     try {
       const position = manualEntryMode === 'decimal-tail-4'
         ? positionFromDecimalTails(manualReference, manualLatitude, manualLongitude)
-        : positionFromFullDecimal(manualLatitude, manualLongitude)
+        : manualEntryMode === 'dmm-tail-4'
+          ? positionFromDecimalMinuteTails(manualReference, manualLatitude, manualLongitude)
+          : positionFromFullDecimal(manualLatitude, manualLongitude)
       const accuracyMetres = manualAccuracy.trim() === '' ? undefined : Number(manualAccuracy)
       if (accuracyMetres !== undefined && (!Number.isFinite(accuracyMetres) || accuracyMetres < 0 || accuracyMetres > 10_000)) {
         throw new Error('GPS精度は0〜10,000mで入力してください')
@@ -355,6 +379,10 @@ export function MapView({
       setManualEntryError(undefined)
     } catch (reason) {
       setManualEntryError(reason instanceof Error ? reason.message : '座標を確認してください')
+      requestAnimationFrame(() => manualEditorRef.current?.scrollTo({
+        top: manualEditorRef.current.scrollHeight,
+        behavior: 'smooth',
+      }))
     }
   }
 
@@ -511,30 +539,49 @@ export function MapView({
             </button>
           </div>
           {manualEditorMarkId === selectedMark.id && manualReference && (
-            <form className="manual-position-editor" onSubmit={submitManualPosition}>
+            <form ref={manualEditorRef} className="manual-position-editor" onSubmit={submitManualPosition}>
               <header>
-                <span><strong>{selectedMark.label}：ハンディGPSの投下位置</strong><small>緯度→経度の順・10進度（DD.dddddd）</small></span>
-                <button type="button" onClick={() => setManualEditorMarkId(undefined)}>閉じる</button>
+                <span>
+                  <strong>{selectedMark.label}：ハンディGPSの投下位置</strong>
+                  <small>{manualEntryMode === 'dmm-tail-4' ? '度＋10進分（DD°MM.mmmm′）' : '10進度（DD.dddddd°）'}・WGS 84</small>
+                </span>
+                <span className="manual-position-header-actions">
+                  <button type="button" onClick={() => setManualEditorMarkId(undefined)}>閉じる</button>
+                  <button type="submit" className="manual-position-quick-save">保存</button>
+                </span>
               </header>
               <div className="manual-position-modes" aria-label="座標入力方式">
-                <button type="button" className={manualEntryMode === 'decimal-tail-4' ? 'is-active' : ''} onClick={() => changeManualEntryMode('decimal-tail-4')}>末尾4桁</button>
-                <button type="button" className={manualEntryMode === 'decimal-full' ? 'is-active' : ''} onClick={() => changeManualEntryMode('decimal-full')}>全桁</button>
+                <button type="button" className={manualEntryMode === 'dmm-tail-4' ? 'is-active' : ''} onClick={() => changeManualEntryMode('dmm-tail-4')}>GPS度分・末尾4桁</button>
+                <button type="button" className={manualEntryMode === 'decimal-tail-4' ? 'is-active' : ''} onClick={() => changeManualEntryMode('decimal-tail-4')}>10進度・末尾4桁</button>
+                <button type="button" className={manualEntryMode === 'decimal-full' ? 'is-active' : ''} onClick={() => changeManualEntryMode('decimal-full')}>10進度・全桁</button>
               </div>
+              <label className={`manual-position-datum ${manualDatumError ? 'is-error' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={manualDatumConfirmed}
+                  onChange={(event) => {
+                    setManualDatumConfirmed(event.target.checked)
+                    if (event.target.checked && manualDatumError) setManualEntryError(undefined)
+                  }}
+                />
+                <span>GPS側の測地系をWGS 84に設定済み</span>
+                {manualDatumError && <small role="alert">ここを確認してから保存</small>}
+              </label>
               <div className="manual-position-fields">
                 <label>
                   <span>緯度</span>
-                  <span className="coordinate-input">{manualEntryMode === 'decimal-tail-4' && <b>{decimalTailParts(manualReference[1]).prefix}</b>}<input aria-label="ハンディGPS緯度" inputMode="decimal" value={manualLatitude} maxLength={manualEntryMode === 'decimal-tail-4' ? 4 : 14} onChange={(event) => setManualLatitude(event.target.value)} /></span>
+                  <span className="coordinate-input">{manualEntryMode === 'dmm-tail-4' && <b>{decimalMinuteTailParts(manualReference[1], 'latitude').prefix}</b>}{manualEntryMode === 'decimal-tail-4' && <b>{decimalTailParts(manualReference[1]).prefix}</b>}<input aria-label="ハンディGPS緯度" inputMode="decimal" value={manualLatitude} maxLength={manualEntryMode === 'decimal-full' ? 14 : 4} onChange={(event) => setManualLatitude(event.target.value)} /></span>
                 </label>
                 <label>
                   <span>経度</span>
-                  <span className="coordinate-input">{manualEntryMode === 'decimal-tail-4' && <b>{decimalTailParts(manualReference[0]).prefix}</b>}<input aria-label="ハンディGPS経度" inputMode="decimal" value={manualLongitude} maxLength={manualEntryMode === 'decimal-tail-4' ? 4 : 14} onChange={(event) => setManualLongitude(event.target.value)} /></span>
+                  <span className="coordinate-input">{manualEntryMode === 'dmm-tail-4' && <b>{decimalMinuteTailParts(manualReference[0], 'longitude').prefix}</b>}{manualEntryMode === 'decimal-tail-4' && <b>{decimalTailParts(manualReference[0]).prefix}</b>}<input aria-label="ハンディGPS経度" inputMode="decimal" value={manualLongitude} maxLength={manualEntryMode === 'decimal-full' ? 14 : 4} onChange={(event) => setManualLongitude(event.target.value)} /></span>
                 </label>
                 <label><span>GPS表示精度（m・任意）</span><input aria-label="ハンディGPS表示精度" type="number" min="0" max="10000" step="0.1" value={manualAccuracy} onChange={(event) => setManualAccuracy(event.target.value)} /></label>
               </div>
               <label className="manual-position-note"><span>メモ</span><input aria-label="ハンディGPS位置メモ" value={manualNote} maxLength={120} onChange={(event) => setManualNote(event.target.value)} /></label>
               {manualPreview && <small className="manual-position-preview">入力結果 {manualPreview[1].toFixed(6)}, {manualPreview[0].toFixed(6)}・計画差 {Math.round(manualTargetDifference ?? 0)}m</small>}
               {(manualTargetDifference ?? 0) > 1_000 && <label className="manual-position-confirm"><input type="checkbox" checked={manualDifferenceConfirmed} onChange={(event) => setManualDifferenceConfirmed(event.target.checked)} /> 計画位置から1km以上離れていることを確認</label>}
-              {manualEntryError && <small className="manual-position-error" role="alert">{manualEntryError}</small>}
+              {manualEntryError && !manualDatumError && <small className="manual-position-error" role="alert">{manualEntryError}</small>}
               <button type="submit" className="manual-position-submit">この座標を投下地点として記録</button>
             </form>
           )}

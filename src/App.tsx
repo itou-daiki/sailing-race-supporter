@@ -70,6 +70,7 @@ import { isRaceSignalHeld, makeRaceSignalEvent } from './signals'
 import { raceFinalizationPhrase } from '../shared/finalization'
 import { estimateRegattaFreeTierUsage, STANDARD_REGATTA_LOAD } from '../shared/freeTierBudget'
 import { normalizeBoatMotion } from './boatMotion'
+import type { CoordinateEntryMode } from './coordinateEntry'
 
 const DETAIL_KEY = 'srs-board-detail'
 const SCALE_KEY = 'srs-board-scale'
@@ -800,7 +801,7 @@ export default function App() {
     actual: LngLat,
     metadata: {
       source: 'device-geolocation' | 'handheld-gps-manual'
-      entryMode?: 'decimal-tail-4' | 'decimal-full'
+      entryMode?: CoordinateEntryMode
       accuracyMetres?: number
       note?: string
       committeeBoatId?: string
@@ -829,6 +830,7 @@ export default function App() {
       accuracyMetres: metadata.accuracyMetres,
       positionSource: metadata.source,
       coordinateEntryMode: metadata.entryMode,
+      coordinateDatum: 'WGS84',
       note: metadata.note,
     }, activeRace.id)
   }
@@ -846,7 +848,7 @@ export default function App() {
   const recordManualMarkPosition = (
     markId: string,
     actual: LngLat,
-    metadata: { entryMode: 'decimal-tail-4' | 'decimal-full'; accuracyMetres?: number; note?: string },
+    metadata: { entryMode: CoordinateEntryMode; accuracyMetres?: number; note?: string },
   ) => {
     const selfBoat = boats.find((boat) => boat.isSelf)
     recordMarkPosition(markId, actual, {

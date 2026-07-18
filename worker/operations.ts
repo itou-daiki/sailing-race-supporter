@@ -317,9 +317,13 @@ async function persistMark(env: AppEnv, access: EventAccess, operation: Realtime
   const coordinateEntryMode = positionSource === 'handheld-gps-manual'
     ? stringValue(payload.coordinateEntryMode, 'coordinateEntryMode')
     : null
-  if (coordinateEntryMode && !['decimal-tail-4', 'decimal-full'].includes(coordinateEntryMode)) {
+  if (coordinateEntryMode && !['dmm-tail-4', 'decimal-tail-4', 'decimal-full'].includes(coordinateEntryMode)) {
     throw new Response('Invalid coordinateEntryMode', { status: 400 })
   }
+  const coordinateDatum = payload.coordinateDatum == null
+    ? 'WGS84'
+    : stringValue(payload.coordinateDatum, 'coordinateDatum', 16).replaceAll(' ', '').toUpperCase()
+  if (coordinateDatum !== 'WGS84') throw new Response('Only WGS 84 coordinates are supported', { status: 400 })
   const positionNote = optionalString(payload.note, 120)
   const targetDifferenceMetres = Math.round(geodesicDistanceMetres(mark.target, coordinates) * 100) / 100
   await env.DB.prepare(
@@ -343,6 +347,7 @@ async function persistMark(env: AppEnv, access: EventAccess, operation: Realtime
     JSON.stringify({
       source: positionSource,
       coordinateEntryMode,
+      coordinateDatum,
       note: positionNote,
       originalStatus: payload.status ?? 'deployed',
       targetDifferenceMetres,
@@ -357,6 +362,7 @@ async function persistMark(env: AppEnv, access: EventAccess, operation: Realtime
     accuracyMetres,
     positionSource,
     coordinateEntryMode,
+    coordinateDatum,
     note: positionNote,
     targetDifferenceMetres,
   }
