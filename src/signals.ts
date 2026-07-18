@@ -6,7 +6,7 @@ export interface SignalDefinition {
   flag: string
   sound: string
   soundCount: number
-  group: 'sequence' | 'postponement' | 'recall' | 'course' | 'abandonment'
+  group: 'sequence' | 'postponement' | 'recall' | 'course' | 'safety' | 'abandonment'
 }
 
 export const SIGNAL_DEFINITIONS: Record<RaceSignalAction, SignalDefinition> = {
@@ -23,6 +23,9 @@ export const SIGNAL_DEFINITIONS: Record<RaceSignalAction, SignalDefinition> = {
   'general-recall': { action: 'general-recall', label: 'ゼネラルリコール', flag: '第一代表旗 掲揚', sound: '短音2回', soundCount: 2, group: 'recall' },
   'general-recall-clear': { action: 'general-recall-clear', label: '第一代表旗降下・再予告設定', flag: '第一代表旗 降下', sound: '短音1回', soundCount: 1, group: 'recall' },
   shorten: { action: 'shorten', label: 'コース短縮', flag: 'S旗 掲揚', sound: '短音2回', soundCount: 2, group: 'course' },
+  'course-change': { action: 'course-change', label: '次のレグを変更', flag: 'C旗 掲揚', sound: '反復短音（6声/1サイクル）', soundCount: 6, group: 'course' },
+  'mark-missing': { action: 'mark-missing', label: '欠損マークを代替', flag: 'M旗 掲揚', sound: '反復短音（6声/1サイクル）', soundCount: 6, group: 'course' },
+  'search-rescue': { action: 'search-rescue', label: '捜索救助通信', flag: 'V旗 掲揚', sound: '短音1回', soundCount: 1, group: 'safety' },
   abandon: { action: 'abandon', label: 'レース中止・スタート海面へ帰着', flag: 'N旗 掲揚', sound: '短音3回', soundCount: 3, group: 'abandonment' },
   'abandon-h': { action: 'abandon-h', label: 'レース中止・陸上で次の信号', flag: 'N旗 over H旗 掲揚', sound: '短音3回', soundCount: 3, group: 'abandonment' },
   'abandon-a': { action: 'abandon-a', label: 'レース中止・本日これ以上なし', flag: 'N旗 over A旗 掲揚', sound: '短音3回', soundCount: 3, group: 'abandonment' },
@@ -63,6 +66,27 @@ export function nextWarningAfterFlagRemoval(removalTime: string): string {
   return new Date(parsed + 60_000).toISOString()
 }
 
+export function signalFlagDescription(
+  action: RaceSignalAction,
+  details: Pick<RaceSignalEvent, 'newBearing' | 'directionChange' | 'lengthChange' | 'targetMarkLabel' | 'communicationChannel'>,
+): string {
+  if (action === 'course-change') {
+    const changes = [
+      typeof details.newBearing === 'number' ? `新方位 ${String(Math.round(details.newBearing)).padStart(3, '0')}°` : null,
+      details.directionChange === 'starboard' ? '緑三角・右へ変更' : details.directionChange === 'port' ? '赤長方形・左へ変更' : null,
+      details.lengthChange === 'increase' ? '距離 +' : details.lengthChange === 'decrease' ? '距離 −' : null,
+    ].filter(Boolean)
+    return `C旗 掲揚${changes.length ? `・${changes.join('・')}` : ''}`
+  }
+  if (action === 'mark-missing') {
+    return `M旗 掲揚${details.targetMarkLabel ? `・${details.targetMarkLabel}を代替` : ''}`
+  }
+  if (action === 'search-rescue') {
+    return `V旗 掲揚${details.communicationChannel ? `・${details.communicationChannel}を聴取` : ''}`
+  }
+  return signalDefinition(action).flag
+}
+
 export function makeRaceSignalEvent(
   id: string,
   action: RaceSignalAction,
@@ -87,6 +111,16 @@ export function makeRaceSignalEvent(
     reason: details.reason,
     targetSailNumbers: details.targetSailNumbers,
     finishAt: details.finishAt,
+    changeFromMarkId: details.changeFromMarkId,
+    changeFromMarkLabel: details.changeFromMarkLabel,
+    targetMarkId: details.targetMarkId,
+    targetMarkLabel: details.targetMarkLabel,
+    newBearing: details.newBearing,
+    directionChange: details.directionChange,
+    lengthChange: details.lengthChange,
+    replacementObject: details.replacementObject,
+    communicationChannel: details.communicationChannel,
+    safetyInstructions: details.safetyInstructions,
     actor: details.actor,
   }
 }

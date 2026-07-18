@@ -321,7 +321,7 @@ export default function App() {
       if (!event.raceId || !payload.action || !payload.executedAt) return
       const signal = makeRaceSignalEvent(event.id, payload.action, payload.executedAt, payload)
       const startsSequence = ['warning', 'preparatory', 'one-minute', 'resume', 'general-recall-clear', 'abandon-clear'].includes(signal.action)
-      const startsRace = ['start', 'individual-recall', 'individual-recall-clear', 'shorten'].includes(signal.action)
+      const startsRace = ['start', 'individual-recall', 'individual-recall-clear', 'shorten', 'course-change', 'mark-missing'].includes(signal.action)
       const returnsToSetup = ['postpone', 'postpone-h', 'postpone-a', 'general-recall', 'abandon', 'abandon-h', 'abandon-a'].includes(signal.action)
       setRaces((current) => current.map((race) => race.id === event.raceId ? {
         ...race,
@@ -381,6 +381,7 @@ export default function App() {
   )
   const locked = activeRace.status === 'finalized'
   const canControlSignals = !locked && (!eventAccess || eventAccess.isOwner || ['pro', 'ro', 'signal-boat'].includes(eventAccess.role))
+  const canChangeCourse = !locked && (!eventAccess || eventAccess.isOwner || ['pro', 'ro'].includes(eventAccess.role))
   const canAdoptLeadingPassage = !eventAccess || eventAccess.isOwner || ['pro', 'ro', 'timekeeper', 'record-keeper', 'signal-boat'].includes(eventAccess.role)
   const messageRoles = useMemo(
     () => [...new Set(eventResources.members.map((member) => member.role))].sort((left, right) => left.localeCompare(right, 'ja')),
@@ -619,7 +620,7 @@ export default function App() {
     void sendRealtimeOperation('signal', signal, activeRace.id).then((id) => {
       const recorded = makeRaceSignalEvent(id, signal.action, signal.executedAt, signal)
       const startsSequence = ['warning', 'preparatory', 'one-minute', 'resume', 'general-recall-clear', 'abandon-clear'].includes(recorded.action)
-      const startsRace = ['start', 'individual-recall', 'individual-recall-clear', 'shorten'].includes(recorded.action)
+      const startsRace = ['start', 'individual-recall', 'individual-recall-clear', 'shorten', 'course-change', 'mark-missing'].includes(recorded.action)
       const returnsToSetup = ['postpone', 'postpone-h', 'postpone-a', 'general-recall', 'abandon', 'abandon-h', 'abandon-a'].includes(recorded.action)
       setRaces((current) => current.map((race) => race.id === activeRace.id ? {
         ...race,
@@ -853,6 +854,8 @@ export default function App() {
         marks={marks}
         serverOffsetMs={realtime.serverOffsetMs}
         canControlSignals={canControlSignals}
+        canChangeCourse={canChangeCourse}
+        raceStatus={activeRace.status}
         preparatoryFlag={preparatoryFlag}
         officialAudio={officialAudio.state}
         officialAudioDeviceId={officialAudio.deviceId}

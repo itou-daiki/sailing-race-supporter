@@ -62,6 +62,9 @@ export type RaceSignalAction =
   | 'general-recall'
   | 'general-recall-clear'
   | 'shorten'
+  | 'course-change'
+  | 'mark-missing'
+  | 'search-rescue'
   | 'abandon'
   | 'abandon-h'
   | 'abandon-a'
@@ -84,6 +87,16 @@ export interface RaceSignalEvent {
   reason?: string
   targetSailNumbers?: string
   finishAt?: string
+  changeFromMarkId?: string
+  changeFromMarkLabel?: string
+  targetMarkId?: string
+  targetMarkLabel?: string
+  newBearing?: number
+  directionChange?: 'port' | 'starboard'
+  lengthChange?: 'increase' | 'decrease'
+  replacementObject?: string
+  communicationChannel?: string
+  safetyInstructions?: string
   actor?: string
 }
 

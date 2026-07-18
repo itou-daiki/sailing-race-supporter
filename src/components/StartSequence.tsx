@@ -11,8 +11,9 @@ import {
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { OfficialAudioState } from '../audioDeviceClient'
-import type { CourseMark, RaceSignalAction, RaceSignalEvent } from '../domain'
+import type { CourseMark, RaceDefinition, RaceSignalAction, RaceSignalEvent } from '../domain'
 import {
   canClearRaceSignal,
   clearActionFor,
@@ -20,6 +21,7 @@ import {
   isTerminalRaceSignal,
   nextWarningAfterFlagRemoval,
   signalDefinition,
+  signalFlagDescription,
 } from '../signals'
 
 type SignalExecution = Omit<RaceSignalEvent, 'id'> & { officialAudioDeviceSecret?: string }
@@ -30,6 +32,8 @@ interface StartSequenceProps {
   marks: readonly CourseMark[]
   serverOffsetMs: number
   canControlSignals: boolean
+  canChangeCourse: boolean
+  raceStatus: RaceDefinition['status']
   preparatoryFlag: string
   officialAudio: OfficialAudioState
   officialAudioDeviceId: string
@@ -57,7 +61,8 @@ const SIGNAL_STAGES: readonly SignalStage[] = [
 ] as const
 
 const CONTROL_ACTIONS: readonly RaceSignalAction[] = [
-  'postpone', 'individual-recall', 'general-recall', 'shorten', 'abandon',
+  'postpone', 'individual-recall', 'general-recall', 'shorten',
+  'course-change', 'mark-missing', 'search-rescue', 'abandon',
 ]
 
 const DEFAULT_REASONS: Partial<Record<RaceSignalAction, string>> = {
@@ -69,6 +74,9 @@ const DEFAULT_REASONS: Partial<Record<RaceSignalAction, string>> = {
   'general-recall': 'OCS艇を特定できない、またはスタート手順に誤りがあったため',
   'general-recall-clear': '第一代表旗を降下し再スタートするため',
   shorten: '目標時間と海況を踏まえて短縮するため',
+  'course-change': '風向・レグ長の変化に合わせて次のレグを変更するため',
+  'mark-missing': 'マークが欠損または所定位置から外れたため',
+  'search-rescue': '捜索救助指示を全艇へ伝達するため',
   abandon: '安全またはレースの公正性を確保するため',
   'abandon-h': 'レースを中止し、陸上で次の信号を行うため',
   'abandon-a': 'レースを中止し、本日のレースを終了するため',
@@ -120,6 +128,8 @@ export function StartSequence({
   marks,
   serverOffsetMs,
   canControlSignals,
+  canChangeCourse,
+  raceStatus,
   preparatoryFlag,
   officialAudio,
   officialAudioDeviceId,
@@ -139,9 +149,21 @@ export function StartSequence({
   const [reason, setReason] = useState('')
   const [targetSailNumbers, setTargetSailNumbers] = useState('')
   const [finishAt, setFinishAt] = useState('')
+  const [changeFromMarkId, setChangeFromMarkId] = useState('')
+  const [targetMarkId, setTargetMarkId] = useState('')
+  const [newBearing, setNewBearing] = useState('')
+  const [directionChange, setDirectionChange] = useState<'' | 'port' | 'starboard'>('')
+  const [lengthChange, setLengthChange] = useState<'' | 'increase' | 'decrease'>('')
+  const [replacementObject, setReplacementObject] = useState('M旗を掲げた運営ボート')
+  const [communicationChannel, setCommunicationChannel] = useState('VHF 72')
+  const [safetyInstructions, setSafetyInstructions] = useState('全艇・公式艇・支援艇は捜索救助指示を受信してください')
   const playedStagesRef = useRef(new Set<number>())
   const playedSignalsRef = useRef(new Set<string>())
   const audioArmed = armedRaceId === officialAudio.raceId && officialAudio.status === 'mine' && Boolean(officialAudioDeviceSecret)
+  const parsedBearing = newBearing === '' ? undefined : Number(newBearing)
+  const bearingValid = parsedBearing === undefined || (
+    Number.isInteger(parsedBearing) && parsedBearing >= 0 && parsedBearing < 360
+  )
   const held = isRaceSignalHeld(latestSignal)
   const terminal = isTerminalRaceSignal(latestSignal)
 
@@ -262,6 +284,17 @@ export function StartSequence({
     setReason(DEFAULT_REASONS[action] ?? '')
     setTargetSailNumbers('')
     setFinishAt(marks.find((mark) => mark.status === 'confirmed')?.label ?? marks[0]?.label ?? '')
+    const firstCourseMarkIndex = marks.findIndex((mark) => !['PIN', 'RC'].includes(mark.shortLabel))
+    const firstCourseMark = marks[Math.max(0, firstCourseMarkIndex)]
+    const followingMark = marks[Math.min(marks.length - 1, Math.max(0, firstCourseMarkIndex) + 1)]
+    setChangeFromMarkId(firstCourseMark?.id ?? marks[0]?.id ?? '')
+    setTargetMarkId(followingMark?.id ?? firstCourseMark?.id ?? marks[0]?.id ?? '')
+    setNewBearing('')
+    setDirectionChange('')
+    setLengthChange('')
+    setReplacementObject('M旗を掲げた運営ボート')
+    setCommunicationChannel('VHF 72')
+    setSafetyInstructions('全艇・公式艇・支援艇は捜索救助指示を受信してください')
   }
 
   const executeControlSignal = () => {
@@ -269,10 +302,17 @@ export function StartSequence({
     const definition = signalDefinition(dialogAction)
     const executedAt = new Date(Date.now() + serverOffsetMs).toISOString()
     const clearsHold = ['resume', 'general-recall-clear', 'abandon-clear'].includes(dialogAction)
+    const selectedTargetMark = marks.find((mark) => mark.id === targetMarkId)
     const execution: SignalExecution = {
       action: dialogAction,
       label: definition.label,
-      flag: definition.flag,
+      flag: signalFlagDescription(dialogAction, {
+        newBearing: bearingValid ? parsedBearing : undefined,
+        directionChange: directionChange || undefined,
+        lengthChange: lengthChange || undefined,
+        targetMarkLabel: selectedTargetMark?.label,
+        communicationChannel: communicationChannel.trim() || undefined,
+      }),
       sound: definition.sound,
       soundCount: definition.soundCount,
       executedAt,
@@ -285,12 +325,28 @@ export function StartSequence({
       reason: reason.trim(),
       targetSailNumbers: dialogAction === 'individual-recall' ? targetSailNumbers.trim() || undefined : undefined,
       finishAt: dialogAction === 'shorten' ? finishAt : undefined,
+      changeFromMarkId: dialogAction === 'course-change' ? changeFromMarkId : undefined,
+      targetMarkId: ['course-change', 'mark-missing'].includes(dialogAction) ? targetMarkId : undefined,
+      newBearing: dialogAction === 'course-change' && bearingValid ? parsedBearing : undefined,
+      directionChange: dialogAction === 'course-change' ? directionChange || undefined : undefined,
+      lengthChange: dialogAction === 'course-change' ? lengthChange || undefined : undefined,
+      replacementObject: dialogAction === 'mark-missing' ? replacementObject.trim() : undefined,
+      communicationChannel: dialogAction === 'search-rescue' ? communicationChannel.trim() : undefined,
+      safetyInstructions: dialogAction === 'search-rescue' ? safetyInstructions.trim() : undefined,
     }
     playedSignalsRef.current.add(signalKey(execution))
     if (audioArmed) playSignalPattern(execution.soundCount, execution.sound.includes('長音'))
     onSignalExecuted(execution)
     setDialogAction(undefined)
   }
+
+  const courseChangeComplete = dialogAction !== 'course-change' || (
+    Boolean(changeFromMarkId && targetMarkId && bearingValid) &&
+    (parsedBearing !== undefined || Boolean(directionChange || lengthChange))
+  )
+  const markReplacementComplete = dialogAction !== 'mark-missing' || Boolean(targetMarkId && replacementObject.trim())
+  const searchRescueComplete = dialogAction !== 'search-rescue' || Boolean(communicationChannel.trim() && safetyInstructions.trim())
+  const canExecuteControlSignal = Boolean(reason.trim() && courseChangeComplete && markReplacementComplete && searchRescueComplete)
 
   const audioLabel = !canControlSignals
     ? '参考端末'
@@ -365,7 +421,7 @@ export function StartSequence({
         )}
       </div>
 
-      {dialogAction && (
+      {dialogAction && createPortal(
         <div className="signal-dialog-backdrop" role="presentation" onMouseDown={() => setDialogAction(undefined)}>
           <div className="signal-dialog" role="dialog" aria-modal="true" aria-labelledby="signal-dialog-title" onMouseDown={(event) => event.stopPropagation()}>
             <header>
@@ -377,9 +433,11 @@ export function StartSequence({
               <div className="signal-action-grid" aria-label="信号種別">
                 {CONTROL_ACTIONS.map((action) => {
                   const definition = signalDefinition(action)
+                  const unavailable = (action === 'course-change' && !canChangeCourse) ||
+                    (['course-change', 'mark-missing'].includes(action) && raceStatus !== 'racing')
                   return (
-                    <button type="button" className={dialogAction === action ? 'is-selected' : ''} onClick={() => openSignalDialog(action)} key={action}>
-                      {action === 'shorten' ? <Scissors size={19} /> : action.includes('recall') ? <RotateCcw size={19} /> : <AlertTriangle size={19} />}
+                    <button type="button" className={dialogAction === action ? 'is-selected' : ''} onClick={() => openSignalDialog(action)} disabled={unavailable} title={unavailable ? action === 'course-change' && !canChangeCourse ? 'C旗はPRO・RO・大会管理者が実行します' : 'スタート後のレースで使用します' : undefined} key={action}>
+                      {action === 'shorten' ? <Scissors size={19} /> : action.includes('recall') || action === 'course-change' ? <RotateCcw size={19} /> : action === 'mark-missing' ? <Flag size={19} /> : <AlertTriangle size={19} />}
                       <span><strong>{definition.label}</strong><small>{definition.flag}・{definition.sound}</small></span>
                     </button>
                   )
@@ -395,21 +453,43 @@ export function StartSequence({
             ) : null}
             {dialogAction === 'individual-recall' && <label className="signal-dialog__field"><span>対象艇（任意・未特定でも実行可）</span><input value={targetSailNumbers} onChange={(event) => setTargetSailNumbers(event.target.value)} maxLength={200} placeholder="例: JPN 1234, JPN 5678" /></label>}
             {dialogAction === 'shorten' && <label className="signal-dialog__field"><span>短縮フィニッシュ位置</span><select value={finishAt} onChange={(event) => setFinishAt(event.target.value)}>{marks.map((mark) => <option value={mark.label} key={mark.id}>{mark.label}</option>)}</select></label>}
+            {dialogAction === 'course-change' && (
+              <div className="signal-course-fields">
+                <label className="signal-dialog__field"><span>変更を知らせる回航点・ゲート</span><select value={changeFromMarkId} onChange={(event) => setChangeFromMarkId(event.target.value)}>{marks.map((mark) => <option value={mark.id} key={mark.id}>{mark.label}</option>)}</select></label>
+                <label className="signal-dialog__field"><span>位置を変更する次のマーク／フィニッシュ</span><select value={targetMarkId} onChange={(event) => setTargetMarkId(event.target.value)}>{marks.map((mark) => <option value={mark.id} key={mark.id}>{mark.label}</option>)}</select></label>
+                <label className="signal-dialog__field"><span>新方位（任意・0〜359°）</span><input type="number" min="0" max="359" step="1" value={newBearing} onChange={(event) => setNewBearing(event.target.value)} placeholder="例: 015" /></label>
+                <label className="signal-dialog__field"><span>左右変更（任意）</span><select value={directionChange} onChange={(event) => setDirectionChange(event.target.value as typeof directionChange)}><option value="">表示なし</option><option value="starboard">緑三角・右へ</option><option value="port">赤長方形・左へ</option></select></label>
+                <label className="signal-dialog__field"><span>距離変更（任意）</span><select value={lengthChange} onChange={(event) => setLengthChange(event.target.value as typeof lengthChange)}><option value="">表示なし</option><option value="increase">＋ 延長</option><option value="decrease">− 短縮</option></select></label>
+              </div>
+            )}
+            {dialogAction === 'mark-missing' && (
+              <div className="signal-course-fields">
+                <label className="signal-dialog__field"><span>欠損・位置ずれしたマーク</span><select value={targetMarkId} onChange={(event) => setTargetMarkId(event.target.value)}>{marks.map((mark) => <option value={mark.id} key={mark.id}>{mark.label}</option>)}</select></label>
+                <label className="signal-dialog__field"><span>M旗を掲げる代替物</span><input value={replacementObject} onChange={(event) => setReplacementObject(event.target.value)} maxLength={200} /></label>
+              </div>
+            )}
+            {dialogAction === 'search-rescue' && (
+              <div className="signal-safety-fields">
+                <label className="signal-dialog__field"><span>聴取するレース委員会通信</span><input value={communicationChannel} onChange={(event) => setCommunicationChannel(event.target.value)} maxLength={80} placeholder="例: VHF 72" /></label>
+                <label className="signal-dialog__field"><span>捜索救助指示</span><textarea value={safetyInstructions} onChange={(event) => setSafetyInstructions(event.target.value)} maxLength={500} rows={3} /></label>
+              </div>
+            )}
             <label className="signal-dialog__field"><span>決定理由（監査ログに保存）</span><textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} rows={2} /></label>
 
             <div className="signal-confirmation">
               <Flag size={22} />
-              <div><strong>{signalDefinition(dialogAction).flag}</strong><small>{signalDefinition(dialogAction).sound}{['resume', 'general-recall-clear', 'abandon-clear'].includes(dialogAction) ? '・降下1分後に予告信号' : ''}</small></div>
+              <div><strong>{signalFlagDescription(dialogAction, { newBearing: newBearing === '' ? undefined : Number(newBearing), directionChange: directionChange || undefined, lengthChange: lengthChange || undefined, targetMarkLabel: marks.find((mark) => mark.id === targetMarkId)?.label, communicationChannel: communicationChannel.trim() || undefined })}</strong><small>{signalDefinition(dialogAction).sound}{['resume', 'general-recall-clear', 'abandon-clear'].includes(dialogAction) ? '・降下1分後に予告信号' : ['course-change', 'mark-missing'].includes(dialogAction) ? '・全艇が次のレグ開始前に反復して知らせます' : ''}</small></div>
             </div>
             {!audioArmed && <p className="signal-audio-warning"><AlertTriangle size={15} />この端末は公式音響ONではありません。記録は共有され、音はONの公式端末で実行されます。</p>}
             <footer>
               <button type="button" className="secondary-button" onClick={() => setDialogAction(undefined)}>戻る</button>
-              <button type="button" className="signal-execute-button" onClick={executeControlSignal} disabled={!reason.trim() || dialogAction === 'shorten' && !finishAt}>
+              <button type="button" className="signal-execute-button" onClick={executeControlSignal} disabled={!canExecuteControlSignal || dialogAction === 'shorten' && !finishAt}>
                 <Bell size={17} /> 旗・音響を実行して記録
               </button>
             </footer>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </section>
   )

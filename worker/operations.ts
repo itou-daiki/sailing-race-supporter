@@ -2,7 +2,7 @@ import type { EventAccess } from './authorization.js'
 import type { AppEnv } from './index.js'
 import { appendAuditEvent } from './audit.js'
 import { verifyOfficialAudioDeviceExecution } from './audioDevices.js'
-import { signalDefinition } from '../src/signals.js'
+import { signalDefinition, signalFlagDescription } from '../src/signals.js'
 import type { RaceSignalAction } from '../src/domain.js'
 
 export interface RealtimeOperation {
@@ -584,7 +584,8 @@ async function persistSignal(env: AppEnv, access: EventAccess, operation: Realti
     'warning', 'preparatory', 'one-minute', 'start',
     'postpone', 'postpone-h', 'postpone-a', 'resume',
     'individual-recall', 'individual-recall-clear', 'general-recall', 'general-recall-clear',
-    'shorten', 'abandon', 'abandon-h', 'abandon-a', 'abandon-clear',
+    'shorten', 'course-change', 'mark-missing', 'search-rescue',
+    'abandon', 'abandon-h', 'abandon-a', 'abandon-clear',
   ])
   if (!allowedActions.has(actionValue as RaceSignalAction)) throw new Response('Invalid signal action', { status: 400 })
   const action = actionValue as RaceSignalAction
@@ -600,6 +601,58 @@ async function persistSignal(env: AppEnv, access: EventAccess, operation: Realti
   const targetSailNumbers = optionalString(payload.targetSailNumbers, 200)
   const finishAt = optionalString(payload.finishAt, 200)
   if (action === 'shorten' && !finishAt) throw new Response('Shortened finish location required', { status: 400 })
+  if (action === 'course-change' && !access.isOwner && !['pro', 'ro'].includes(access.role)) {
+    throw new Response('Course change signal requires PRO or RO', { status: 403 })
+  }
+  if (['course-change', 'mark-missing'].includes(action)) {
+    const race = await env.DB.prepare(
+      'SELECT status FROM races WHERE id = ? AND regatta_id = ? LIMIT 1',
+    ).bind(raceId, access.eventId).first<{ status: string }>()
+    if (race?.status !== 'racing') throw new Response('Course and missing-mark signals require a race in progress', { status: 409 })
+  }
+  const markLabel = async (markId: string): Promise<string> => {
+    const mark = await env.DB.prepare(
+      `SELECT mark.label FROM marks mark
+       JOIN course_nodes node ON node.mark_id = mark.id
+       JOIN course_revisions revision ON revision.id = node.course_revision_id
+       WHERE mark.id = ? AND mark.regatta_id = ? AND revision.race_id = ?
+         AND revision.revision = (
+           SELECT MAX(candidate.revision) FROM course_revisions candidate WHERE candidate.race_id = revision.race_id
+         )
+       LIMIT 1`,
+    ).bind(markId, access.eventId, raceId).first<{ label: string }>()
+    if (!mark) throw new Response('Signal mark is not part of the active course', { status: 404 })
+    return mark.label
+  }
+  const changeFromMarkId = action === 'course-change' ? stringValue(payload.changeFromMarkId, 'changeFromMarkId') : null
+  const targetMarkId = ['course-change', 'mark-missing'].includes(action) ? stringValue(payload.targetMarkId, 'targetMarkId') : null
+  const changeFromMarkLabel = changeFromMarkId ? await markLabel(changeFromMarkId) : null
+  const targetMarkLabel = targetMarkId ? await markLabel(targetMarkId) : null
+  const newBearing = action === 'course-change' ? optionalNumber(payload.newBearing, 'newBearing', 0, 359) : null
+  if (newBearing != null && !Number.isInteger(newBearing)) {
+    throw new Response('Course change bearing must be a whole degree', { status: 400 })
+  }
+  const directionChange = action === 'course-change' && ['port', 'starboard'].includes(String(payload.directionChange))
+    ? String(payload.directionChange) as 'port' | 'starboard'
+    : null
+  const lengthChange = action === 'course-change' && ['increase', 'decrease'].includes(String(payload.lengthChange))
+    ? String(payload.lengthChange) as 'increase' | 'decrease'
+    : null
+  if (action === 'course-change' && newBearing == null && !directionChange && !lengthChange) {
+    throw new Response('Course change requires a bearing, direction or length change', { status: 400 })
+  }
+  const replacementObject = action === 'mark-missing'
+    ? stringValue(payload.replacementObject, 'replacementObject', 200)
+    : null
+  const communicationChannel = action === 'search-rescue'
+    ? stringValue(payload.communicationChannel, 'communicationChannel', 80)
+    : null
+  const safetyInstructions = action === 'search-rescue'
+    ? stringValue(payload.safetyInstructions, 'safetyInstructions', 500)
+    : null
+  if (['course-change', 'mark-missing', 'search-rescue'].includes(action) && !reason) {
+    throw new Response('Signal decision reason required', { status: 400 })
+  }
   const requestedSoundAt = typeof payload.soundExecutedAt === 'string'
     ? isoTime(payload.soundExecutedAt, visualExecutedAt)
     : null
@@ -620,10 +673,16 @@ async function persistSignal(env: AppEnv, access: EventAccess, operation: Realti
   const normalizedPayload = {
     ...publicPayload,
     action,
-    label: typeof payload.label === 'string' && payload.label.trim() ? payload.label.trim().slice(0, 120) : definition.label,
+    label: definition.label,
     flag: action === 'preparatory' && typeof payload.flag === 'string' && payload.flag.trim()
       ? payload.flag.trim().slice(0, 120)
-      : definition.flag,
+      : signalFlagDescription(action, {
+          newBearing: newBearing ?? undefined,
+          directionChange: directionChange ?? undefined,
+          lengthChange: lengthChange ?? undefined,
+          targetMarkLabel: targetMarkLabel ?? undefined,
+          communicationChannel: communicationChannel ?? undefined,
+        }),
     sound: definition.sound,
     soundCount: definition.soundCount,
     executedAt,
@@ -636,6 +695,16 @@ async function persistSignal(env: AppEnv, access: EventAccess, operation: Realti
     reason: reason ?? undefined,
     targetSailNumbers: targetSailNumbers ?? undefined,
     finishAt: finishAt ?? undefined,
+    changeFromMarkId: changeFromMarkId ?? undefined,
+    changeFromMarkLabel: changeFromMarkLabel ?? undefined,
+    targetMarkId: targetMarkId ?? undefined,
+    targetMarkLabel: targetMarkLabel ?? undefined,
+    newBearing: newBearing ?? undefined,
+    directionChange: directionChange ?? undefined,
+    lengthChange: lengthChange ?? undefined,
+    replacementObject: replacementObject ?? undefined,
+    communicationChannel: communicationChannel ?? undefined,
+    safetyInstructions: safetyInstructions ?? undefined,
     actor: access.displayName,
   }
   const memberId = await requireMemberId(env, access)
@@ -667,7 +736,7 @@ async function persistSignal(env: AppEnv, access: EventAccess, operation: Realti
       `UPDATE races SET status = 'start-sequence', updated_at = ?
        WHERE id = ? AND regatta_id = ?`,
     ).bind(executedAt, raceId, access.eventId).run()
-  } else if (['start', 'individual-recall', 'individual-recall-clear', 'shorten'].includes(action)) {
+  } else if (['start', 'individual-recall', 'individual-recall-clear', 'shorten', 'course-change', 'mark-missing'].includes(action)) {
     await env.DB.prepare(
       `UPDATE races SET status = 'racing', updated_at = ?
        WHERE id = ? AND regatta_id = ?`,

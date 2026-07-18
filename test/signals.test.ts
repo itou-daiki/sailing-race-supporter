@@ -7,6 +7,7 @@ import {
   makeRaceSignalEvent,
   nextWarningAfterFlagRemoval,
   signalDefinition,
+  signalFlagDescription,
 } from '../src/signals'
 
 describe('race signal rules', () => {
@@ -16,6 +17,9 @@ describe('race signal rules', () => {
     expect(signalDefinition('general-recall').soundCount).toBe(2)
     expect(signalDefinition('shorten').soundCount).toBe(2)
     expect(signalDefinition('abandon').soundCount).toBe(3)
+    expect(signalDefinition('course-change').sound).toContain('反復')
+    expect(signalDefinition('mark-missing').sound).toContain('反復')
+    expect(signalDefinition('search-rescue').soundCount).toBe(1)
   })
 
   it('schedules a warning one minute after AP, First Substitute or N removal', () => {
@@ -52,5 +56,15 @@ describe('race signal rules', () => {
     expect(signal.soundExecutedAt).toBe('2026-07-18T00:05:00.180Z')
     expect(signal.soundStatus).toBe('played')
     expect(signal.officialAudioDeviceId).toBe('device-signal-boat')
+  })
+
+  it('describes RRS 33 course-change displays without losing direction or distance', () => {
+    expect(signalFlagDescription('course-change', {
+      newBearing: 15,
+      directionChange: 'starboard',
+      lengthChange: 'increase',
+    })).toBe('C旗 掲揚・新方位 015°・緑三角・右へ変更・距離 +')
+    expect(signalFlagDescription('mark-missing', { targetMarkLabel: '1マーク' })).toBe('M旗 掲揚・1マークを代替')
+    expect(signalFlagDescription('search-rescue', { communicationChannel: 'VHF 72' })).toBe('V旗 掲揚・VHF 72を聴取')
   })
 })

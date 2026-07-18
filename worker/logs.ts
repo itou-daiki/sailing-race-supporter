@@ -51,6 +51,8 @@ function signalTitle(type: string): string {
     'general-recall': 'ゼネラルリコール', 'general-recall-clear': '第一代表旗降下・再予告設定',
     abandon: '中止', 'abandon-h': '中止・陸上で次の信号', 'abandon-a': '中止・本日これ以上なし',
     'abandon-clear': 'N旗降下・再予告設定', shorten: 'コース短縮',
+    'course-change': '次のレグを変更', 'mark-missing': '欠損マークを代替',
+    'search-rescue': '捜索救助通信',
   }
   return labels[type] ?? type
 }
@@ -66,6 +68,14 @@ function signalDetail(row: Row): string {
     typeof payload.reason === 'string' ? `理由 ${payload.reason}` : null,
     typeof payload.targetSailNumbers === 'string' ? `対象艇 ${payload.targetSailNumbers}` : null,
     typeof payload.finishAt === 'string' ? `短縮フィニッシュ ${payload.finishAt}` : null,
+    typeof payload.changeFromMarkLabel === 'string' ? `変更信号位置 ${payload.changeFromMarkLabel}` : null,
+    typeof payload.targetMarkLabel === 'string' ? `対象 ${payload.targetMarkLabel}` : null,
+    typeof payload.newBearing === 'number' ? `新方位 ${String(Math.round(payload.newBearing)).padStart(3, '0')}°` : null,
+    payload.directionChange === 'starboard' ? '右へ変更' : payload.directionChange === 'port' ? '左へ変更' : null,
+    payload.lengthChange === 'increase' ? '距離を延長' : payload.lengthChange === 'decrease' ? '距離を短縮' : null,
+    typeof payload.replacementObject === 'string' ? `代替物 ${payload.replacementObject}` : null,
+    typeof payload.communicationChannel === 'string' ? `通信 ${payload.communicationChannel}` : null,
+    typeof payload.safetyInstructions === 'string' ? `捜索救助指示 ${payload.safetyInstructions}` : null,
     row.scheduled_at ? `予定 ${text(row.scheduled_at)}` : null,
     row.visual_executed_at ? `視覚 ${text(row.visual_executed_at)}` : `視覚 ${text(row.occurred_at)}`,
     row.sound_status === 'played' && row.sound_executed_at ? `音響 ${text(row.sound_executed_at)}` : null,
