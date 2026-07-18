@@ -22,6 +22,7 @@ export interface CommitteeBoat {
   position: LngLat
   speedKnots: number
   courseDegrees?: number
+  accuracyMetres?: number
   freshnessSeconds: number
   isSelf?: boolean
   status: 'moving' | 'stationed' | 'offline'

@@ -38,6 +38,18 @@ function coordinates(row: Row): string {
   return `${lat}, ${lng}`
 }
 
+function markDetail(row: Row): string {
+  let payload: Record<string, unknown> = {}
+  try {
+    if (typeof row.payload_json === 'string') payload = JSON.parse(row.payload_json) as Record<string, unknown>
+  } catch { /* Preserve the core event even if a historical payload is malformed. */ }
+  return [
+    `位置 ${coordinates(row)}`,
+    typeof row.accuracy_metres === 'number' ? `GPS精度 ±${Math.round(row.accuracy_metres)}m` : 'GPS精度 記録なし',
+    typeof payload.targetDifferenceMetres === 'number' ? `計画差 ${Math.round(payload.targetDifferenceMetres)}m` : '計画差 旧記録・未計算',
+  ].join('・')
+}
+
 function taskStatus(status: string): string {
   return ({ blocked: 'ブロッカー', waiting: '確認待ち', doing: '対応中', done: '完了' } as Record<string, string>)[status] ?? status
 }
@@ -131,7 +143,8 @@ async function collectLogs(env: AppEnv, access: EventAccess, raceId: string | nu
                WHERE audit.regatta_id = ? AND (? IS NULL OR audit.race_id = ?)
                ORDER BY audit.server_time DESC LIMIT ?`, values),
     rows(env, `SELECT event.id, event.race_id, race.race_number, event.sequence, event.event_type,
-                      event.lng, event.lat, event.server_time AS occurred_at,
+                      event.lng, event.lat, event.accuracy_metres, event.payload_json,
+                      event.server_time AS occurred_at,
                       mark.label, COALESCE(member.display_name, '不明') AS actor
                FROM mark_events event
                JOIN races race ON race.id = event.race_id
@@ -255,7 +268,7 @@ async function collectLogs(env: AppEnv, access: EventAccess, raceId: string | nu
       id: text(row.id), raceId: nullableText(row.race_id), raceNumber: nullableText(row.race_number),
       sequence: number(row.sequence), occurredAt: text(row.occurred_at), category: 'mark' as const,
       title: `${text(row.label)}：${text(row.event_type)}`, actor: text(row.actor, '不明'),
-      detail: `位置 ${coordinates(row)}`, eventHash: null,
+      detail: markDetail(row), eventHash: null,
     })),
     ...wind.map((row) => ({
       id: text(row.id), raceId: nullableText(row.race_id), raceNumber: nullableText(row.race_number),

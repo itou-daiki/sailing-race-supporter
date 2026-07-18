@@ -262,7 +262,7 @@ export default function App() {
 
   const applyRemoteEvent = useCallback((event: SequencedOperation) => {
     if (event.type === 'position') {
-      const payload = event.payload as { committeeBoatId?: string; position?: LngLat; speedKnots?: number; courseDegrees?: number }
+      const payload = event.payload as { committeeBoatId?: string; position?: LngLat; speedKnots?: number; courseDegrees?: number; accuracyMetres?: number }
       if (!payload.committeeBoatId || !payload.position) return
       setBoats((current) => current.map((boat) => (
         boat.id === payload.committeeBoatId
@@ -271,6 +271,7 @@ export default function App() {
               position: payload.position as LngLat,
               speedKnots: payload.speedKnots ?? boat.speedKnots,
               courseDegrees: payload.courseDegrees ?? boat.courseDegrees,
+              accuracyMetres: payload.accuracyMetres ?? boat.accuracyMetres,
               freshnessSeconds: 0,
             }
           : boat
@@ -669,6 +670,7 @@ export default function App() {
         position,
         speedKnots: motion.speedKnots ?? boat.speedKnots,
         courseDegrees: motion.courseDegrees ?? boat.courseDegrees,
+        accuracyMetres: motion.accuracyMetres ?? boat.accuracyMetres,
         freshnessSeconds: 0,
         status: 'moving' as const,
       } : boat
@@ -734,6 +736,7 @@ export default function App() {
       status: 'deployed',
       recordedAt: new Date().toISOString(),
       committeeBoatId: selfBoat.id,
+      accuracyMetres: selfBoat.accuracyMetres,
     }, activeRace.id)
   }
 

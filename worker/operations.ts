@@ -5,6 +5,7 @@ import { verifyOfficialAudioDeviceExecution } from './audioDevices.js'
 import { signalDefinition, signalFlagDescription } from '../src/signals.js'
 import type { RaceSignalAction } from '../src/domain.js'
 import { canManuallyRescheduleRace, shiftIncompleteTaskDueTimes } from '../shared/schedule.js'
+import { geodesicDistanceMetres } from '../shared/geo.js'
 
 export interface RealtimeOperation {
   id: string
@@ -232,16 +233,18 @@ async function markForRace(
   access: EventAccess,
   raceId: string,
   markId: string,
-): Promise<{ markId: string; nodeId: string; label: string }> {
+): Promise<{ markId: string; nodeId: string; label: string; target: readonly [number, number] }> {
   const mark = await env.DB.prepare(
-    `SELECT m.id AS mark_id, m.label, cn.id AS node_id
+    `SELECT m.id AS mark_id, m.label, cn.id AS node_id, cn.target_lng, cn.target_lat
      FROM marks m
      JOIN course_nodes cn ON cn.mark_id = m.id
      JOIN course_revisions cr ON cr.id = cn.course_revision_id
      WHERE m.id = ? AND m.regatta_id = ? AND cr.race_id = ?
        AND cr.revision = (SELECT MAX(latest.revision) FROM course_revisions latest WHERE latest.race_id = cr.race_id)
      LIMIT 1`,
-  ).bind(markId, access.eventId, raceId).first<{ mark_id: string; node_id: string; label: string }>()
+  ).bind(markId, access.eventId, raceId).first<{
+    mark_id: string; node_id: string; label: string; target_lng: number; target_lat: number
+  }>()
   if (!mark) throw new Response('Mark is not part of the active course', { status: 404 })
 
   if (!access.isOwner && !['pro', 'ro', 'course-setter'].includes(access.role)) {
@@ -252,14 +255,14 @@ async function markForRace(
     const assignmentMatches = access.assignment === mark.label || access.assignment.startsWith(mark.label.replace('マーク', ''))
     if (!scoped && !assignmentMatches) throw new Response('Mark assignment required', { status: 403 })
   }
-  return { markId: mark.mark_id, nodeId: mark.node_id, label: mark.label }
+  return { markId: mark.mark_id, nodeId: mark.node_id, label: mark.label, target: [mark.target_lng, mark.target_lat] }
 }
 
 async function persistMark(env: AppEnv, access: EventAccess, operation: RealtimeOperation): Promise<Record<string, unknown>> {
   const raceId = await requireRace(env, access, operation.raceId)
   const payload = objectPayload(operation.payload)
   const markId = stringValue(payload.markId, 'markId')
-  await markForRace(env, access, raceId, markId)
+  const mark = await markForRace(env, access, raceId, markId)
   const coordinates = position(payload.actual)
   const memberId = await requireMemberId(env, access)
   const committeeBoatId = typeof payload.committeeBoatId === 'string' ? payload.committeeBoatId : null
@@ -280,6 +283,8 @@ async function persistMark(env: AppEnv, access: EventAccess, operation: Realtime
   ).bind(raceId).first<{ sequence: number }>()
   const clientTime = isoTime(payload.recordedAt ?? operation.clientTime, new Date().toISOString())
   const serverTime = new Date().toISOString()
+  const accuracyMetres = optionalNumber(payload.accuracyMetres, 'accuracyMetres', 0, 10_000)
+  const targetDifferenceMetres = Math.round(geodesicDistanceMetres(mark.target, coordinates) * 100) / 100
   await env.DB.prepare(
     `INSERT INTO mark_events
      (id, race_id, mark_id, event_type, lng, lat, accuracy_metres, member_id,
@@ -292,15 +297,23 @@ async function persistMark(env: AppEnv, access: EventAccess, operation: Realtime
     eventType,
     coordinates[0],
     coordinates[1],
-    optionalNumber(payload.accuracyMetres, 'accuracyMetres', 0, 10_000),
+    accuracyMetres,
     memberId,
     committeeBoatId,
     clientTime,
     serverTime,
     sequence?.sequence ?? 1,
-    JSON.stringify({ source: 'web', originalStatus: payload.status ?? 'deployed' }),
+    JSON.stringify({ source: 'web', originalStatus: payload.status ?? 'deployed', targetDifferenceMetres }),
   ).run()
-  return { markId, actual: coordinates, status: eventType === 'dropped' ? 'deployed' : eventType, recordedAt: clientTime, committeeBoatId }
+  return {
+    markId,
+    actual: coordinates,
+    status: eventType === 'dropped' ? 'deployed' : eventType,
+    recordedAt: clientTime,
+    committeeBoatId,
+    accuracyMetres,
+    targetDifferenceMetres,
+  }
 }
 
 async function persistLeadingPassage(env: AppEnv, access: EventAccess, operation: RealtimeOperation): Promise<Record<string, unknown>> {

@@ -146,7 +146,7 @@ interface BootstrapResponse {
   }>
   boats: Array<{
     id: string; name: string; role: string; call_sign: string | null; status: string
-    lng: number | null; lat: number | null; speed_knots: number | null; course_degrees: number | null; sampled_at: string | null
+    lng: number | null; lat: number | null; accuracy_metres: number | null; speed_knots: number | null; course_degrees: number | null; sampled_at: string | null
   }>
   wind: {
     direction_degrees: number; speed_knots: number; gust_knots: number | null; lng: number | null; lat: number | null
@@ -427,6 +427,7 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
             : [center?.center_lng as number, center?.center_lat as number],
           speedKnots: boat.speed_knots ?? 0,
           courseDegrees: boat.course_degrees ?? undefined,
+          accuracyMetres: boat.accuracy_metres ?? undefined,
           freshnessSeconds: boat.sampled_at ? Math.max(0, (Date.now() - Date.parse(boat.sampled_at)) / 1_000) : 9_999,
           isSelf,
           status: hasPosition && boat.status === 'active' ? 'stationed' : 'offline',
