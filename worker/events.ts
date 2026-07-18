@@ -4,6 +4,7 @@ import { json, readJson } from './http.js'
 import type { AppEnv } from './index.js'
 import { generateOwnerRecoveryCode, normalizeOwnerRecoveryCode } from '../shared/ownerRecovery.js'
 import { assertSameOrigin, hasRecentAuthentication, randomToken, requireSession, sha256Base64Url } from './security.js'
+import { STANDARD_MARK_DEFINITIONS } from './standardArea.js'
 
 const CLASSES = new Set(['OP', 'ILCA 4', 'ILCA 6', 'ILCA 7', '420', '470', 'スナイプ'])
 const COURSES = new Set(['O2', 'I2', 'L2', 'L3', 'W2', 'トライアングル'])
@@ -200,22 +201,8 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
     ))
   }
 
-  const markDefinitions = [
-    ['mark-1', '1マーク', 'rounding'],
-    ['mark-1s', '上ゲート 1S', 'gate'],
-    ['mark-1p', '上ゲート 1P', 'gate'],
-    ['mark-1a', 'オフセット 1A', 'offset'],
-    ['mark-2', '2マーク', 'rounding'],
-    ['mark-2s', '中ゲート 2S', 'gate'],
-    ['mark-2p', '中ゲート 2P', 'gate'],
-    ['mark-3s', '下ゲート 3S', 'gate'],
-    ['mark-3p', '下ゲート 3P', 'gate'],
-    ['mark-3', '3マーク', 'rounding'],
-    ['start-pin', 'スタート・ピン', 'pin'],
-    ['start-rc', 'シグナルボート', 'signal'],
-  ] as const
   const markIds = new Map<string, string>()
-  for (const [key, label, type] of markDefinitions) {
+  for (const [key, label, type] of STANDARD_MARK_DEFINITIONS) {
     const id = crypto.randomUUID()
     markIds.set(key, id)
     statements.push(env.DB.prepare(

@@ -8,6 +8,7 @@ import {
 } from '../shared/freeTierBudget.js'
 import { handleAuthRequest } from './auth.js'
 import { handleAudioDeviceRequest } from './audioDevices.js'
+import { handleRaceAreaRequest } from './areas.js'
 import { can, eventAccess, requirePermission, type EventAccess } from './authorization.js'
 import { appendAuditEvent, finalizeRace } from './audit.js'
 import { handleBackupArchiveRequest } from './backupArchives.js'
@@ -869,6 +870,9 @@ export default {
 
       const eventCollectionResponse = await handleEventCollectionRequest(request, env)
       if (eventCollectionResponse) return eventCollectionResponse
+
+      const raceAreaResponse = await handleRaceAreaRequest(request, env)
+      if (raceAreaResponse) return raceAreaResponse
 
       const ownerRecoveryResponse = await handleOwnerRecoveryRequest(request, env)
       if (ownerRecoveryResponse) return ownerRecoveryResponse

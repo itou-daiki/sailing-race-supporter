@@ -30,6 +30,7 @@ interface MapViewProps {
   onAdoptLeadingPassage: (markId: string, observationId: string) => void
   leadingPassages: Readonly<Record<string, LeadingPassageVisit>>
   raceId: string
+  raceAreaName?: string
   locked: boolean
   passageLocked: boolean
   canAdoptLeadingPassage: boolean
@@ -84,6 +85,7 @@ export function MapView({
   onAdoptLeadingPassage,
   leadingPassages,
   raceId,
+  raceAreaName,
   locked,
   passageLocked,
   canAdoptLeadingPassage,
@@ -310,8 +312,8 @@ export function MapView({
       <div ref={containerRef} className="map-canvas" />
       <div className="map-topbar glass-panel">
         <div className="map-topbar__primary">
-          <span className="eyebrow"><Radio size={13} /> 海面A・LIVE</span>
-          <strong>江の島沖 コース設営</strong>
+          <span className="eyebrow"><Radio size={13} /> {raceAreaName ?? 'レース海面'}・LIVE</span>
+          <strong>{raceAreaName ?? 'レース海面'} コース設営</strong>
         </div>
         <div className="map-environment">
           <div className="map-weather">

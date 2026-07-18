@@ -1,0 +1,14 @@
+export const STANDARD_MARK_DEFINITIONS = [
+  ['mark-1', '1マーク', 'rounding'],
+  ['mark-1s', '上ゲート 1S', 'gate'],
+  ['mark-1p', '上ゲート 1P', 'gate'],
+  ['mark-1a', 'オフセット 1A', 'offset'],
+  ['mark-2', '2マーク', 'rounding'],
+  ['mark-2s', '中ゲート 2S', 'gate'],
+  ['mark-2p', '中ゲート 2P', 'gate'],
+  ['mark-3s', '下ゲート 3S', 'gate'],
+  ['mark-3p', '下ゲート 3P', 'gate'],
+  ['mark-3', '3マーク', 'rounding'],
+  ['start-pin', 'スタート・ピン', 'pin'],
+  ['start-rc', 'シグナルボート', 'signal'],
+] as const

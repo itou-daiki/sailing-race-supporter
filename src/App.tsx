@@ -1353,6 +1353,7 @@ export default function App() {
               onAdoptLeadingPassage={adoptLeadingPassage}
               leadingPassages={leadingPassages}
               raceId={activeRace.id}
+              raceAreaName={activeRace.raceAreaName}
               locked={locked}
               passageLocked={locked && !eventAccess?.isOwner}
               canAdoptLeadingPassage={canAdoptLeadingPassage}
@@ -1673,8 +1674,17 @@ export default function App() {
             currentEventName={eventName}
             isCurrentEventOwner={eventAccess?.isOwner ?? false}
             resources={eventResources}
+            races={races}
             assignmentRealtimeAvailable={realtime.status === 'live'}
             onUpdateAssignment={async (input) => { await realtime.sendConfirmed('assignment', input) }}
+            onEventStructureChanged={(change) => {
+              setEventRefreshKey((current) => current + 1)
+              if (change) {
+                void sendRealtimeOperation('course', {
+                  action: 'refresh', revisionId: change.revisionId, revision: change.revision,
+                }, change.raceId)
+              }
+            }}
             onRequestAuthentication={() => { setEventManagerOpen(false); setAuthOpen(true) }}
             onRecoverParticipation={() => { setEventManagerOpen(false); setRecoveryOpen(true) }}
             onClose={() => setEventManagerOpen(false)}

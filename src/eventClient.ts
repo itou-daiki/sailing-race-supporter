@@ -51,7 +51,7 @@ export interface EventBootstrap {
 }
 
 export interface EventResources {
-  areas: Array<{ id: string; name: string }>
+  areas: Array<{ id: string; name: string; centerLng?: number; centerLat?: number }>
   boats: Array<{ id: string; name: string; assignment: string; role: string }>
   marks: Array<{ id: string; label: string; raceAreaId?: string }>
   members: Array<{
@@ -505,7 +505,12 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
     finishes: bootstrapFinishes(response.finishes ?? []),
     memberCount: response.memberCount ?? 0,
     resources: {
-      areas: (response.raceAreas ?? []).map((area) => ({ id: area.id, name: area.name })),
+      areas: (response.raceAreas ?? []).map((area) => ({
+        id: area.id,
+        name: area.name,
+        centerLng: area.center_lng ?? undefined,
+        centerLat: area.center_lat ?? undefined,
+      })),
       boats: response.boats.map((boat) => ({
         id: boat.id,
         name: boat.name,
@@ -661,6 +666,39 @@ export async function rollbackCourseRevision(
     `/api/events/${encodeURIComponent(eventSlug)}/races/${encodeURIComponent(raceId)}/course-revisions/${revision}/rollback`,
     { method: 'POST', body: JSON.stringify({}) },
   )
+}
+
+export async function createRaceArea(
+  eventSlug: string,
+  input: { name: string; center: { longitude: number; latitude: number } },
+): Promise<{
+  area: { id: string; name: string; centerLng: number; centerLat: number }
+  markCount: number
+  createdAt: string
+}> {
+  return apiJson(`/api/events/${encodeURIComponent(eventSlug)}/areas`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+}
+
+export async function assignRaceArea(
+  eventSlug: string,
+  raceId: string,
+  raceAreaId: string,
+): Promise<{
+  raceId: string
+  raceAreaId: string
+  areaName: string
+  revisionId?: string
+  revision?: number
+  createdAt?: string
+  unchanged: boolean
+}> {
+  return apiJson(`/api/events/${encodeURIComponent(eventSlug)}/races/${encodeURIComponent(raceId)}/area`, {
+    method: 'PATCH',
+    body: JSON.stringify({ raceAreaId }),
+  })
 }
 
 export async function loadRetentionPolicy(eventSlug: string): Promise<RetentionPolicy> {

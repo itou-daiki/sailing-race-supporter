@@ -23,8 +23,10 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { OwnerRecoveryKit, SessionState } from '../authClient'
-import { CLASS_PROFILES, type SailingClass } from '../domain'
+import { CLASS_PROFILES, type RaceDefinition, type SailingClass } from '../domain'
 import {
+  assignRaceArea,
+  createRaceArea,
   createEvent,
   confirmOwnerRecoveryKit,
   listEvents,
@@ -69,6 +71,7 @@ interface EventManagerProps {
   currentEventName: string
   isCurrentEventOwner: boolean
   resources: EventResources
+  races: readonly RaceDefinition[]
   assignmentRealtimeAvailable: boolean
   onUpdateAssignment: (input: {
     memberId: string
@@ -79,6 +82,7 @@ interface EventManagerProps {
     reason: string
   }) => Promise<void>
   onRequestAuthentication: () => void
+  onEventStructureChanged: (change?: { raceId: string; revisionId: string; revision: number }) => void
   onRecoverParticipation: () => void
   onClose: () => void
 }
@@ -112,9 +116,11 @@ export function EventManager({
   currentEventName,
   isCurrentEventOwner,
   resources,
+  races,
   assignmentRealtimeAvailable,
   onUpdateAssignment,
   onRequestAuthentication,
+  onEventStructureChanged,
   onRecoverParticipation,
   onClose,
 }: EventManagerProps) {
@@ -145,6 +151,10 @@ export function EventManager({
     assignment: string; raceAreaId: string; committeeBoatId: string; markId: string
   }>>({})
   const [assignmentWorkingMemberId, setAssignmentWorkingMemberId] = useState<string>()
+  const [areaName, setAreaName] = useState(`海面${String.fromCharCode(65 + Math.min(resources.areas.length, 25))}`)
+  const [areaCenter, setAreaCenter] = useState<{ longitude: number; latitude: number }>()
+  const [areaWorking, setAreaWorking] = useState(false)
+  const [raceAreaDrafts, setRaceAreaDrafts] = useState<Record<string, string>>({})
   const [backupPassphrase, setBackupPassphrase] = useState('')
   const [backupFile, setBackupFile] = useState<File>()
   const [verifiedBackup, setVerifiedBackup] = useState<BackupPayload>()
@@ -339,6 +349,60 @@ export function EventManager({
       setError(reason instanceof Error ? reason.message : '担当変更を反映できません')
     } finally {
       setAssignmentWorkingMemberId(undefined)
+    }
+  }
+
+  const useAreaCurrentLocation = () => {
+    setError(undefined)
+    navigator.geolocation.getCurrentPosition(
+      (position) => setAreaCenter({ longitude: position.coords.longitude, latitude: position.coords.latitude }),
+      () => setError('追加する海面の中心位置を取得できません。位置情報の許可を確認してください。'),
+      { enableHighAccuracy: true, timeout: 12_000 },
+    )
+  }
+
+  const addRaceArea = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!areaCenter) return
+    setAreaWorking(true)
+    setError(undefined)
+    try {
+      await createRaceArea(currentEventSlug, { name: areaName.trim(), center: areaCenter })
+      setAreaName(`海面${String.fromCharCode(66 + Math.min(resources.areas.length, 24))}`)
+      setAreaCenter(undefined)
+      onEventStructureChanged()
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : 'レースエリアを追加できません'
+      setError(message)
+      if (message.includes('再認証')) onRequestAuthentication()
+    } finally {
+      setAreaWorking(false)
+    }
+  }
+
+  const moveRaceToArea = async (race: RaceDefinition) => {
+    const raceAreaId = raceAreaDrafts[race.id] ?? race.raceAreaId
+    if (!raceAreaId || raceAreaId === race.raceAreaId) return
+    setAreaWorking(true)
+    setError(undefined)
+    try {
+      const changed = await assignRaceArea(currentEventSlug, race.id, raceAreaId)
+      if (changed.revisionId && changed.revision != null) {
+        onEventStructureChanged({ raceId: race.id, revisionId: changed.revisionId, revision: changed.revision })
+      } else {
+        onEventStructureChanged()
+      }
+      setRaceAreaDrafts((current) => {
+        const next = { ...current }
+        delete next[race.id]
+        return next
+      })
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : 'レースの海面を変更できません'
+      setError(message)
+      if (message.includes('再認証')) onRequestAuthentication()
+    } finally {
+      setAreaWorking(false)
     }
   }
 
@@ -609,6 +673,36 @@ export function EventManager({
                 </div>
               ) : <p className="event-empty">作成・参加済みの大会はまだありません。</p>}
             </section>
+
+            {isCurrentEventOwner && (
+              <section className="race-area-manager-section">
+                <div className="event-section-title"><span><LocateFixed size={17} />大会内のレースエリア</span><small>{resources.areas.length}/6海面</small></div>
+                <div className="race-area-list">
+                  {resources.areas.map((area) => <article key={area.id}>
+                    <span><strong>{area.name}</strong><small>{area.centerLat != null && area.centerLng != null ? `${area.centerLat.toFixed(5)}, ${area.centerLng.toFixed(5)}` : '中心位置未設定'}</small></span>
+                    <b>{races.filter((race) => race.raceAreaId === area.id).length}レース</b>
+                  </article>)}
+                </div>
+                {resources.areas.length < 6 && <form className="race-area-create" onSubmit={(event) => void addRaceArea(event)}>
+                  <label className="event-field"><span>追加する海面名</span><input value={areaName} minLength={2} maxLength={50} onChange={(event) => setAreaName(event.target.value)} required /></label>
+                  <button type="button" className={`event-location-button ${areaCenter ? 'is-set' : ''}`} onClick={useAreaCurrentLocation}>
+                    <LocateFixed size={16} />{areaCenter ? `中心 ${areaCenter.latitude.toFixed(5)}, ${areaCenter.longitude.toFixed(5)}` : '現在地を新しい海面中心にする'}
+                  </button>
+                  <button type="submit" className="invite-issue-button" disabled={areaWorking || !areaCenter || areaName.trim().length < 2}>{areaWorking ? <LoaderCircle className="is-spinning" size={17} /> : <Plus size={17} />}標準マーク付きで海面を追加</button>
+                </form>}
+                {resources.areas.length > 1 && <div className="race-area-assignments">
+                  <p>開始前のレースだけ移動できます。旧コース版を残し、新海面の標準マークに対応した版を作成します。</p>
+                  {races.map((race) => {
+                    const draft = raceAreaDrafts[race.id] ?? race.raceAreaId ?? ''
+                    return <article key={race.id}>
+                      <span><strong>{race.number}</strong><small>{race.className}・{race.status === 'planning' ? '開始前' : '進行済み／移動不可'}</small></span>
+                      <select value={draft} disabled={race.status !== 'planning' || areaWorking} onChange={(event) => setRaceAreaDrafts((current) => ({ ...current, [race.id]: event.target.value }))}>{resources.areas.map((area) => <option value={area.id} key={area.id}>{area.name}</option>)}</select>
+                      <button type="button" disabled={race.status !== 'planning' || areaWorking || draft === race.raceAreaId} onClick={() => void moveRaceToArea(race)}>反映</button>
+                    </article>
+                  })}
+                </div>}
+              </section>
+            )}
 
             {isCurrentEventOwner && (
               <section className="invite-manager-section">
