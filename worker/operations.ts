@@ -4,10 +4,11 @@ import { appendAuditEvent } from './audit.js'
 import { verifyOfficialAudioDeviceExecution } from './audioDevices.js'
 import { signalDefinition, signalFlagDescription } from '../src/signals.js'
 import type { RaceSignalAction } from '../src/domain.js'
+import { canManuallyRescheduleRace, shiftIncompleteTaskDueTimes } from '../shared/schedule.js'
 
 export interface RealtimeOperation {
   id: string
-  type: 'presence' | 'position' | 'wind' | 'current' | 'mark' | 'leading-passage' | 'finish' | 'task' | 'message' | 'signal' | 'signal-audio' | 'finalize'
+  type: 'presence' | 'position' | 'wind' | 'current' | 'mark' | 'leading-passage' | 'finish' | 'task' | 'message' | 'signal' | 'signal-audio' | 'schedule' | 'finalize'
   raceId?: string
   payload: unknown
   clientTime?: string
@@ -740,6 +741,121 @@ async function persistMessage(env: AppEnv, access: EventAccess, operation: Realt
   }
 }
 
+type RaceScheduleSource = 'manual' | 'postponement' | 'recall' | 'restart'
+
+interface ScheduleChange {
+  previousWarningAt: string
+  warningAt: string
+  reason: string
+  source: RaceScheduleSource
+  revision: number
+  shiftedTasks: Array<{ taskId: string; dueAt: string }>
+  shiftedTaskCount: number
+  changedBy: string
+  changedAt: string
+}
+
+async function prepareRaceSchedule(
+  env: AppEnv,
+  access: EventAccess,
+  input: {
+    id: string
+    raceId: string
+    warningAt: string
+    reason: string
+    source: RaceScheduleSource
+    memberId: string
+    targetStatus?: 'start-sequence'
+    manual?: boolean
+    changedAt?: string
+  },
+): Promise<{ change: ScheduleChange; statements: D1PreparedStatement[] }> {
+  const race = await env.DB.prepare(
+    `SELECT id, status, warning_at,
+            COALESCE((SELECT MAX(revision) FROM race_schedule_events WHERE race_id = races.id), 0) AS schedule_revision
+     FROM races WHERE id = ? AND regatta_id = ? LIMIT 1`,
+  ).bind(input.raceId, access.eventId).first<{ id: string; status: string; warning_at: string; schedule_revision: number }>()
+  if (!race) throw new Response('Race not found', { status: 404 })
+  if (input.manual && !canManuallyRescheduleRace(race.status)) {
+    throw new Response('Postpone before changing a running start schedule', { status: 409 })
+  }
+  if (!input.manual && race.status !== 'setup') {
+    throw new Response('Race must be held before setting the next warning', { status: 409 })
+  }
+  const previousWarningAt = isoTime(race.warning_at, race.warning_at)
+  const warningAt = isoTime(input.warningAt, '')
+  const changedAt = input.changedAt ?? new Date().toISOString()
+  if (Date.parse(warningAt) - Date.parse(changedAt) < 30_000) {
+    throw new Response('Warning time must be at least 30 seconds in the future', { status: 400 })
+  }
+  if (warningAt === previousWarningAt) throw new Response('Warning time is unchanged', { status: 409 })
+  const taskRows = (await env.DB.prepare(
+    `SELECT id, due_at, status FROM operational_tasks
+     WHERE race_id = ? AND due_at IS NOT NULL`,
+  ).bind(input.raceId).all<{ id: string; due_at: string; status: string }>()).results
+  const shiftedTasks = shiftIncompleteTaskDueTimes(
+    previousWarningAt,
+    warningAt,
+    taskRows.map((task) => ({ id: task.id, dueAt: task.due_at, status: task.status })),
+  )
+  const revision = race.schedule_revision + 1
+  const statements = [
+    env.DB.prepare(
+      `INSERT INTO race_schedule_events
+       (id, race_id, previous_warning_at, warning_at, reason, source, member_id, revision, shifted_task_count, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      input.id,
+      input.raceId,
+      previousWarningAt,
+      warningAt,
+      input.reason,
+      input.source,
+      input.memberId,
+      revision,
+      shiftedTasks.length,
+      changedAt,
+    ),
+    env.DB.prepare(
+      `UPDATE races SET warning_at = ?, status = COALESCE(?, status), updated_at = ?
+       WHERE id = ? AND regatta_id = ?`,
+    ).bind(warningAt, input.targetStatus ?? null, changedAt, input.raceId, access.eventId),
+    ...shiftedTasks.map((task) => env.DB.prepare(
+      'UPDATE operational_tasks SET due_at = ? WHERE id = ? AND race_id = ?',
+    ).bind(task.dueAt, task.taskId, input.raceId)),
+  ]
+  return { change: {
+    previousWarningAt,
+    warningAt,
+    reason: input.reason,
+    source: input.source,
+    revision,
+    shiftedTasks,
+    shiftedTaskCount: shiftedTasks.length,
+    changedBy: access.displayName,
+    changedAt,
+  }, statements }
+}
+
+async function persistSchedule(env: AppEnv, access: EventAccess, operation: RealtimeOperation): Promise<ScheduleChange> {
+  const raceId = await requireRace(env, access, operation.raceId)
+  const payload = objectPayload(operation.payload)
+  const warningAt = isoTime(stringValue(payload.warningAt, 'warningAt'), '')
+  const reason = stringValue(payload.reason, 'schedule reason', 500)
+  const memberId = await requireMemberId(env, access)
+  const prepared = await prepareRaceSchedule(env, access, {
+    id: operation.id,
+    raceId,
+    warningAt,
+    reason,
+    source: 'manual',
+    memberId,
+    manual: true,
+  })
+  await env.DB.batch(prepared.statements)
+  return prepared.change
+}
+
 async function persistSignal(env: AppEnv, access: EventAccess, operation: RealtimeOperation): Promise<Record<string, unknown>> {
   const raceId = await requireRace(env, access, operation.raceId)
   const payload = objectPayload(operation.payload)
@@ -832,6 +948,20 @@ async function persistSignal(env: AppEnv, access: EventAccess, operation: Realti
     : false
   const soundExecutedAt = validOfficialAudio ? requestedSoundAt : null
   const soundStatus = definition.soundCount === 0 ? 'not-required' : validOfficialAudio ? 'played' : 'pending'
+  const memberId = await requireMemberId(env, access)
+  const schedulePlan = warningAt && ['resume', 'general-recall-clear', 'abandon-clear'].includes(action)
+    ? await prepareRaceSchedule(env, access, {
+        id: `${operation.id}:schedule`,
+        raceId,
+        warningAt,
+        reason: reason ?? definition.label,
+        source: action === 'resume' ? 'postponement' : action === 'general-recall-clear' ? 'recall' : 'restart',
+        memberId,
+        targetStatus: 'start-sequence',
+        changedAt: executedAt,
+      })
+    : undefined
+  const scheduleChange = schedulePlan?.change
   const publicPayload = { ...payload }
   delete publicPayload.officialAudioDeviceSecret
   const normalizedPayload = {
@@ -856,6 +986,7 @@ async function persistSignal(env: AppEnv, access: EventAccess, operation: Realti
     soundStatus,
     officialAudioDeviceId: validOfficialAudio ? requestedDeviceId : undefined,
     warningAt: warningAt ?? undefined,
+    schedule: scheduleChange,
     reason: reason ?? undefined,
     targetSailNumbers: targetSailNumbers ?? undefined,
     finishAt: finishAt ?? undefined,
@@ -871,8 +1002,7 @@ async function persistSignal(env: AppEnv, access: EventAccess, operation: Realti
     safetyInstructions: safetyInstructions ?? undefined,
     actor: access.displayName,
   }
-  const memberId = await requireMemberId(env, access)
-  await env.DB.prepare(
+  const signalInsert = env.DB.prepare(
     `INSERT INTO signal_events
      (id, race_id, signal_type, scheduled_at, executed_at, official_device_id,
       member_id, payload_json, visual_executed_at, sound_executed_at, sound_status)
@@ -889,13 +1019,10 @@ async function persistSignal(env: AppEnv, access: EventAccess, operation: Realti
     visualExecutedAt,
     soundExecutedAt,
     soundStatus,
-  ).run()
-  if (['resume', 'general-recall-clear', 'abandon-clear'].includes(action) && warningAt) {
-    await env.DB.prepare(
-      `UPDATE races SET warning_at = ?, status = 'start-sequence', updated_at = ?
-       WHERE id = ? AND regatta_id = ?`,
-    ).bind(warningAt, executedAt, raceId, access.eventId).run()
-  } else if (['warning', 'preparatory', 'one-minute'].includes(action)) {
+  )
+  if (schedulePlan) await env.DB.batch([...schedulePlan.statements, signalInsert])
+  else await signalInsert.run()
+  if (['warning', 'preparatory', 'one-minute'].includes(action)) {
     await env.DB.prepare(
       `UPDATE races SET status = 'start-sequence', updated_at = ?
        WHERE id = ? AND regatta_id = ?`,
@@ -1030,6 +1157,7 @@ export async function persistRealtimeOperation(
     case 'message': return persistMessage(env, access, operation)
     case 'signal': return persistSignal(env, access, operation)
     case 'signal-audio': return persistSignalAudio(env, access, operation)
+    case 'schedule': return persistSchedule(env, access, operation)
     case 'task': return persistTask(env, access, operation)
     case 'finalize': throw new Response('Finalize uses the finalization workflow', { status: 400 })
   }

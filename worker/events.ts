@@ -241,6 +241,9 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
       ).bind(crypto.randomUUID(), revisionId, markIds.get(key), nodeIndex + 1, label, nodeType, key.includes('3') ? 'gate' : 'port', target[0], target[1]))
     })
     const taskDefinitions = [
+      ['全体運営準備を開始', 'waiting', 'required', -30],
+      ['担当別最終確認を完了', 'waiting', 'required', -15],
+      ['スタート要員の配置を最終確認', 'waiting', 'required', -5],
       ['採用コースを承認', 'blocked', 'required', -20],
       ['全必須マークを確認', 'blocked', 'required', -10],
       ['5分平均風を更新', 'waiting', 'required', -7],

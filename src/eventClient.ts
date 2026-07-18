@@ -465,6 +465,7 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
       owner: task.owner,
       status: task.status,
       dueLabel: `${formatClock(task.due_at)}まで`,
+      dueAt: task.due_at,
       priority: task.priority,
     })),
     leadingPassages: bootstrapLeadingPassages(response.leadingPassages ?? []),

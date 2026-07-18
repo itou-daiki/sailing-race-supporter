@@ -118,6 +118,31 @@ function formatClock(iso: string): string {
   }).format(new Date(iso))
 }
 
+function formatDueClock(iso: string): string {
+  return new Intl.DateTimeFormat('ja-JP', {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(iso))
+}
+
+function dateTimeLocalValue(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ''
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
+}
+
+function applyShiftedTaskTimes(
+  current: readonly OperationalTask[],
+  shiftedTasks: readonly { taskId: string; dueAt: string }[],
+): readonly OperationalTask[] {
+  const dueTimes = new Map(shiftedTasks.map((task) => [task.taskId, task.dueAt]))
+  if (!dueTimes.size) return current
+  return current.map((task) => {
+    const dueAt = dueTimes.get(task.id)
+    return dueAt ? { ...task, dueAt, dueLabel: `${formatDueClock(dueAt)}まで` } : task
+  })
+}
+
 function messageTargetPayload(value: string, raceId: string): { targetType: NonNullable<OperationalMessage['target']>['type']; targetId?: string } {
   if (value === 'event') return { targetType: 'event' }
   if (value === 'race') return { targetType: 'race', targetId: raceId }
@@ -209,6 +234,12 @@ export default function App() {
   const [upperGate, setUpperGate] = useState(false)
   const [courseSaving, setCourseSaving] = useState(false)
   const [courseSaveError, setCourseSaveError] = useState<string>()
+  const [scheduleWarningDrafts, setScheduleWarningDrafts] = useState<Record<string, string>>(() => ({
+    [DEMO_RACES[0].id]: dateTimeLocalValue(DEMO_RACES[0].warningAt),
+  }))
+  const [scheduleReason, setScheduleReason] = useState('大会運営計画の更新')
+  const [scheduleWorking, setScheduleWorking] = useState(false)
+  const [scheduleError, setScheduleError] = useState<string>()
   const [preparatoryFlag, setPreparatoryFlag] = useState('P旗')
   const [messageDraft, setMessageDraft] = useState('')
   const [messagePriority, setMessagePriority] = useState<OperationalMessage['priority']>('normal')
@@ -313,6 +344,19 @@ export default function App() {
       )))
     }
 
+    if (event.type === 'schedule') {
+      const payload = event.payload as {
+        warningAt?: string
+        shiftedTasks?: Array<{ taskId: string; dueAt: string }>
+      }
+      if (!event.raceId || !payload.warningAt) return
+      setRaces((current) => current.map((race) => (
+        race.id === event.raceId ? { ...race, warningAt: payload.warningAt as string } : race
+      )))
+      setScheduleWarningDrafts((current) => ({ ...current, [event.raceId as string]: dateTimeLocalValue(payload.warningAt as string) }))
+      if (payload.shiftedTasks) setTasks((current) => applyShiftedTaskTimes(current, payload.shiftedTasks ?? []))
+    }
+
     if (event.type === 'wind') {
       const payload = event.payload as Partial<WindObservation>
       if (typeof payload.directionDegrees === 'number') setWindDirection(payload.directionDegrees)
@@ -392,7 +436,9 @@ export default function App() {
     }
 
     if (event.type === 'signal') {
-      const payload = event.payload as Partial<Omit<RaceSignalEvent, 'id'>>
+      const payload = event.payload as Partial<Omit<RaceSignalEvent, 'id'>> & {
+        schedule?: { shiftedTasks?: Array<{ taskId: string; dueAt: string }> }
+      }
       if (!event.raceId || !payload.action || !payload.executedAt) return
       const signal = makeRaceSignalEvent(event.id, payload.action, payload.executedAt, payload)
       const startsSequence = ['warning', 'preparatory', 'one-minute', 'resume', 'general-recall-clear', 'abandon-clear'].includes(signal.action)
@@ -404,6 +450,12 @@ export default function App() {
         latestSignal: signal,
         status: startsSequence ? 'start-sequence' : startsRace ? 'racing' : returnsToSetup ? 'setup' : race.status,
       } : race))
+      if (signal.warningAt) {
+        setScheduleWarningDrafts((current) => ({ ...current, [event.raceId as string]: dateTimeLocalValue(signal.warningAt as string) }))
+      }
+      if (payload.schedule?.shiftedTasks) {
+        setTasks((current) => applyShiftedTaskTimes(current, payload.schedule?.shiftedTasks ?? []))
+      }
     }
 
     if (event.type === 'signal-audio') {
@@ -462,6 +514,10 @@ export default function App() {
   const canControlSignals = !locked && (!eventAccess || eventAccess.isOwner || ['pro', 'ro', 'signal-boat'].includes(eventAccess.role))
   const canChangeCourse = !locked && (!eventAccess || eventAccess.isOwner || ['pro', 'ro'].includes(eventAccess.role))
   const canShareEnvironment = !locked && (!eventAccess || eventAccess.isOwner || ['pro', 'ro', 'course-setter', 'signal-boat', 'mark-boat', 'safety-boat'].includes(eventAccess.role))
+  const canScheduleRace = !locked && ['planning', 'setup'].includes(activeRace.status) && Boolean(eventAccess) && (
+    Boolean(eventAccess?.isOwner) || ['pro', 'ro'].includes(eventAccess?.role ?? '')
+  )
+  const scheduleWarningInput = scheduleWarningDrafts[activeRace.id] ?? dateTimeLocalValue(activeRace.warningAt)
   const canAdoptLeadingPassage = !eventAccess || eventAccess.isOwner || ['pro', 'ro', 'timekeeper', 'record-keeper', 'signal-boat'].includes(eventAccess.role)
   const canRecordFinish = (!locked || Boolean(eventAccess?.isOwner)) && (
     !eventAccess || eventAccess.isOwner || ['pro', 'ro', 'timekeeper', 'record-keeper', 'signal-boat'].includes(eventAccess.role)
@@ -838,6 +894,26 @@ export default function App() {
     const { raceId, ...payload } = execution
     void sendRealtimeOperation('signal-audio', payload, raceId)
   }, [sendRealtimeOperation])
+
+  const shareRaceSchedule = async () => {
+    if (!canScheduleRace || realtime.status !== 'live') return
+    setScheduleWorking(true)
+    setScheduleError(undefined)
+    try {
+      const warningAt = new Date(scheduleWarningInput)
+      if (Number.isNaN(warningAt.getTime())) throw new Error('予告時刻を入力してください')
+      if (!scheduleReason.trim()) throw new Error('変更理由を入力してください')
+      await realtime.sendConfirmed('schedule', {
+        warningAt: warningAt.toISOString(),
+        reason: scheduleReason.trim(),
+        source: 'manual',
+      }, activeRace.id)
+    } catch (error) {
+      setScheduleError(error instanceof Error ? error.message : '予告予定を変更できませんでした')
+    } finally {
+      setScheduleWorking(false)
+    }
+  }
 
   const shareWind = () => {
     if (!canShareEnvironment) return
@@ -1286,6 +1362,17 @@ export default function App() {
             <header><div><span className="eyebrow">{activeRace.number}</span><strong>コース・表示設定</strong></div><button type="button" onClick={() => setSettingsOpen(false)}><X size={20} /></button></header>
             <label><span>競技ヨットクラス</span><select value={selectedClass} onChange={(event) => setSelectedClass(event.target.value as SailingClass)}>{CLASS_PROFILES.map((profile) => <option key={profile.className}>{profile.className}</option>)}</select></label>
             <label><span>コース</span><select value={courseTemplate} onChange={(event) => setCourseTemplate(event.target.value as CourseTemplate)}><option>O2</option><option>I2</option><option>L2</option><option>L3</option><option>W2</option><option>トライアングル</option></select></label>
+            <div className="settings-subsection">
+              <span className="eyebrow">レース予告予定</span>
+              <small>変更時に未完了タスクとリマインドを同じ差分で再計算</small>
+            </div>
+            <label><span>予告信号の予定時刻</span><input type="datetime-local" value={scheduleWarningInput} onChange={(event) => setScheduleWarningDrafts((current) => ({ ...current, [activeRace.id]: event.target.value }))} disabled={!canScheduleRace} /></label>
+            <label><span>変更理由</span><textarea rows={2} maxLength={500} value={scheduleReason} onChange={(event) => setScheduleReason(event.target.value)} disabled={!canScheduleRace} /></label>
+            {!['planning', 'setup'].includes(activeRace.status) && !locked && <small className="settings-guidance">開始手順中の変更は、先に本部船が延期・ゼネラルリコール・中止を記録してください。</small>}
+            {scheduleError && <div className="auth-error" role="alert">{scheduleError}</div>}
+            <button type="button" className="sheet-secondary" onClick={() => void shareRaceSchedule()} disabled={!canScheduleRace || realtime.status !== 'live' || scheduleWorking}>
+              <BellRing size={17} /> {scheduleWorking ? '予告予定を共有中…' : '予告予定を全運営へ共有'}
+            </button>
             <label><span>風向（真方位）</span><input type="number" min="0" max="360" value={windDirection} onChange={(event) => setWindDirection(Number(event.target.value))} /></label>
             <div className="settings-subsection">
               <span className="eyebrow">潮流観測</span>

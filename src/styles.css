@@ -2437,6 +2437,7 @@ select:focus-visible {
 }
 
 .log-entry.category-signal::before,
+.log-entry.category-schedule::before,
 .log-entry.category-passage::before {
   background: #df8a0a;
 }
@@ -2624,7 +2625,8 @@ select:focus-visible {
 }
 
 .settings-sheet select,
-.settings-sheet > label > input[type='number'] {
+.settings-sheet > label > input[type='number'],
+.settings-sheet > label > input[type='datetime-local'] {
   height: 42px;
   padding: 0 10px;
   color: var(--navy);
@@ -2633,6 +2635,33 @@ select:focus-visible {
   border-radius: 9px;
   font-size: 12px;
   font-weight: 700;
+}
+
+.settings-sheet > label > textarea {
+  min-height: 60px;
+  resize: vertical;
+  padding: 9px 10px;
+  color: var(--navy);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.settings-sheet input:disabled,
+.settings-sheet textarea:disabled {
+  opacity: 0.6;
+  background: #edf3f6;
+}
+
+.settings-guidance {
+  margin: -2px 15px 0;
+  color: #8c5b17;
+  font-size: 10px;
+  line-height: 1.5;
 }
 
 .sheet-primary:disabled {
@@ -2694,6 +2723,11 @@ select:focus-visible {
   font-size: 11px;
   font-weight: 800;
   cursor: pointer;
+}
+
+.sheet-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .auth-panel {

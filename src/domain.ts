@@ -130,6 +130,7 @@ export interface OperationalTask {
   owner: string
   status: 'blocked' | 'waiting' | 'doing' | 'done'
   dueLabel: string
+  dueAt?: string
   markId?: string
   priority: 'required' | 'reference'
 }

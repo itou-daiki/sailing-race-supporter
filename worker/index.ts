@@ -46,7 +46,7 @@ interface ClientAttachment {
 
 interface RoomMessage {
   id: string
-  type: 'presence' | 'position' | 'wind' | 'current' | 'mark' | 'leading-passage' | 'finish' | 'task' | 'message' | 'signal' | 'signal-audio' | 'finalize'
+  type: 'presence' | 'position' | 'wind' | 'current' | 'mark' | 'leading-passage' | 'finish' | 'task' | 'message' | 'signal' | 'signal-audio' | 'schedule' | 'finalize'
   raceId?: string
   memberId?: string
   payload: unknown
@@ -75,6 +75,7 @@ const ROOM_MESSAGE_TYPES = new Set<RoomMessage['type']>([
   'message',
   'signal',
   'signal-audio',
+  'schedule',
   'finalize',
 ])
 
@@ -285,7 +286,7 @@ export class EventRoom extends DurableObject<AppEnv> {
         return
       }
       const mutatesFinalizedState = new Set<RoomMessage['type']>([
-        'wind', 'current', 'mark', 'leading-passage', 'finish', 'task', 'signal',
+        'wind', 'current', 'mark', 'leading-passage', 'finish', 'task', 'signal', 'schedule',
       ])
       const messageAction = parsed.type === 'message' && parsed.payload && typeof parsed.payload === 'object'
         ? String((parsed.payload as { action?: unknown }).action ?? 'send')

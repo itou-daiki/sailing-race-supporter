@@ -3,7 +3,7 @@ import { json } from './http.js'
 import type { AppEnv } from './index.js'
 import { requireSession } from './security.js'
 
-export type LogCategory = 'audit' | 'mark' | 'wind' | 'current' | 'signal' | 'passage' | 'finish' | 'task' | 'message' | 'position'
+export type LogCategory = 'audit' | 'mark' | 'wind' | 'current' | 'signal' | 'schedule' | 'passage' | 'finish' | 'task' | 'message' | 'position'
 
 export interface EventLogEntry {
   id: string
@@ -119,7 +119,7 @@ async function collectLogs(env: AppEnv, access: EventAccess, raceId: string | nu
   const regattaId = access.eventId
   const values = [regattaId, raceId, raceId, limit]
   const messageValues = [access.memberId, regattaId, raceId, raceId, access.memberId, access.isOwner ? 1 : 0, limit]
-  const [audit, marks, wind, current, signals, passages, finishes, tasks, messages, positions] = await Promise.all([
+  const [audit, marks, wind, current, signals, schedules, passages, finishes, tasks, messages, positions] = await Promise.all([
     rows(env, `SELECT audit.id, audit.race_id, race.race_number, audit.sequence, audit.action,
                       audit.entity_type, audit.reason, audit.server_time AS occurred_at,
                       COALESCE(member.display_name, user.display_name, 'システム') AS actor,
@@ -164,6 +164,15 @@ async function collectLogs(env: AppEnv, access: EventAccess, raceId: string | nu
                LEFT JOIN event_members member ON member.id = event.member_id
                WHERE race.regatta_id = ? AND (? IS NULL OR event.race_id = ?)
                ORDER BY event.executed_at DESC LIMIT ?`, values),
+    rows(env, `SELECT event.id, event.race_id, race.race_number,
+                      event.created_at AS occurred_at, event.previous_warning_at,
+                      event.warning_at, event.reason, event.source, event.shifted_task_count,
+                      member.display_name AS actor
+               FROM race_schedule_events event
+               JOIN races race ON race.id = event.race_id
+               JOIN event_members member ON member.id = event.member_id
+               WHERE race.regatta_id = ? AND (? IS NULL OR event.race_id = ?)
+               ORDER BY event.created_at DESC LIMIT ?`, values),
     rows(env, `SELECT observation.id, observation.race_id, race.race_number,
                       observation.passed_at AS occurred_at, observation.lap_number,
                       mark.label, observation.sync_quality, observation.was_offline,
@@ -267,6 +276,13 @@ async function collectLogs(env: AppEnv, access: EventAccess, raceId: string | nu
       sequence: null, occurredAt: text(row.occurred_at), category: 'signal' as const,
       title: signalTitle(text(row.signal_type)), actor: text(row.actor, '不明'),
       detail: signalDetail(row), eventHash: null,
+    })),
+    ...schedules.map((row) => ({
+      id: text(row.id), raceId: nullableText(row.race_id), raceNumber: nullableText(row.race_number),
+      sequence: null, occurredAt: text(row.occurred_at), category: 'schedule' as const,
+      title: 'レース予告予定を変更', actor: text(row.actor, '不明'),
+      detail: `${text(row.previous_warning_at)} → ${text(row.warning_at)}・理由 ${text(row.reason)}・未完了タスク ${row.shifted_task_count}件を再計算`,
+      eventHash: null,
     })),
     ...passages.map((row) => ({
       id: text(row.id), raceId: nullableText(row.race_id), raceNumber: nullableText(row.race_number),
