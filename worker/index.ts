@@ -10,6 +10,7 @@ import { handleAuthRequest } from './auth.js'
 import { handleAudioDeviceRequest } from './audioDevices.js'
 import { can, eventAccess, requirePermission, type EventAccess } from './authorization.js'
 import { appendAuditEvent, finalizeRace } from './audit.js'
+import { handleBackupArchiveRequest } from './backupArchives.js'
 import { handleBackupRequest } from './backups.js'
 import { handleCourseRequest } from './courses.js'
 import { handleEventCollectionRequest } from './events.js'
@@ -26,6 +27,7 @@ export interface AppEnv {
   ASSETS: Fetcher
   DB: D1Database
   EVENT_ROOMS: DurableObjectNamespace<EventRoom>
+  BACKUP_ARCHIVES: R2Bucket
   BACKUP_SIGNING_PRIVATE_KEY: string
 }
 
@@ -804,6 +806,9 @@ export default {
 
       const backupResponse = await handleBackupRequest(request, env)
       if (backupResponse) return backupResponse
+
+      const backupArchiveResponse = await handleBackupArchiveRequest(request, env)
+      if (backupArchiveResponse) return backupArchiveResponse
 
       const revisionResponse = await handleRevisionRequest(request, env)
       if (revisionResponse) return revisionResponse

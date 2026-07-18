@@ -39,6 +39,23 @@ export interface BackupPayload {
   local?: unknown
 }
 
+export interface BackupArchive {
+  id: string
+  ciphertextHash: string
+  serverDataHash: string
+  eventSequence: number
+  sizeBytes: number
+  etag: string
+  createdAt: string
+}
+
+export interface BackupArchiveLimits {
+  maxArchives: number
+  maxArchiveBytes: number
+  maxEventBytes: number
+  currentBytes: number
+}
+
 export interface BackupRestorePreviewItem {
   raceId: string
   raceNumber: string
@@ -375,6 +392,50 @@ export async function requestServerBackup(eventSlug: string): Promise<ServerBack
     `/api/events/${encodeURIComponent(eventSlug)}/backups/export`,
     { method: 'POST', body: '{}' },
   )).backup
+}
+
+export async function listBackupArchives(eventSlug: string): Promise<{
+  archives: BackupArchive[]
+  limits: BackupArchiveLimits
+}> {
+  return apiJson(`/api/events/${encodeURIComponent(eventSlug)}/backup-archives`, { method: 'GET' })
+}
+
+export async function archiveEncryptedBackup(
+  eventSlug: string,
+  backup: EncryptedBackup,
+  serverDataHash: string,
+  eventSequence: number,
+): Promise<BackupArchive> {
+  return (await apiJson<{ archive: BackupArchive }>(
+    `/api/events/${encodeURIComponent(eventSlug)}/backup-archives`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ backup, serverDataHash, eventSequence }),
+    },
+  )).archive
+}
+
+export async function downloadBackupArchive(eventSlug: string, archiveId: string): Promise<Blob> {
+  const response = await fetch(
+    `/api/events/${encodeURIComponent(eventSlug)}/backup-archives/${encodeURIComponent(archiveId)}`,
+    { credentials: 'same-origin' },
+  )
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: string }
+    throw new Error(body.error ?? `R2バックアップ取得エラー (${response.status})`)
+  }
+  return response.blob()
+}
+
+export async function deleteBackupArchive(eventSlug: string, archiveId: string): Promise<void> {
+  await apiJson(
+    `/api/events/${encodeURIComponent(eventSlug)}/backup-archives/${encodeURIComponent(archiveId)}`,
+    {
+      method: 'DELETE',
+      body: JSON.stringify({ confirmation: archiveId }),
+    },
+  )
 }
 
 export async function requestBackupRestorePreview(

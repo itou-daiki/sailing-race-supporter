@@ -28,13 +28,16 @@ npx wrangler whoami
 
 CIから公開する場合だけ、必要最小権限の `CLOUDFLARE_API_TOKEN` をGitHub ActionsのSecretへ登録します。`.env`やソースコードには置きません。
 
-## 3. D1を作成
+## 3. D1とR2を作成
 
 ```bash
 npx wrangler d1 create sailing-race-supporter
+npx wrangler r2 bucket create sailing-race-supporter-backups
 ```
 
 出力された `database_id` を [wrangler.jsonc](./wrangler.jsonc) の `database_id` に設定します。初期値のゼロUUIDのままでは、デプロイ前検査が停止します。
+
+R2には端末でAES-GCM暗号化済みの大会バックアップだけを保管します。平文とパスフレーズは送信しません。バケット名を変更する場合は `wrangler.jsonc` の `BACKUP_ARCHIVES` バインディングも同時に変更してください。
 
 ## 4. バックアップ署名鍵を登録
 
@@ -62,7 +65,7 @@ npm run db:migrate:remote
 npm run deploy:worker
 ```
 
-初期リリースでは添付ファイル機能を公開していないため、R2バケットは必須にしていません。写真・音声を有効化する段階でR2を追加します。
+R2バケットは暗号化大会バックアップに使用するため必須です。1大会20世代、1世代25MiB、合計500MiBをアプリ側で上限とし、初期保存期間は大会終了後365日です。
 
 `wrangler.jsonc` は `BACKUP_SIGNING_PRIVATE_KEY` を必須Secretとして宣言しているため、未登録ならWorker公開は停止します。Pagesの画面確認ビルドには秘密鍵を設定しません。
 
@@ -76,7 +79,7 @@ curl https://sailing-race-supporter.<subdomain>.workers.dev/api/health
 
 JSONの `status` が `ok`、`version` が `0.3.0` であることを確認します。そのURLをブラウザーで開き、パスキー登録後に最初の大会URLを発行します。
 
-大会管理画面から暗号化バックアップを一度保存し、同じファイルを再選択してください。「大会データ全体 SHA-256」「監査ログの連番・ハッシュチェーン」「監査最終ルート」「Ed25519 サーバー署名」がすべて成功し、復元操作が有効になることを確認します。
+大会管理画面から暗号化バックアップを一度ローカルとR2へ保存し、R2一覧から端末へ再取得して選択してください。「大会データ全体 SHA-256」「監査ログの連番・ハッシュチェーン」「監査最終ルート」「Ed25519 サーバー署名」がすべて成功し、復元操作が有効になることを確認します。
 
 無料枠向けの日次保持処理は毎日04:17（日本時間）に1回だけ実行します。位置情報はDurable Objectsでライブ配信し、D1には原則60秒間隔で保存します。
 

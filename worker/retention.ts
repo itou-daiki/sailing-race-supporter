@@ -6,6 +6,7 @@ export interface RetentionPolicy {
   observationsDays: number
   sampledPositionsDays: number
   localHighFrequencyTrackDays: number
+  cloudBackupDays: number
   regularMessagesDays: number
   memberProfilesDays: number
   authSecretsAfterEventDays: number
@@ -98,6 +99,7 @@ export async function previewRetentionForEvent(
     finalizedRecords,
     observations,
     sampledPositions,
+    cloudBackups,
     regularMessages,
     memberProfiles,
     recoveryCredentials,
@@ -120,6 +122,8 @@ export async function previewRetentionForEvent(
       (SELECT COUNT(*) FROM current_observations WHERE regatta_id = ?)
     ) AS count`, eventId, eventId),
     count(env, 'SELECT COUNT(*) AS count FROM position_samples WHERE regatta_id = ?', eventId),
+    count(env, `SELECT COUNT(*) AS count FROM backup_archives
+                WHERE regatta_id = ? AND deleted_at IS NULL`, eventId),
     count(env, `SELECT COUNT(*) AS count FROM messages
                 WHERE regatta_id = ? AND priority = 'normal' AND deleted_at IS NULL`, eventId),
     count(env, `SELECT COUNT(*) AS count FROM event_members
@@ -153,6 +157,7 @@ export async function previewRetentionForEvent(
     item('observationsDays', '風・潮流・海面観測', observations, '期限到来時に詳細観測を削除'),
     item('sampledPositionsDays', '運営ボート位置サンプル', sampledPositions, '期限到来時に位置点を削除'),
     item('localHighFrequencyTrackDays', '端末内の高頻度航跡', 0, '各端末で期限到来時に削除'),
+    item('cloudBackupDays', '暗号化R2バックアップ', cloudBackups, '期限到来時にR2本体を削除し、監査用メタデータを残す'),
     item('regularMessagesDays', '通常メッセージ本文', regularMessages, '本文をハッシュ付き墓標へ置換'),
     item('memberProfilesDays', '名前・担当', memberProfiles, '管理者以外を匿名化'),
     item('authSecretsAfterEventDays', '招待・参加復元秘密', recoveryCredentials + inviteSecrets, '秘密を失効・削除'),
@@ -243,6 +248,20 @@ export async function runRetentionForEvent(
       counts.positionSamples = changes(await env.DB.prepare(
         'DELETE FROM position_samples WHERE regatta_id = ?',
       ).bind(eventId).run())
+    }
+    if (hasExpired(end, policy.cloudBackupDays, nowTime)) {
+      const archives = await env.DB.prepare(
+        `SELECT id, object_key FROM backup_archives
+         WHERE regatta_id = ? AND deleted_at IS NULL ORDER BY created_at LIMIT 1000`,
+      ).bind(eventId).all<{ id: string; object_key: string }>()
+      if (archives.results.length) {
+        await env.BACKUP_ARCHIVES.delete(archives.results.map((archive) => archive.object_key))
+        await env.DB.batch(archives.results.map((archive) => env.DB.prepare(
+          `UPDATE backup_archives SET deleted_at = ?
+           WHERE id = ? AND regatta_id = ? AND deleted_at IS NULL`,
+        ).bind(startedAt, archive.id, eventId)))
+      }
+      counts.cloudBackups = archives.results.length
     }
     if (hasExpired(end, policy.observationsDays, nowTime)) {
       counts.windObservations = changes(await env.DB.prepare(

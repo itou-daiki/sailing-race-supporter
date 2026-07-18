@@ -34,6 +34,12 @@
       "migrations_dir": "migrations"
     }
   ],
+  "r2_buckets": [
+    {
+      "binding": "BACKUP_ARCHIVES",
+      "bucket_name": "sailing-race-supporter-backups"
+    }
+  ],
   "observability": {
     "enabled": true
   },
