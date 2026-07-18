@@ -116,12 +116,15 @@ export async function appendAuditEventWithoutBlockingSecretDelivery(
     await appendAuditEvent(env, input)
     return true
   } catch (error) {
-    console.error('Audit append failed during one-time secret delivery', {
+    console.error(JSON.stringify({
+      level: 'error',
+      message: 'Audit append failed during one-time secret delivery',
       eventId: input.access.eventId,
       action: input.action,
       entityType: input.entityType,
       entityId: input.entityId,
-    }, error)
+      error: error instanceof Error ? error.message : String(error),
+    }))
     return false
   }
 }

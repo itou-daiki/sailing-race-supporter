@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { can, type EventAccess } from '../worker/authorization'
-import { assertSameOrigin, hasRecentAuthentication, randomToken, sha256Base64Url } from '../worker/security'
+import {
+  assertSameOrigin,
+  hasRecentAuthentication,
+  randomToken,
+  sha256Base64Url,
+  shouldRefreshSessionLastSeen,
+} from '../worker/security'
 
 function access(role: string, isOwner = false): EventAccess {
   return {
@@ -76,5 +82,12 @@ describe('request security', () => {
     const base = { tokenHash: 'token', userId: 'user-a', displayName: '管理者', expiresAt: new Date(Date.now() + 60_000).toISOString() }
     expect(hasRecentAuthentication({ ...base, createdAt: new Date(Date.now() - 14 * 60_000).toISOString() })).toBe(true)
     expect(hasRecentAuthentication({ ...base, createdAt: new Date(Date.now() - 16 * 60_000).toISOString() })).toBe(false)
+  })
+
+  it('limits session activity writes to once every five minutes', () => {
+    const now = '2026-07-18T08:05:00.000Z'
+    expect(shouldRefreshSessionLastSeen('2026-07-18T08:00:01.000Z', now)).toBe(false)
+    expect(shouldRefreshSessionLastSeen('2026-07-18T08:00:00.000Z', now)).toBe(true)
+    expect(shouldRefreshSessionLastSeen('invalid', now)).toBe(true)
   })
 })

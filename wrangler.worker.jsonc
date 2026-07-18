@@ -2,7 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "sailing-race-supporter",
   "main": "worker/index.ts",
-  "compatibility_date": "2026-07-17",
+  "compatibility_date": "2026-07-18",
   "compatibility_flags": ["nodejs_compat"],
   "secrets": {
     "required": ["BACKUP_SIGNING_PRIVATE_KEY"]

@@ -331,7 +331,12 @@ export async function runDailyRetention(env: AppEnv): Promise<void> {
     try {
       await runRetentionForEvent(env, event.id, 'cron')
     } catch (error) {
-      console.error('Retention run failed', event.id, error)
+      console.error(JSON.stringify({
+        level: 'error',
+        message: 'Retention run failed',
+        eventId: event.id,
+        error: error instanceof Error ? error.message : String(error),
+      }))
     }
   }
   const now = new Date().toISOString()

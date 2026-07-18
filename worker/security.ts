@@ -2,6 +2,7 @@ import type { AppEnv } from './index.js'
 
 const SESSION_COOKIE = 'srs_session'
 const SESSION_DURATION_MS = 12 * 60 * 60 * 1_000
+const SESSION_LAST_SEEN_REFRESH_MS = 5 * 60 * 1_000
 
 export interface AuthenticatedSession {
   tokenHash: string
@@ -17,6 +18,7 @@ interface SessionRow {
   display_name: string
   expires_at: string
   created_at: string
+  last_seen_at: string
 }
 
 function base64Url(bytes: Uint8Array): string {
@@ -100,7 +102,7 @@ export async function getSession(request: Request, env: AppEnv): Promise<Authent
   const tokenHash = await sha256Base64Url(rawToken)
   const now = new Date().toISOString()
   const row = await env.DB.prepare(
-    `SELECT s.token_hash, s.user_id, s.expires_at, s.created_at, u.display_name
+    `SELECT s.token_hash, s.user_id, s.expires_at, s.created_at, s.last_seen_at, u.display_name
      FROM auth_sessions s
      JOIN users u ON u.id = s.user_id
      WHERE s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > ?
@@ -108,9 +110,11 @@ export async function getSession(request: Request, env: AppEnv): Promise<Authent
   ).bind(tokenHash, now).first<SessionRow>()
   if (!row) return null
 
-  void env.DB.prepare(
-    'UPDATE auth_sessions SET last_seen_at = ? WHERE token_hash = ?',
-  ).bind(now, tokenHash).run()
+  if (shouldRefreshSessionLastSeen(row.last_seen_at, now)) {
+    await env.DB.prepare(
+      'UPDATE auth_sessions SET last_seen_at = ? WHERE token_hash = ?',
+    ).bind(now, tokenHash).run()
+  }
   return {
     tokenHash: row.token_hash,
     userId: row.user_id,
@@ -118,6 +122,11 @@ export async function getSession(request: Request, env: AppEnv): Promise<Authent
     expiresAt: row.expires_at,
     createdAt: row.created_at,
   }
+}
+
+export function shouldRefreshSessionLastSeen(lastSeenAt: string, now: string): boolean {
+  const elapsed = Date.parse(now) - Date.parse(lastSeenAt)
+  return !Number.isFinite(elapsed) || elapsed >= SESSION_LAST_SEEN_REFRESH_MS
 }
 
 export function hasRecentAuthentication(session: AuthenticatedSession, maximumAgeMinutes = 15): boolean {
