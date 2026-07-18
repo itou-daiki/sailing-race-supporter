@@ -393,8 +393,8 @@ export class EventRoom extends DurableObject<AppEnv> {
         : ''
       const messageReceiptOnly = parsed.type === 'message' && ['read', 'acknowledge'].includes(messageAction)
       const finalizedMutation = mutatesFinalizedState.has(parsed.type) || parsed.type === 'message' && !messageReceiptOnly
-      const ownerAppendOnlyRevision = access.isOwner && ['leading-passage', 'finish', 'message', 'course'].includes(parsed.type)
-      if (race.status === 'finalized' && finalizedMutation && !ownerAppendOnlyRevision) {
+      const ownerAppendOnlyCorrection = access.isOwner && ['mark', 'leading-passage', 'finish', 'message', 'course'].includes(parsed.type)
+      if (race.status === 'finalized' && finalizedMutation && !ownerAppendOnlyCorrection) {
         socket.send(JSON.stringify({ type: 'error', code: 'RACE_FINALIZED', id: parsed.id }))
         return
       }

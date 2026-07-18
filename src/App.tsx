@@ -807,7 +807,7 @@ export default function App() {
       committeeBoatId?: string
     },
   ) => {
-    if (locked) return
+    if (locked && !eventAccess?.isOwner) return
     const existingMark = marks.find((mark) => mark.id === markId)
     setRaces((current) => current.map((race) => {
       if (race.id !== activeRace.id) return race
