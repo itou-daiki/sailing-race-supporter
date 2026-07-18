@@ -452,6 +452,63 @@ select:focus-visible {
   border: 1px solid #ffdbad;
 }
 
+.operation-error-toast {
+  position: fixed;
+  z-index: 180;
+  top: 138px;
+  right: 14px;
+  width: min(430px, calc(100vw - 28px));
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 9px;
+  padding: 10px;
+  color: #65281e;
+  background: #fff4f0;
+  border: 1px solid #edb9ad;
+  border-radius: 11px;
+  box-shadow: 0 10px 30px rgb(68 30 23 / 20%);
+}
+
+.operation-error-toast > svg {
+  color: var(--danger);
+}
+
+.operation-error-toast span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.operation-error-toast strong {
+  font-size: 11px;
+}
+
+.operation-error-toast small {
+  font-size: 9px;
+}
+
+.operation-error-toast button {
+  min-height: 30px;
+  padding: 0 9px;
+  color: #fff;
+  background: var(--danger);
+  border: 0;
+  border-radius: 7px;
+  font-size: 9px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.operation-error-toast .operation-error-toast__close {
+  width: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: #6c4b43;
+  background: transparent;
+}
+
 .signal-dialog-backdrop {
   position: fixed;
   z-index: 220;

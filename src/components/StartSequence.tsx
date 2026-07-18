@@ -490,7 +490,7 @@ export function StartSequence({
               <div className="signal-course-fields">
                 <label className="signal-dialog__field"><span>変更を知らせる回航点・ゲート</span><select value={changeFromMarkId} onChange={(event) => setChangeFromMarkId(event.target.value)}>{marks.map((mark) => <option value={mark.id} key={mark.id}>{mark.label}</option>)}</select></label>
                 <label className="signal-dialog__field"><span>位置を変更する次のマーク／フィニッシュ</span><select value={targetMarkId} onChange={(event) => setTargetMarkId(event.target.value)}>{marks.map((mark) => <option value={mark.id} key={mark.id}>{mark.label}</option>)}</select></label>
-                <label className="signal-dialog__field"><span>新方位（任意・0〜359°）</span><input type="number" min="0" max="359" step="1" value={newBearing} onChange={(event) => setNewBearing(event.target.value)} placeholder="例: 015" /></label>
+                <label className="signal-dialog__field"><span>新方位（真方位・任意・0〜359°）</span><input type="number" min="0" max="359" step="1" value={newBearing} onChange={(event) => setNewBearing(event.target.value)} placeholder="例: 015" /></label>
                 <label className="signal-dialog__field"><span>左右変更（任意）</span><select value={directionChange} onChange={(event) => setDirectionChange(event.target.value as typeof directionChange)}><option value="">表示なし</option><option value="starboard">緑三角・右へ</option><option value="port">赤長方形・左へ</option></select></label>
                 <label className="signal-dialog__field"><span>距離変更（任意）</span><select value={lengthChange} onChange={(event) => setLengthChange(event.target.value as typeof lengthChange)}><option value="">表示なし</option><option value="increase">＋ 延長</option><option value="decrease">− 短縮</option></select></label>
               </div>

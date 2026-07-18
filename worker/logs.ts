@@ -86,7 +86,7 @@ function signalDetail(row: Row): string {
     typeof payload.finishAt === 'string' ? `短縮フィニッシュ ${payload.finishAt}` : null,
     typeof payload.changeFromMarkLabel === 'string' ? `変更信号位置 ${payload.changeFromMarkLabel}` : null,
     typeof payload.targetMarkLabel === 'string' ? `対象 ${payload.targetMarkLabel}` : null,
-    typeof payload.newBearing === 'number' ? `新方位 ${String(Math.round(payload.newBearing)).padStart(3, '0')}°` : null,
+    typeof payload.newBearing === 'number' ? `新方位 ${String(Math.round(payload.newBearing)).padStart(3, '0')}°T` : null,
     payload.directionChange === 'starboard' ? '右へ変更' : payload.directionChange === 'port' ? '左へ変更' : null,
     payload.lengthChange === 'increase' ? '距離を延長' : payload.lengthChange === 'decrease' ? '距離を短縮' : null,
     typeof payload.replacementObject === 'string' ? `代替物 ${payload.replacementObject}` : null,

@@ -72,7 +72,7 @@ export function signalFlagDescription(
 ): string {
   if (action === 'course-change') {
     const changes = [
-      typeof details.newBearing === 'number' ? `新方位 ${String(Math.round(details.newBearing)).padStart(3, '0')}°` : null,
+      typeof details.newBearing === 'number' ? `新方位 ${String(Math.round(details.newBearing)).padStart(3, '0')}°T` : null,
       details.directionChange === 'starboard' ? '緑三角・右へ変更' : details.directionChange === 'port' ? '赤長方形・左へ変更' : null,
       details.lengthChange === 'increase' ? '距離 +' : details.lengthChange === 'decrease' ? '距離 −' : null,
     ].filter(Boolean)

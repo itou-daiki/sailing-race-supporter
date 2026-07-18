@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   Anchor,
   BellRing,
   ChevronDown,
@@ -65,6 +66,12 @@ import { estimateRegattaFreeTierUsage, STANDARD_REGATTA_LOAD } from '../shared/f
 const DETAIL_KEY = 'srs-board-detail'
 const SCALE_KEY = 'srs-board-scale'
 const SPLIT_KEY = 'srs-map-split'
+
+const operationLabels: Record<string, string> = {
+  position: '運営ボート位置', wind: '風向風速', current: '潮流', mark: 'マーク操作',
+  'leading-passage': '先頭通過', finish: 'フィニッシュ', task: '運用タスク', message: 'メッセージ',
+  signal: 'レース信号', 'signal-audio': '公式音響', schedule: '予告予定', finalize: 'レース確定',
+}
 
 interface CachedAppState {
   eventName: string
@@ -201,6 +208,8 @@ export default function App() {
   const [messages, setMessages] = useState<readonly OperationalMessage[]>(DEMO_MESSAGES)
   const [tasks, setTasks] = useState<readonly OperationalTask[]>(DEMO_TASKS)
   const [memberCount, setMemberCount] = useState(18)
+  const [eventRefreshKey, setEventRefreshKey] = useState(0)
+  const [operationError, setOperationError] = useState<string>()
   const [messagesOpen, setMessagesOpen] = useState(false)
   const [logsOpen, setLogsOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -497,6 +506,11 @@ export default function App() {
     connectionKey: sessionConnectionKey,
     enabled: session.mode === 'authenticated' && eventRoute && Boolean(eventAccess),
     onEvent: applyRemoteEvent,
+    onOperationError: (error, operation) => {
+      setOperationError(`${operation ? operationLabels[operation] ?? operation : '操作'}：${error.message}`)
+      if (error.code === 'AUTHENTICATION_REQUIRED' || error.code === 'RECENT_AUTHENTICATION_REQUIRED') setAuthOpen(true)
+      setEventRefreshKey((current) => current + 1)
+    },
   })
   const sendRealtimeOperation = realtime.send
 
@@ -622,7 +636,7 @@ export default function App() {
       })
       .catch(() => void applyCachedState())
     return () => { active = false }
-  }, [eventId, eventRoute, session.mode, sessionUserId])
+  }, [eventId, eventRefreshKey, eventRoute, session.mode, sessionUserId])
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -1204,6 +1218,15 @@ export default function App() {
         onSignalExecuted={recordSignal}
         onAudioExecuted={recordSignalAudio}
       />
+
+      {operationError && (
+        <div className="operation-error-toast" role="alert">
+          <AlertTriangle size={18} />
+          <span><strong>サーバーが操作を拒否しました</strong><small>{operationError}・大会の最新状態を再取得しています</small></span>
+          <button type="button" onClick={() => setEventRefreshKey((current) => current + 1)}>再同期</button>
+          <button type="button" className="operation-error-toast__close" onClick={() => setOperationError(undefined)} aria-label="通知を閉じる"><X size={16} /></button>
+        </div>
+      )}
 
       <main
         className="race-workspace"

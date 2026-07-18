@@ -82,9 +82,10 @@ interface UseRealtimeOptions {
   connectionKey?: string
   enabled?: boolean
   onEvent?: (event: SequencedOperation) => void
+  onOperationError?: (error: RealtimeOperationError, operation?: OperationType) => void
 }
 
-export function useEventRoom({ eventId, memberId, connectionKey = '', enabled = true, onEvent }: UseRealtimeOptions) {
+export function useEventRoom({ eventId, memberId, connectionKey = '', enabled = true, onEvent, onOperationError }: UseRealtimeOptions) {
   const [status, setStatus] = useState<RealtimeStatus>(enabled ? 'connecting' : 'offline')
   const [pendingCount, setPendingCount] = useState(0)
   const [lastSequence, setLastSequence] = useState(0)
@@ -92,11 +93,16 @@ export function useEventRoom({ eventId, memberId, connectionKey = '', enabled = 
   const [connectedKey, setConnectedKey] = useState('')
   const socketRef = useRef<WebSocket | undefined>(undefined)
   const eventHandlerRef = useRef(onEvent)
+  const errorHandlerRef = useRef(onOperationError)
   const pendingConfirmationsRef = useRef(new Map<string, PendingConfirmation>())
 
   useEffect(() => {
     eventHandlerRef.current = onEvent
   }, [onEvent])
+
+  useEffect(() => {
+    errorHandlerRef.current = onOperationError
+  }, [onOperationError])
 
   const refreshPendingCount = useCallback(async () => {
     setPendingCount(await countQueuedOperations(eventId))
@@ -156,6 +162,7 @@ export function useEventRoom({ eventId, memberId, connectionKey = '', enabled = 
             event?: SequencedOperation
             code?: string
             id?: string
+            operation?: OperationType
             sequence?: number
             serverTime?: string
           }
@@ -183,6 +190,7 @@ export function useEventRoom({ eventId, memberId, connectionKey = '', enabled = 
               confirmation.reject(operationError)
             } else {
               void removeQueuedOperation(envelope.id).then(refreshPendingCount)
+              errorHandlerRef.current?.(operationError, envelope.operation)
             }
           } else if (typeof envelope.sequence === 'number') {
             setLastSequence(envelope.sequence)

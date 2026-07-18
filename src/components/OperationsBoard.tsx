@@ -288,7 +288,7 @@ export function OperationsBoard({
                     </span>
                     <span className="boat-motion">
                       <strong>{boat.speedKnots.toFixed(1)}</strong><small>kt</small>
-                      {boat.courseDegrees !== undefined && <small>{boat.courseDegrees}°</small>}
+                      {boat.courseDegrees !== undefined && <small>{boat.courseDegrees}°T</small>}
                     </span>
                   </div>
                 ))}

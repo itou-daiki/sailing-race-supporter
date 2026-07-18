@@ -463,14 +463,14 @@ export function MapView({
             {selfBoat ? <>
               <strong>{formatDistance(selectedDistance ?? 0)}</strong>
               <small className="selected-mark__navigation">
-                目標方位 {Math.round(selectedBearing ?? 0)}°・{formatEta(selectedEta)}
+                目標方位 {Math.round(selectedBearing ?? 0)}°T・{formatEta(selectedEta)}
               </small>
               <small className="selected-mark__navigation">
-                {selfBoat.courseDegrees === undefined ? 'COG —（低速または取得不可）' : `COG ${Math.round(selfBoat.courseDegrees)}°・方位差 ${headingDifference === undefined || Math.abs(headingDifference) < 1 ? '0°' : `${headingDifference > 0 ? '右' : '左'}${Math.round(Math.abs(headingDifference))}°`}`}
+                {selfBoat.courseDegrees === undefined ? 'COG —（低速または取得不可）' : `COG ${Math.round(selfBoat.courseDegrees)}°T・方位差 ${headingDifference === undefined || Math.abs(headingDifference) < 1 ? '0°' : `${headingDifference > 0 ? '右' : '左'}${Math.round(Math.abs(headingDifference))}°`}`}
                 {selectedMark.actual && `・計画差 ${Math.round(distanceMetres(selectedMark.target, selectedMark.actual))}m`}
               </small>
             </> : <small className="selected-mark__navigation">運営ボート位置未取得・時刻記録は利用可能</small>}
-            {selectedGate && <small className="gate-metrics">{selectedGate.actual ? '実測' : '計画'}ゲート 幅 {Math.round(distanceMetres(selectedGate.positions[0], selectedGate.positions[1]))}m・方位 {Math.round(bearingDegrees(selectedGate.positions[0], selectedGate.positions[1]))}°・中央 {selectedGate.center[1].toFixed(5)}, {selectedGate.center[0].toFixed(5)}</small>}
+            {selectedGate && <small className="gate-metrics">{selectedGate.actual ? '実測' : '計画'}ゲート 幅 {Math.round(distanceMetres(selectedGate.positions[0], selectedGate.positions[1]))}m・方位 {Math.round(bearingDegrees(selectedGate.positions[0], selectedGate.positions[1]))}°T・中央 {selectedGate.center[1].toFixed(5)}, {selectedGate.center[0].toFixed(5)}</small>}
             {selectedAdoptedPassage && <small className="passage-recorded">採用 先頭通過 {new Date(selectedAdoptedPassage.passedAt).toLocaleTimeString('ja-JP')}</small>}
             {selectedPassageObservations.length > 0 && (
               <div className="passage-observations" aria-label="先頭通過の観測候補">

@@ -63,7 +63,7 @@ describe('race signal rules', () => {
       newBearing: 15,
       directionChange: 'starboard',
       lengthChange: 'increase',
-    })).toBe('C旗 掲揚・新方位 015°・緑三角・右へ変更・距離 +')
+    })).toBe('C旗 掲揚・新方位 015°T・緑三角・右へ変更・距離 +')
     expect(signalFlagDescription('mark-missing', { targetMarkLabel: '1マーク' })).toBe('M旗 掲揚・1マークを代替')
     expect(signalFlagDescription('search-rescue', { communicationChannel: 'VHF 72' })).toBe('V旗 掲揚・VHF 72を聴取')
   })
