@@ -200,9 +200,12 @@ export function useEventRoom({ eventId, memberId, connectionKey = '', enabled = 
           // Malformed frames are ignored; the server remains authoritative.
         }
       })
-      socket.addEventListener('close', () => {
+      socket.addEventListener('close', (event) => {
         setStatus('offline')
         setConnectedKey('')
+        if (event.code === 4003) {
+          errorHandlerRef.current?.(new RealtimeOperationError('AUTHENTICATION_REQUIRED'))
+        }
         for (const [id, confirmation] of pendingConfirmationsRef.current) {
           window.clearTimeout(confirmation.timeout)
           confirmation.reject(new RealtimeOperationError('CONNECTION_CLOSED', id))

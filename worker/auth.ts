@@ -658,6 +658,10 @@ async function ownerRecoveryVerification(request: Request, env: AppEnv): Promise
   if (results[2].meta.changes !== 1) {
     return json({ error: 'この復旧コードは別の端末で使用されました' }, { status: 409 })
   }
+  await env.EVENT_ROOMS.getByName(flow.regatta_id).disconnectAccess(
+    flow.member_id ? [flow.member_id] : [],
+    [flow.owner_user_id],
+  )
   const created = await createSession(request, env, flow.owner_user_id)
   const auditRecorded = await appendAuditEventWithoutBlockingSecretDelivery(env, {
     access: {

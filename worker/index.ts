@@ -43,6 +43,7 @@ interface ClientAttachment {
   isOwner: boolean
   joinedAt: string
   sessionTokenHash: string
+  accessValidatedAt: number
 }
 
 interface RoomMessage {
@@ -189,6 +190,7 @@ export class EventRoom extends DurableObject<AppEnv> {
         isOwner: request.headers.get('x-srs-owner') === '1',
         joinedAt: new Date().toISOString(),
         sessionTokenHash,
+        accessValidatedAt: Date.now(),
       }
 
       this.ctx.acceptWebSocket(server)
@@ -271,6 +273,32 @@ export class EventRoom extends DurableObject<AppEnv> {
     if (!attachment) {
       socket.send(JSON.stringify({ type: 'error', code: 'AUTHENTICATION_REQUIRED', id: parsed.id }))
       return
+    }
+    if (Date.now() - attachment.accessValidatedAt >= 30_000) {
+      const current = await this.env.DB.prepare(
+        `SELECT member.role, member.assignment, regatta.owner_user_id
+         FROM auth_sessions session
+         JOIN regattas regatta ON regatta.id = ?
+         JOIN event_members member ON member.id = ? AND member.regatta_id = regatta.id
+         WHERE session.token_hash = ? AND session.user_id = ?
+           AND session.revoked_at IS NULL AND session.expires_at > ?
+           AND member.status = 'active' LIMIT 1`,
+      ).bind(
+        attachment.eventId,
+        attachment.memberId,
+        attachment.sessionTokenHash,
+        attachment.userId,
+        new Date().toISOString(),
+      ).first<{ role: string; assignment: string; owner_user_id: string }>()
+      const currentRole = current?.owner_user_id === attachment.userId ? 'owner' : current?.role
+      const currentAssignment = current?.owner_user_id === attachment.userId ? '大会管理者' : current?.assignment
+      if (!current || currentRole !== attachment.role || currentAssignment !== attachment.assignment) {
+        socket.send(JSON.stringify({ type: 'error', code: 'AUTHENTICATION_REQUIRED' }))
+        socket.close(4003, 'Access changed')
+        return
+      }
+      attachment.accessValidatedAt = Date.now()
+      socket.serializeAttachment(attachment)
     }
     const access = this.accessFromAttachment(attachment)
     const permission = parsed.type === 'presence' ? 'view' : parsed.type === 'signal-audio' ? 'signal' : parsed.type
@@ -516,12 +544,31 @@ export class EventRoom extends DurableObject<AppEnv> {
         for (const key of this.positionAuthorization.keys()) {
           if (key.startsWith(`${targetMemberId}:`)) this.positionAuthorization.delete(key)
         }
-        for (const connected of this.ctx.getWebSockets()) {
-          const connectedAccess = connected.deserializeAttachment() as ClientAttachment | null
-          if (connectedAccess?.memberId === targetMemberId) connected.close(4003, 'Assignment changed')
-        }
+        await this.disconnectAccess([targetMemberId], [], 4004, 'Assignment changed')
       }
     }
+  }
+
+  async disconnectAccess(
+    memberIds: string[],
+    userIds: string[] = [],
+    code = 4003,
+    reason = 'Access revoked',
+  ): Promise<number> {
+    const members = new Set(memberIds)
+    const users = new Set(userIds)
+    let disconnected = 0
+    for (const connected of this.ctx.getWebSockets()) {
+      const connectedAccess = connected.deserializeAttachment() as ClientAttachment | null
+      if (connectedAccess && (members.has(connectedAccess.memberId) || users.has(connectedAccess.userId))) {
+        for (const key of this.positionAuthorization.keys()) {
+          if (key.startsWith(`${connectedAccess.memberId}:`)) this.positionAuthorization.delete(key)
+        }
+        connected.close(code, reason)
+        disconnected += 1
+      }
+    }
+    return disconnected
   }
 
   webSocketClose(socket: WebSocket): void {

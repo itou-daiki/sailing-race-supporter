@@ -204,6 +204,10 @@ async function revokeInvite(request: Request, env: AppEnv, eventReference: strin
   assertSameOrigin(request)
   const access = await ownerAccess(request, env, eventReference)
   const now = new Date().toISOString()
+  const affectedMembers = (await env.DB.prepare(
+    `SELECT id, user_id FROM event_members
+     WHERE regatta_id = ? AND invite_id = ? AND status <> 'revoked'`,
+  ).bind(access.eventId, inviteId).all<{ id: string; user_id: string | null }>()).results
   const result = await env.DB.prepare(
     'UPDATE invites SET revoked_at = ? WHERE id = ? AND regatta_id = ? AND revoked_at IS NULL',
   ).bind(now, inviteId, access.eventId).run()
@@ -216,7 +220,15 @@ async function revokeInvite(request: Request, env: AppEnv, eventReference: strin
     env.DB.prepare(
       `UPDATE event_members SET status = 'revoked' WHERE invite_id = ? AND status <> 'revoked'`,
     ).bind(inviteId),
+    env.DB.prepare(
+      `DELETE FROM event_member_scopes
+       WHERE event_member_id IN (SELECT id FROM event_members WHERE invite_id = ?)`,
+    ).bind(inviteId),
   ])
+  await env.EVENT_ROOMS.getByName(access.eventId).disconnectAccess(
+    affectedMembers.map((member) => member.id),
+    affectedMembers.flatMap((member) => member.user_id ? [member.user_id] : []),
+  )
   await appendAuditEvent(env, {
     access,
     action: 'invite.revoke',
@@ -395,6 +407,10 @@ async function recoverMember(request: Request, env: AppEnv, eventReference: stri
        VALUES (?, ?, ?, ?, 1, ?)`,
     ).bind(crypto.randomUUID(), event.id, memberId, attemptedAt, networkHash),
   ])
+  await env.EVENT_ROOMS.getByName(event.id).disconnectAccess(
+    [memberId],
+    [credential.user_id],
+  )
   const access: EventAccess = {
     eventId: credential.regatta_id,
     eventSlug: credential.event_slug,
