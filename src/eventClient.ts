@@ -65,6 +65,21 @@ export interface EventResources {
   }>
 }
 
+export interface CourseRevisionSummary {
+  id: string
+  revision: number
+  courseCode: string
+  windDirection?: number
+  windSpeed?: number
+  targetLengthMetres?: number
+  gateConfig: { lower?: boolean; upper?: boolean; second?: boolean }
+  status: string
+  basedOnRevision?: number
+  createdBy?: string
+  createdAt: string
+  nodeCount: number
+}
+
 export interface CreateEventInput {
   name: string
   startsOn: string
@@ -588,6 +603,64 @@ export async function saveCourseRevision(
     method: 'POST',
     body: JSON.stringify(input),
   })
+}
+
+interface CourseRevisionRow {
+  id: string
+  revision: number
+  course_code: string
+  wind_direction: number | null
+  wind_speed: number | null
+  target_length_metres: number | null
+  gate_config_json: string
+  status: string
+  based_on_revision: number | null
+  created_by: string | null
+  created_at: string
+  node_count: number
+}
+
+function parseGateConfig(value: string): CourseRevisionSummary['gateConfig'] {
+  try {
+    const parsed = JSON.parse(value) as unknown
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as CourseRevisionSummary['gateConfig']
+      : {}
+  } catch {
+    return {}
+  }
+}
+
+export async function loadCourseRevisions(eventSlug: string, raceId: string): Promise<CourseRevisionSummary[]> {
+  const response = await apiJson<{ revisions: CourseRevisionRow[] }>(
+    `/api/events/${encodeURIComponent(eventSlug)}/races/${encodeURIComponent(raceId)}/course-revisions`,
+    { method: 'GET', headers: {} },
+  )
+  return response.revisions.map((row) => ({
+    id: row.id,
+    revision: row.revision,
+    courseCode: row.course_code,
+    windDirection: row.wind_direction ?? undefined,
+    windSpeed: row.wind_speed ?? undefined,
+    targetLengthMetres: row.target_length_metres ?? undefined,
+    gateConfig: parseGateConfig(row.gate_config_json),
+    status: row.status,
+    basedOnRevision: row.based_on_revision ?? undefined,
+    createdBy: row.created_by ?? undefined,
+    createdAt: row.created_at,
+    nodeCount: row.node_count,
+  }))
+}
+
+export async function rollbackCourseRevision(
+  eventSlug: string,
+  raceId: string,
+  revision: number,
+): Promise<{ revisionId: string; revision: number; sourceRevision: number; courseCode: string; createdAt: string }> {
+  return apiJson(
+    `/api/events/${encodeURIComponent(eventSlug)}/races/${encodeURIComponent(raceId)}/course-revisions/${revision}/rollback`,
+    { method: 'POST', body: JSON.stringify({}) },
+  )
 }
 
 export async function loadRetentionPolicy(eventSlug: string): Promise<RetentionPolicy> {

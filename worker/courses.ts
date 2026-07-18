@@ -2,7 +2,7 @@ import { eventAccess } from './authorization.js'
 import { appendAuditEvent } from './audit.js'
 import { json, readJson } from './http.js'
 import type { AppEnv } from './index.js'
-import { assertSameOrigin, requireSession } from './security.js'
+import { assertSameOrigin, hasRecentAuthentication, requireSession } from './security.js'
 
 interface CourseNodeInput {
   markId?: string
@@ -27,11 +27,82 @@ function finite(value: unknown, minimum: number, maximum: number): value is numb
   return typeof value === 'number' && Number.isFinite(value) && value >= minimum && value <= maximum
 }
 
+export async function rollbackCourseRevision(
+  env: AppEnv,
+  access: NonNullable<Awaited<ReturnType<typeof eventAccess>>>,
+  raceId: string,
+  sourceRevision: number,
+): Promise<Response> {
+  const source = await env.DB.prepare(
+    `SELECT id, revision, course_code, wind_direction, wind_speed, target_length_metres, gate_config_json
+     FROM course_revisions WHERE race_id = ? AND revision = ? LIMIT 1`,
+  ).bind(raceId, sourceRevision).first<{
+    id: string; revision: number; course_code: string; wind_direction: number | null
+    wind_speed: number | null; target_length_metres: number | null; gate_config_json: string
+  }>()
+  if (!source) return json({ error: '復元元のコース版が見つかりません' }, { status: 404 })
+  const nodes = (await env.DB.prepare(
+    `SELECT mark_id, node_order, label, node_type, rounding, target_lng, target_lat
+     FROM course_nodes WHERE course_revision_id = ? ORDER BY node_order`,
+  ).bind(source.id).all<{
+    mark_id: string; node_order: number; label: string; node_type: string; rounding: string | null
+    target_lng: number; target_lat: number
+  }>()).results
+  if (nodes.length < 3) return json({ error: '復元元のコース点が不足しています' }, { status: 409 })
+  const previous = await env.DB.prepare(
+    'SELECT COALESCE(MAX(revision), 0) AS revision FROM course_revisions WHERE race_id = ?',
+  ).bind(raceId).first<{ revision: number }>()
+  const revision = (previous?.revision ?? 0) + 1
+  const revisionId = crypto.randomUUID()
+  const createdAt = new Date().toISOString()
+  const statements: D1PreparedStatement[] = [
+    env.DB.prepare(
+      `UPDATE course_revisions SET status = 'superseded'
+       WHERE race_id = ? AND revision = ? AND status <> 'finalized'`,
+    ).bind(raceId, previous?.revision ?? 0),
+    env.DB.prepare(
+      `INSERT INTO course_revisions
+       (id, race_id, revision, course_code, wind_direction, wind_speed, target_length_metres,
+        gate_config_json, status, based_on_revision, created_by, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)`,
+    ).bind(
+      revisionId, raceId, revision, source.course_code, source.wind_direction, source.wind_speed,
+      source.target_length_metres, source.gate_config_json, source.revision, access.userId, createdAt,
+    ),
+    env.DB.prepare(
+      'UPDATE races SET course_code = ?, updated_at = ? WHERE id = ? AND regatta_id = ?',
+    ).bind(source.course_code, createdAt, raceId, access.eventId),
+  ]
+  nodes.forEach((node) => statements.push(env.DB.prepare(
+    `INSERT INTO course_nodes
+     (id, course_revision_id, mark_id, node_order, label, node_type, rounding, target_lng, target_lat)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    crypto.randomUUID(), revisionId, node.mark_id, node.node_order, node.label,
+    node.node_type, node.rounding, node.target_lng, node.target_lat,
+  )))
+  await env.DB.batch(statements)
+  await appendAuditEvent(env, {
+    access,
+    raceId,
+    action: 'course.revision.rollback',
+    entityType: 'course_revision',
+    entityId: revisionId,
+    before: { revision: previous?.revision ?? 0 },
+    after: { revision, sourceRevision: source.revision, courseCode: source.course_code, nodeCount: nodes.length },
+    reason: `コース第${source.revision}版を新しい第${revision}版として復元`,
+  })
+  return json({ revisionId, revision, sourceRevision: source.revision, courseCode: source.course_code, createdAt })
+}
+
 export async function handleCourseRequest(request: Request, env: AppEnv): Promise<Response | null> {
   const pathname = new URL(request.url).pathname
-  const match = pathname.match(/^\/api\/events\/([^/]+)\/races\/([^/]+)\/course-revisions$/)
+  const collectionMatch = pathname.match(/^\/api\/events\/([^/]+)\/races\/([^/]+)\/course-revisions$/)
+  const rollbackMatch = pathname.match(/^\/api\/events\/([^/]+)\/races\/([^/]+)\/course-revisions\/(\d+)\/rollback$/)
+  const match = rollbackMatch ?? collectionMatch
   if (!match) return null
-  if (request.method !== 'POST') return json({ error: 'Method not allowed' }, { status: 405, headers: { allow: 'POST' } })
+  if (rollbackMatch && request.method !== 'POST') return json({ error: 'Method not allowed' }, { status: 405, headers: { allow: 'POST' } })
+  if (collectionMatch && !['GET', 'POST'].includes(request.method)) return json({ error: 'Method not allowed' }, { status: 405, headers: { allow: 'GET, POST' } })
   assertSameOrigin(request)
   const session = await requireSession(request, env)
   const eventReference = decodeURIComponent(match[1])
@@ -44,7 +115,29 @@ export async function handleCourseRequest(request: Request, env: AppEnv): Promis
     'SELECT status, race_area_id FROM races WHERE id = ? AND regatta_id = ? LIMIT 1',
   ).bind(raceId, access.eventId).first<{ status: string; race_area_id: string }>()
   if (!race) return json({ error: 'レースが見つかりません' }, { status: 404 })
-  if (race.status === 'finalized') return json({ error: '確定済みレースは管理者修正版を使用してください' }, { status: 409 })
+  if (collectionMatch && request.method === 'GET') {
+    const rows = await env.DB.prepare(
+      `SELECT revision.id, revision.revision, revision.course_code, revision.wind_direction,
+              revision.wind_speed, revision.target_length_metres, revision.gate_config_json,
+              revision.status, revision.based_on_revision, revision.created_at,
+              user.display_name AS created_by,
+              (SELECT COUNT(*) FROM course_nodes node WHERE node.course_revision_id = revision.id) AS node_count
+       FROM course_revisions revision
+       LEFT JOIN users user ON user.id = revision.created_by
+       WHERE revision.race_id = ? ORDER BY revision.revision DESC LIMIT 100`,
+    ).bind(raceId).all()
+    return json({ revisions: rows.results })
+  }
+  if (race.status === 'finalized' && !access.isOwner) {
+    return json({ error: '確定済みレースを変更できるのは大会管理者だけです' }, { status: 403 })
+  }
+  if (race.status === 'finalized' && !hasRecentAuthentication(session)) {
+    return json({
+      code: 'RECENT_AUTHENTICATION_REQUIRED',
+      error: '確定後のコース修正前にパスキーで本人確認してください',
+    }, { status: 403 })
+  }
+  if (rollbackMatch) return rollbackCourseRevision(env, access, raceId, Number(rollbackMatch[3]))
   const body = await readJson<CourseRevisionInput>(request, 128 * 1_024)
   const courseCode = body.courseCode?.trim()
   if (!courseCode || courseCode.length > 80) return json({ error: 'コース記号を確認してください' }, { status: 400 })
@@ -75,24 +168,33 @@ export async function handleCourseRequest(request: Request, env: AppEnv): Promis
   const revision = (previous?.revision ?? 0) + 1
   const revisionId = crypto.randomUUID()
   const createdAt = new Date().toISOString()
-  const statements: D1PreparedStatement[] = [env.DB.prepare(
-    `INSERT INTO course_revisions
+  const statements: D1PreparedStatement[] = [
+    env.DB.prepare(
+      `UPDATE course_revisions SET status = 'superseded'
+       WHERE race_id = ? AND revision = ? AND status <> 'finalized'`,
+    ).bind(raceId, previous?.revision ?? 0),
+    env.DB.prepare(
+      `INSERT INTO course_revisions
      (id, race_id, revision, course_code, wind_direction, wind_speed, target_length_metres,
       gate_config_json, status, based_on_revision, created_by, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)`,
-  ).bind(
-    revisionId,
-    raceId,
-    revision,
-    courseCode,
-    body.windDirection,
-    body.windSpeed,
-    body.targetLengthMetres,
-    JSON.stringify({ lower: body.lowerGate === true, upper: body.upperGate === true, second: body.secondGate === true }),
-    previous?.revision || null,
-    access.userId,
-    createdAt,
-  )]
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)`,
+    ).bind(
+      revisionId,
+      raceId,
+      revision,
+      courseCode,
+      body.windDirection,
+      body.windSpeed,
+      body.targetLengthMetres,
+      JSON.stringify({ lower: body.lowerGate === true, upper: body.upperGate === true, second: body.secondGate === true }),
+      previous?.revision || null,
+      access.userId,
+      createdAt,
+    ),
+    env.DB.prepare(
+      'UPDATE races SET course_code = ?, updated_at = ? WHERE id = ? AND regatta_id = ?',
+    ).bind(courseCode, createdAt, raceId, access.eventId),
+  ]
   nodes.forEach((node, index) => statements.push(env.DB.prepare(
     `INSERT INTO course_nodes
      (id, course_revision_id, mark_id, node_order, label, node_type, rounding, target_lng, target_lat)

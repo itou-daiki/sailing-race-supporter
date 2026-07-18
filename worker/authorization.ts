@@ -12,6 +12,7 @@ export type OperationPermission =
   | 'message'
   | 'signal'
   | 'schedule'
+  | 'course'
   | 'assignment'
   | 'finalize'
   | 'post-finalization-revision'
@@ -52,15 +53,16 @@ const ALL_OPERATIONS = new Set<OperationPermission>([
   'message',
   'signal',
   'schedule',
+  'course',
   'assignment',
   'finalize',
   'post-finalization-revision',
 ])
 
 const ROLE_PERMISSIONS: Readonly<Record<string, ReadonlySet<OperationPermission>>> = {
-  pro: new Set(['view', 'position', 'wind', 'current', 'mark', 'leading-passage', 'finish', 'task', 'message', 'signal', 'schedule', 'finalize']),
-  ro: new Set(['view', 'position', 'wind', 'current', 'mark', 'leading-passage', 'finish', 'task', 'message', 'signal', 'schedule', 'finalize']),
-  'course-setter': new Set(['view', 'position', 'wind', 'current', 'mark', 'leading-passage', 'task', 'message']),
+  pro: new Set(['view', 'position', 'wind', 'current', 'mark', 'leading-passage', 'finish', 'task', 'message', 'signal', 'schedule', 'course', 'finalize']),
+  ro: new Set(['view', 'position', 'wind', 'current', 'mark', 'leading-passage', 'finish', 'task', 'message', 'signal', 'schedule', 'course', 'finalize']),
+  'course-setter': new Set(['view', 'position', 'wind', 'current', 'mark', 'leading-passage', 'task', 'message', 'course']),
   'signal-boat': new Set(['view', 'position', 'wind', 'current', 'leading-passage', 'finish', 'task', 'message', 'signal']),
   'mark-boat': new Set(['view', 'position', 'wind', 'current', 'mark', 'leading-passage', 'task', 'message']),
   timekeeper: new Set(['view', 'leading-passage', 'finish', 'task', 'message', 'signal']),

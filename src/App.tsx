@@ -52,8 +52,15 @@ import {
   loadSession,
   type SessionState,
 } from './authClient'
-import { createPostFinalizationRevision, EventApiError, loadEventBootstrap, saveCourseRevision } from './eventClient'
-import type { EventAccessSummary, EventResources } from './eventClient'
+import {
+  createPostFinalizationRevision,
+  EventApiError,
+  loadCourseRevisions,
+  loadEventBootstrap,
+  rollbackCourseRevision,
+  saveCourseRevision,
+} from './eventClient'
+import type { CourseRevisionSummary, EventAccessSummary, EventResources } from './eventClient'
 import { loadEventSnapshot, saveEventSnapshot } from './offlineStore'
 import { RealtimeOperationError, useEventRoom, type SequencedOperation } from './realtime'
 import { useOfficialAudioDevice } from './audioDeviceClient'
@@ -72,7 +79,7 @@ const operationLabels: Record<string, string> = {
   position: '運営ボート位置', wind: '風向風速', current: '潮流', mark: 'マーク操作',
   'leading-passage': '先頭通過', finish: 'フィニッシュ', task: '運用タスク', message: 'メッセージ',
   signal: 'レース信号', 'signal-audio': '公式音響', schedule: '予告予定', finalize: 'レース確定',
-  assignment: '担当変更',
+  course: 'コース改訂', assignment: '担当変更',
 }
 
 interface CachedAppState {
@@ -134,6 +141,15 @@ function formatClock(iso: string): string {
 
 function formatDueClock(iso: string): string {
   return new Intl.DateTimeFormat('ja-JP', {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(iso))
+}
+
+function formatCourseRevisionTime(iso: string): string {
+  return new Intl.DateTimeFormat('ja-JP', {
+    month: 'numeric',
+    day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(iso))
@@ -253,6 +269,9 @@ export default function App() {
   const [secondGate, setSecondGate] = useState(false)
   const [courseSaving, setCourseSaving] = useState(false)
   const [courseSaveError, setCourseSaveError] = useState<string>()
+  const [courseHistory, setCourseHistory] = useState<CourseRevisionSummary[]>([])
+  const [courseHistoryLoading, setCourseHistoryLoading] = useState(false)
+  const [courseRollbackWorking, setCourseRollbackWorking] = useState<number>()
   const [scheduleWarningDrafts, setScheduleWarningDrafts] = useState<Record<string, string>>(() => ({
     [DEMO_RACES[0].id]: dateTimeLocalValue(DEMO_RACES[0].warningAt),
   }))
@@ -428,6 +447,16 @@ export default function App() {
       setEventRefreshKey((current) => current + 1)
     }
 
+    if (event.type === 'course') {
+      const payload = event.payload as { courseCode?: string }
+      if (event.raceId && payload.courseCode) {
+        setRaces((current) => current.map((race) => (
+          race.id === event.raceId ? { ...race, courseCode: payload.courseCode as string } : race
+        )))
+      }
+      setEventRefreshKey((current) => current + 1)
+    }
+
     if (event.type === 'message') {
       const payload = event.payload as {
         action?: string; messageId?: string; body?: string; sender?: string; channel?: string
@@ -557,7 +586,11 @@ export default function App() {
   )
   const locked = activeRace.status === 'finalized'
   const canControlSignals = !locked && (!eventAccess || eventAccess.isOwner || ['pro', 'ro', 'signal-boat'].includes(eventAccess.role))
-  const canChangeCourse = !locked && (!eventAccess || eventAccess.isOwner || ['pro', 'ro'].includes(eventAccess.role))
+  const canChangeCourse = !locked && (!eventAccess || eventAccess.isOwner || ['pro', 'ro', 'course-setter'].includes(eventAccess.role))
+  const canViewCourseHistory = Boolean(eventAccess && (eventAccess.isOwner || ['pro', 'ro', 'course-setter'].includes(eventAccess.role)))
+  const canRollbackCourse = Boolean(eventAccess && (
+    eventAccess.isOwner || !locked && ['pro', 'ro', 'course-setter'].includes(eventAccess.role)
+  ))
   const canShareEnvironment = !locked && (!eventAccess || eventAccess.isOwner || ['pro', 'ro', 'course-setter', 'signal-boat', 'mark-boat', 'safety-boat'].includes(eventAccess.role))
   const canScheduleRace = !locked && ['planning', 'setup'].includes(activeRace.status) && Boolean(eventAccess) && (
     Boolean(eventAccess?.isOwner) || ['pro', 'ro'].includes(eventAccess?.role ?? '')
@@ -1062,7 +1095,41 @@ export default function App() {
     setUpperGate(activeRace.marks.some((mark) => mark.label.startsWith('上ゲート')))
     setSecondGate(activeRace.marks.some((mark) => mark.label.startsWith('中ゲート')))
     setCourseSaveError(undefined)
+    setCourseHistory([])
     setSettingsOpen(true)
+    if (canViewCourseHistory) {
+      setCourseHistoryLoading(true)
+      void loadCourseRevisions(eventId, activeRace.id)
+        .then(setCourseHistory)
+        .catch((reason) => setCourseSaveError(reason instanceof Error ? reason.message : 'コース版履歴を取得できません'))
+        .finally(() => setCourseHistoryLoading(false))
+    }
+  }
+
+  const restoreCourseRevision = async (source: CourseRevisionSummary) => {
+    if (!canRollbackCourse) return
+    setCourseRollbackWorking(source.revision)
+    setCourseSaveError(undefined)
+    try {
+      const restored = await rollbackCourseRevision(eventId, activeRace.id, source.revision)
+      setRaces((current) => current.map((race) => race.id === activeRace.id ? {
+        ...race,
+        courseCode: restored.courseCode,
+      } : race))
+      void sendRealtimeOperation('course', {
+        action: 'refresh',
+        revisionId: restored.revisionId,
+        revision: restored.revision,
+        sourceRevision: restored.sourceRevision,
+      }, activeRace.id)
+      setEventRefreshKey((current) => current + 1)
+      setCourseHistory(await loadCourseRevisions(eventId, activeRace.id))
+    } catch (reason) {
+      if (reason instanceof EventApiError && reason.code === 'RECENT_AUTHENTICATION_REQUIRED') setAuthOpen(true)
+      setCourseSaveError(reason instanceof Error ? reason.message : 'コース版を復元できません')
+    } finally {
+      setCourseRollbackWorking(undefined)
+    }
   }
 
   const saveCourse = async () => {
@@ -1111,7 +1178,7 @@ export default function App() {
     }
     try {
       if (eventAccess) {
-        await saveCourseRevision(eventId, activeRace.id, {
+        const saved = await saveCourseRevision(eventId, activeRace.id, {
           courseCode: courseTemplate,
           windDirection,
           windSpeed,
@@ -1129,6 +1196,11 @@ export default function App() {
             target: mark.target,
           })),
         })
+        void sendRealtimeOperation('course', {
+          action: 'refresh',
+          revisionId: saved.revisionId,
+          revision: saved.revision,
+        }, activeRace.id)
       }
       setRaces((current) => current.map((race) => race.id === activeRace.id ? {
         ...race,
@@ -1434,7 +1506,7 @@ export default function App() {
       )}
 
       {settingsOpen && (
-        <div className="drawer-backdrop" role="presentation" onMouseDown={() => setSettingsOpen(false)}>
+        <div className="drawer-backdrop drawer-backdrop--map-visible" role="presentation" onMouseDown={() => setSettingsOpen(false)}>
           <aside className="settings-sheet" aria-label="コース設定" onMouseDown={(event) => event.stopPropagation()}>
             <header><div><span className="eyebrow">{activeRace.number}</span><strong>コース・表示設定</strong></div><button type="button" onClick={() => setSettingsOpen(false)}><X size={20} /></button></header>
             <label><span>競技ヨットクラス</span><select value={selectedClass} onChange={(event) => setSelectedClass(event.target.value as SailingClass)}>{CLASS_PROFILES.map((profile) => <option key={profile.className}>{profile.className}</option>)}</select></label>
@@ -1465,6 +1537,30 @@ export default function App() {
             <label className="switch-row"><span><strong>下ゲート</strong><small>3S / 3Pを使用</small></span><input type="checkbox" checked={lowerGate} onChange={(event) => setLowerGate(event.target.checked)} /></label>
             <label className="switch-row"><span><strong>上ゲート</strong><small>1S / 1Pを使用</small></span><input type="checkbox" checked={upperGate} onChange={(event) => setUpperGate(event.target.checked)} /></label>
             {(courseTemplate === 'O2' || courseTemplate === 'I2' || courseTemplate === 'トライアングル') && <label className="switch-row"><span><strong>中ゲート</strong><small>2マークを2S / 2Pへ切替</small></span><input type="checkbox" checked={secondGate} onChange={(event) => setSecondGate(event.target.checked)} /></label>}
+            {canViewCourseHistory && <section className="course-history" aria-label="コース版履歴">
+              <div className="settings-subsection">
+                <span className="eyebrow">コース版履歴</span>
+                <small>過去版は消さず、選んだ内容を新しい版として復元</small>
+              </div>
+              {courseHistoryLoading && <small className="course-history-state">履歴を読み込み中…</small>}
+              {!courseHistoryLoading && courseHistory.length === 0 && <small className="course-history-state">保存済みの版はまだありません</small>}
+              {courseHistory.map((revision, index) => (
+                <article className="course-history-item" key={revision.id}>
+                  <div>
+                    <span>第{revision.revision}版{index === 0 && <em>現在</em>}</span>
+                    <strong>{revision.courseCode}</strong>
+                    <small>{revision.createdBy ?? '運営メンバー'}・{formatCourseRevisionTime(revision.createdAt)}・{revision.nodeCount}点</small>
+                    {revision.basedOnRevision != null && <small>第{revision.basedOnRevision}版を基に作成</small>}
+                  </div>
+                  {index > 0 && <button
+                    type="button"
+                    onClick={() => void restoreCourseRevision(revision)}
+                    disabled={!canRollbackCourse || courseRollbackWorking != null}
+                    title={locked && !eventAccess?.isOwner ? '確定後は大会管理者だけが復元できます' : undefined}
+                  >{courseRollbackWorking === revision.revision ? '復元中…' : '新しい版として復元'}</button>}
+                </article>
+              ))}
+            </section>}
             {courseSaveError && <div className="auth-error" role="alert">{courseSaveError}</div>}
             <button type="button" className="sheet-secondary" onClick={() => { setSettingsOpen(false); setEventManagerOpen(true) }}><Anchor size={17} /> 大会URL・参加者・バックアップ</button>
             {session.mode === 'authenticated' && <button type="button" className="sheet-secondary" onClick={() => { setSettingsOpen(false); setLogsOpen(true) }}><ScrollText size={17} /> 大会・レース別の運営ログ</button>}

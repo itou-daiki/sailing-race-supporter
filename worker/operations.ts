@@ -9,7 +9,7 @@ import { geodesicDistanceMetres } from '../shared/geo.js'
 
 export interface RealtimeOperation {
   id: string
-  type: 'presence' | 'position' | 'wind' | 'current' | 'mark' | 'leading-passage' | 'finish' | 'task' | 'message' | 'signal' | 'signal-audio' | 'schedule' | 'assignment' | 'finalize'
+  type: 'presence' | 'position' | 'wind' | 'current' | 'mark' | 'leading-passage' | 'finish' | 'task' | 'message' | 'signal' | 'signal-audio' | 'schedule' | 'course' | 'assignment' | 'finalize'
   raceId?: string
   payload: unknown
   clientTime?: string
@@ -69,6 +69,31 @@ async function requireRace(env: AppEnv, access: EventAccess, raceId: string | un
   ).bind(raceId, access.eventId).first<{ id: string }>()
   if (!race) throw new Response('Race not found', { status: 404 })
   return race.id
+}
+
+async function persistCourseRefresh(
+  env: AppEnv,
+  access: EventAccess,
+  operation: RealtimeOperation,
+): Promise<Record<string, unknown>> {
+  const raceId = await requireRace(env, access, operation.raceId)
+  const payload = objectPayload(operation.payload)
+  const latest = await env.DB.prepare(
+    `SELECT id, revision, course_code, created_at
+     FROM course_revisions WHERE race_id = ? ORDER BY revision DESC LIMIT 1`,
+  ).bind(raceId).first<{ id: string; revision: number; course_code: string; created_at: string }>()
+  if (!latest) throw new Response('Course revision not found', { status: 404 })
+  if (payload.revisionId != null && payload.revisionId !== latest.id) {
+    throw new Response('Course revision is no longer current', { status: 409 })
+  }
+  return {
+    action: 'refresh',
+    revisionId: latest.id,
+    revision: latest.revision,
+    courseCode: latest.course_code,
+    changedBy: access.displayName,
+    changedAt: latest.created_at,
+  }
 }
 
 async function requireMemberId(env: AppEnv, access: EventAccess): Promise<string> {
@@ -1281,6 +1306,7 @@ export async function persistRealtimeOperation(
     case 'signal': return persistSignal(env, access, operation)
     case 'signal-audio': return persistSignalAudio(env, access, operation)
     case 'schedule': return persistSchedule(env, access, operation)
+    case 'course': return persistCourseRefresh(env, access, operation)
     case 'assignment': return persistAssignment(env, access, operation)
     case 'task': return persistTask(env, access, operation)
     case 'finalize': throw new Response('Finalize uses the finalization workflow', { status: 400 })

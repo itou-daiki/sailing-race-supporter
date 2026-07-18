@@ -48,7 +48,7 @@ interface ClientAttachment {
 
 interface RoomMessage {
   id: string
-  type: 'presence' | 'position' | 'wind' | 'current' | 'mark' | 'leading-passage' | 'finish' | 'task' | 'message' | 'signal' | 'signal-audio' | 'schedule' | 'assignment' | 'finalize'
+  type: 'presence' | 'position' | 'wind' | 'current' | 'mark' | 'leading-passage' | 'finish' | 'task' | 'message' | 'signal' | 'signal-audio' | 'schedule' | 'course' | 'assignment' | 'finalize'
   raceId?: string
   memberId?: string
   payload: unknown
@@ -78,6 +78,7 @@ const ROOM_MESSAGE_TYPES = new Set<RoomMessage['type']>([
   'signal',
   'signal-audio',
   'schedule',
+  'course',
   'assignment',
   'finalize',
 ])
@@ -316,14 +317,14 @@ export class EventRoom extends DurableObject<AppEnv> {
         return
       }
       const mutatesFinalizedState = new Set<RoomMessage['type']>([
-        'wind', 'current', 'mark', 'leading-passage', 'finish', 'task', 'signal', 'schedule',
+        'wind', 'current', 'mark', 'leading-passage', 'finish', 'task', 'signal', 'schedule', 'course',
       ])
       const messageAction = parsed.type === 'message' && parsed.payload && typeof parsed.payload === 'object'
         ? String((parsed.payload as { action?: unknown }).action ?? 'send')
         : ''
       const messageReceiptOnly = parsed.type === 'message' && ['read', 'acknowledge'].includes(messageAction)
       const finalizedMutation = mutatesFinalizedState.has(parsed.type) || parsed.type === 'message' && !messageReceiptOnly
-      const ownerAppendOnlyRevision = access.isOwner && ['leading-passage', 'finish', 'message'].includes(parsed.type)
+      const ownerAppendOnlyRevision = access.isOwner && ['leading-passage', 'finish', 'message', 'course'].includes(parsed.type)
       if (race.status === 'finalized' && finalizedMutation && !ownerAppendOnlyRevision) {
         socket.send(JSON.stringify({ type: 'error', code: 'RACE_FINALIZED', id: parsed.id }))
         return

@@ -2503,7 +2503,8 @@ select:focus-visible {
   backdrop-filter: none;
 }
 
-.drawer-backdrop--map-visible > div {
+.drawer-backdrop--map-visible > div,
+.drawer-backdrop--map-visible > .settings-sheet {
   height: 100%;
 }
 
@@ -2850,6 +2851,91 @@ select:focus-visible {
   background: #fff;
   border: 1px solid var(--line);
   border-radius: 9px;
+}
+
+.course-history {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 15px;
+}
+
+.course-history .settings-subsection {
+  margin: 4px 0 0;
+}
+
+.course-history-state {
+  padding: 10px;
+  color: var(--muted);
+  background: #edf5f9;
+  border-radius: 9px;
+  font-size: 10px;
+  text-align: center;
+}
+
+.course-history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.course-history-item > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.course-history-item span {
+  color: var(--dodger-strong);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.course-history-item em {
+  margin-left: 5px;
+  padding: 2px 5px;
+  color: #fff;
+  background: var(--success);
+  border-radius: 999px;
+  font-size: 8px;
+  font-style: normal;
+}
+
+.course-history-item strong {
+  color: var(--navy);
+  font-size: 13px;
+}
+
+.course-history-item small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.course-history-item button {
+  flex: 0 0 auto;
+  max-width: 118px;
+  padding: 7px 8px;
+  color: var(--dodger-strong);
+  background: var(--sky-100);
+  border: 1px solid #b9dcf3;
+  border-radius: 8px;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.course-history-item button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .switch-row > span {
@@ -5606,6 +5692,12 @@ select:focus-visible {
   .log-drawer {
     width: 100%;
     height: 100%;
+    border-radius: 16px 16px 0 0;
+  }
+
+  .drawer-backdrop--map-visible > .settings-sheet {
+    width: 100%;
+    height: min(46dvh, 620px);
     border-radius: 16px 16px 0 0;
   }
 
