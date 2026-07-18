@@ -1,8 +1,8 @@
 import { eventAccess } from './authorization.js'
-import { appendAuditEvent } from './audit.js'
+import { appendAuditEvent, canonical } from './audit.js'
 import { json, readJson } from './http.js'
 import type { AppEnv } from './index.js'
-import { assertSameOrigin, hasRecentAuthentication, requireSession } from './security.js'
+import { assertSameOrigin, hasRecentAuthentication, requireSession, sha256Base64Url } from './security.js'
 
 interface CourseNodeInput {
   markId?: string
@@ -32,6 +32,7 @@ export async function rollbackCourseRevision(
   access: NonNullable<Awaited<ReturnType<typeof eventAccess>>>,
   raceId: string,
   sourceRevision: number,
+  finalized = false,
 ): Promise<Response> {
   const source = await env.DB.prepare(
     `SELECT id, revision, course_code, wind_direction, wind_speed, target_length_metres, gate_config_json
@@ -55,6 +56,57 @@ export async function rollbackCourseRevision(
   const revision = (previous?.revision ?? 0) + 1
   const revisionId = crypto.randomUUID()
   const createdAt = new Date().toISOString()
+  const rollbackReason = `コース第${source.revision}版を新しい第${revision}版として復元`
+  let finalization: {
+    id: string
+    correctionId: string
+    revision: number
+    stateHash: string
+    previousId: string
+    previousRevision: number
+    previousStateHash: string
+    corrections: Record<string, unknown>
+  } | undefined
+  if (finalized) {
+    const [race, previousFinalization] = await Promise.all([
+      env.DB.prepare(
+        `SELECT id, race_number, class_name, course_code, target_minutes, warning_at,
+                status, finalized_revision, finalized_at
+         FROM races WHERE id = ? AND regatta_id = ? LIMIT 1`,
+      ).bind(raceId, access.eventId).first<Record<string, unknown>>(),
+      env.DB.prepare(
+        `SELECT id, revision, state_hash FROM race_finalizations
+         WHERE race_id = ? ORDER BY revision DESC LIMIT 1`,
+      ).bind(raceId).first<{ id: string; revision: number; state_hash: string }>(),
+    ])
+    if (!race || race.status !== 'finalized' || !previousFinalization) {
+      return json({ error: '元の確定版が見つかりません' }, { status: 409 })
+    }
+    const finalizationRevision = previousFinalization.revision + 1
+    const corrections = {
+      courseCode: source.course_code,
+      courseRevisionId: revisionId,
+      courseRevision: revision,
+      sourceCourseRevision: source.revision,
+    }
+    const stateHash = await sha256Base64Url(JSON.stringify(canonical({
+      baseRace: race,
+      previousStateHash: previousFinalization.state_hash,
+      revision: finalizationRevision,
+      corrections,
+      reason: rollbackReason,
+    })))
+    finalization = {
+      id: crypto.randomUUID(),
+      correctionId: crypto.randomUUID(),
+      revision: finalizationRevision,
+      stateHash,
+      previousId: previousFinalization.id,
+      previousRevision: previousFinalization.revision,
+      previousStateHash: previousFinalization.state_hash,
+      corrections,
+    }
+  }
   const statements: D1PreparedStatement[] = [
     env.DB.prepare(
       `UPDATE course_revisions SET status = 'superseded'
@@ -81,18 +133,59 @@ export async function rollbackCourseRevision(
     crypto.randomUUID(), revisionId, node.mark_id, node.node_order, node.label,
     node.node_type, node.rounding, node.target_lng, node.target_lat,
   )))
+  if (finalization) {
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO race_finalizations
+         (id, race_id, revision, state_hash, reason, finalized_by, finalized_at, previous_finalization_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        finalization.id, raceId, finalization.revision, finalization.stateHash,
+        rollbackReason, access.userId, createdAt, finalization.previousId,
+      ),
+      env.DB.prepare(
+        `INSERT INTO post_finalization_revisions
+         (id, race_id, revision, patch_json, reason, state_hash, previous_finalization_id, created_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        finalization.correctionId, raceId, finalization.revision, JSON.stringify(finalization.corrections),
+        rollbackReason, finalization.stateHash, finalization.previousId, access.userId, createdAt,
+      ),
+      env.DB.prepare(
+        `UPDATE races SET finalized_revision = ?, finalized_at = ?, finalized_by = ?, updated_at = ?
+         WHERE id = ? AND regatta_id = ? AND status = 'finalized'`,
+      ).bind(finalization.revision, createdAt, access.userId, createdAt, raceId, access.eventId),
+    )
+  }
   await env.DB.batch(statements)
   await appendAuditEvent(env, {
     access,
     raceId,
-    action: 'course.revision.rollback',
-    entityType: 'course_revision',
-    entityId: revisionId,
-    before: { revision: previous?.revision ?? 0 },
-    after: { revision, sourceRevision: source.revision, courseCode: source.course_code, nodeCount: nodes.length },
-    reason: `コース第${source.revision}版を新しい第${revision}版として復元`,
+    action: finalization ? 'race.post-finalization-revision' : 'course.revision.rollback',
+    entityType: finalization ? 'race' : 'course_revision',
+    entityId: finalization ? raceId : revisionId,
+    before: finalization
+      ? { finalizedRevision: finalization.previousRevision, stateHash: finalization.previousStateHash, courseRevision: previous?.revision ?? 0 }
+      : { revision: previous?.revision ?? 0 },
+    after: {
+      revision,
+      sourceRevision: source.revision,
+      courseCode: source.course_code,
+      nodeCount: nodes.length,
+      finalizedRevision: finalization?.revision,
+      stateHash: finalization?.stateHash,
+    },
+    reason: rollbackReason,
   })
-  return json({ revisionId, revision, sourceRevision: source.revision, courseCode: source.course_code, createdAt })
+  return json({
+    revisionId,
+    revision,
+    sourceRevision: source.revision,
+    courseCode: source.course_code,
+    createdAt,
+    finalizedRevision: finalization?.revision,
+    stateHash: finalization?.stateHash,
+  })
 }
 
 export async function handleCourseRequest(request: Request, env: AppEnv): Promise<Response | null> {
@@ -131,13 +224,22 @@ export async function handleCourseRequest(request: Request, env: AppEnv): Promis
   if (race.status === 'finalized' && !access.isOwner) {
     return json({ error: '確定済みレースを変更できるのは大会管理者だけです' }, { status: 403 })
   }
+  if (race.status === 'finalized' && collectionMatch && request.method === 'POST') {
+    return json({ error: '確定済みレースは管理者修正版または履歴からの復元を使用してください' }, { status: 409 })
+  }
   if (race.status === 'finalized' && !hasRecentAuthentication(session)) {
     return json({
       code: 'RECENT_AUTHENTICATION_REQUIRED',
       error: '確定後のコース修正前にパスキーで本人確認してください',
     }, { status: 403 })
   }
-  if (rollbackMatch) return rollbackCourseRevision(env, access, raceId, Number(rollbackMatch[3]))
+  if (rollbackMatch) return rollbackCourseRevision(
+    env,
+    access,
+    raceId,
+    Number(rollbackMatch[3]),
+    race.status === 'finalized',
+  )
   const body = await readJson<CourseRevisionInput>(request, 128 * 1_024)
   const courseCode = body.courseCode?.trim()
   if (!courseCode || courseCode.length > 80) return json({ error: 'コース記号を確認してください' }, { status: 400 })
