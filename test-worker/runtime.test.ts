@@ -98,6 +98,13 @@ async function connectEventRoom(eventId: string, rawSessionToken: string): Promi
   return (await openEventRoom(eventId, rawSessionToken)).socket
 }
 
+function sessionTokenFrom(response: Response): string {
+  const cookie = response.headers.get('set-cookie') ?? ''
+  const match = cookie.match(/(?:^|,\s*)srs_session=([^;]+)/u)
+  if (!match) throw new Error('Expected an srs_session cookie')
+  return decodeURIComponent(match[1])
+}
+
 describe('Cloudflare Workers runtime integration', () => {
   it('serves the health endpoint through the production Worker entrypoint', async () => {
     const response = await exports.default.fetch('https://example.test/api/health')
@@ -1159,5 +1166,157 @@ describe('Cloudflare Workers runtime integration', () => {
     const object = await env.BACKUP_ARCHIVES.get(key)
     expect(object?.customMetadata?.encrypted).toBe('true')
     expect([...new Uint8Array(await object!.arrayBuffer())]).toEqual([1, 2, 3, 4])
+  })
+
+  it('rotates a member recovery card once and revokes both the invite and active sessions', async () => {
+    const now = new Date().toISOString()
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1_000).toISOString()
+    const ownerId = 'runtime-recovery-owner'
+    const ownerToken = 'runtime-recovery-owner-session'
+    const eventId = 'runtime-recovery-event'
+    const eventSlug = 'runtime-recovery'
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO users (id, display_name, created_at, updated_at)
+         VALUES (?, ?, ?, ?)`,
+      ).bind(ownerId, '復元テスト大会管理者', now, now),
+      env.DB.prepare(
+        `INSERT INTO auth_sessions
+         (token_hash, user_id, created_at, expires_at, last_seen_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).bind(await sha256Base64Url(ownerToken), ownerId, now, expiresAt, now),
+      env.DB.prepare(
+        `INSERT INTO regattas
+         (id, slug, name, owner_user_id, starts_on, ends_on, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+      ).bind(eventId, eventSlug, '参加復元テスト大会', ownerId, '2026-07-18', '2026-07-19', now, now),
+    ])
+    const mutationHeaders = {
+      'content-type': 'application/json',
+      Origin: 'https://example.test',
+      'cf-connecting-ip': '203.0.113.35',
+    }
+    const createResponse = await exports.default.fetch(
+      `https://example.test/api/events/${eventSlug}/invites`,
+      {
+        method: 'POST',
+        headers: { ...mutationHeaders, Cookie: `srs_session=${ownerToken}` },
+        body: JSON.stringify({ role: 'mark-boat', assignment: '1マーク', maxUses: 2 }),
+      },
+    )
+    const created = await createResponse.json<{ invite: { id: string }; url: string }>()
+    const inviteSecret = new URL(created.url, 'https://example.test').hash.replace(/^#token=/u, '')
+    expect(createResponse.status).toBe(201)
+    expect(inviteSecret).not.toBe('')
+
+    const firstRecoverySecret = 'member-recovery-secret-one-1234567890'
+    const exchangeResponse = await exports.default.fetch(
+      `https://example.test/api/invites/${created.invite.id}/exchange`,
+      {
+        method: 'POST',
+        headers: mutationHeaders,
+        body: JSON.stringify({
+          secret: decodeURIComponent(inviteSecret),
+          displayName: '第1マーク担当者',
+          recoverySecret: firstRecoverySecret,
+        }),
+      },
+    )
+    const joined = await exchangeResponse.json<{
+      member: { id: string; displayName: string; role: string; assignment: string }
+    }>()
+    const firstMemberToken = sessionTokenFrom(exchangeResponse)
+    expect(exchangeResponse.status).toBe(201)
+    expect(joined.member).toMatchObject({ displayName: '第1マーク担当者', role: 'mark-boat', assignment: '1マーク' })
+    expect((await exports.default.fetch(
+      `https://example.test/api/events/${eventSlug}/bootstrap`,
+      { headers: { Cookie: `srs_session=${firstMemberToken}` } },
+    )).status).toBe(200)
+
+    const nextRecoverySecret = 'member-recovery-secret-two-0987654321'
+    const recoverResponse = await exports.default.fetch(
+      `https://example.test/api/events/${eventSlug}/recover`,
+      {
+        method: 'POST',
+        headers: mutationHeaders,
+        body: JSON.stringify({
+          memberId: joined.member.id,
+          recoverySecret: firstRecoverySecret,
+          newRecoverySecret: nextRecoverySecret,
+        }),
+      },
+    )
+    const recovered = await recoverResponse.json<{
+      member: { id: string; displayName: string; role: string; assignment: string }
+    }>()
+    const recoveredMemberToken = sessionTokenFrom(recoverResponse)
+    expect(recoverResponse.status).toBe(200)
+    expect(recovered.member).toEqual(joined.member)
+    expect((await exports.default.fetch(
+      `https://example.test/api/events/${eventSlug}/bootstrap`,
+      { headers: { Cookie: `srs_session=${firstMemberToken}` } },
+    )).status).toBe(401)
+    expect((await exports.default.fetch(
+      `https://example.test/api/events/${eventSlug}/bootstrap`,
+      { headers: { Cookie: `srs_session=${recoveredMemberToken}` } },
+    )).status).toBe(200)
+
+    const replayResponse = await exports.default.fetch(
+      `https://example.test/api/events/${eventSlug}/recover`,
+      {
+        method: 'POST',
+        headers: mutationHeaders,
+        body: JSON.stringify({
+          memberId: joined.member.id,
+          recoverySecret: firstRecoverySecret,
+          newRecoverySecret: 'member-recovery-replay-secret-000000',
+        }),
+      },
+    )
+    expect(replayResponse.status).toBe(400)
+
+    const revokeResponse = await exports.default.fetch(
+      `https://example.test/api/events/${eventSlug}/invites/${created.invite.id}/revoke`,
+      {
+        method: 'POST',
+        headers: { ...mutationHeaders, Cookie: `srs_session=${ownerToken}` },
+        body: '{}',
+      },
+    )
+    expect(revokeResponse.status).toBe(200)
+    expect((await exports.default.fetch(
+      `https://example.test/api/events/${eventSlug}/bootstrap`,
+      { headers: { Cookie: `srs_session=${recoveredMemberToken}` } },
+    )).status).toBe(401)
+
+    const revokedInviteResponse = await exports.default.fetch(
+      `https://example.test/api/invites/${created.invite.id}/exchange`,
+      {
+        method: 'POST',
+        headers: mutationHeaders,
+        body: JSON.stringify({
+          secret: decodeURIComponent(inviteSecret),
+          displayName: '再参加者',
+          recoverySecret: 'member-recovery-secret-three-123456',
+        }),
+      },
+    )
+    expect(revokedInviteResponse.status).toBe(410)
+
+    const state = await env.DB.prepare(
+      `SELECT em.status,
+              SUM(CASE WHEN credential.used_at IS NULL AND credential.revoked_at IS NULL THEN 1 ELSE 0 END) AS active_credentials,
+              SUM(CASE WHEN credential.used_at IS NOT NULL THEN 1 ELSE 0 END) AS used_credentials,
+              SUM(CASE WHEN credential.revoked_at IS NOT NULL THEN 1 ELSE 0 END) AS revoked_credentials
+       FROM event_members em
+       JOIN member_recovery_credentials credential ON credential.event_member_id = em.id
+       WHERE em.id = ? GROUP BY em.status`,
+    ).bind(joined.member.id).first<{
+      status: string
+      active_credentials: number
+      used_credentials: number
+      revoked_credentials: number
+    }>()
+    expect(state).toEqual({ status: 'revoked', active_credentials: 0, used_credentials: 1, revoked_credentials: 1 })
   })
 })

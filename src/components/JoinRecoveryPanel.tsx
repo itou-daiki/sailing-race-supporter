@@ -6,6 +6,7 @@ import {
   KeyRound,
   LoaderCircle,
   RotateCcw,
+  ScanQrCode,
   ShieldCheck,
   X,
 } from 'lucide-react'
@@ -21,6 +22,7 @@ import {
   type InviteResult,
 } from '../inviteClient'
 import { saveMemberProfile } from '../offlineStore'
+import { createMemberRecoveryQrPayload, decodeMemberRecoveryQrImage } from '../memberRecoveryCard'
 
 type JoinMode = { kind: 'join'; inviteId: string; secret: string }
 type RecoverMode = { kind: 'recover' }
@@ -53,13 +55,10 @@ function RecoveryCard({
   const [qrUrl, setQrUrl] = useState<string>()
   const [confirmed, setConfirmed] = useState(false)
   const [copied, setCopied] = useState(false)
-  const payload = useMemo(() => JSON.stringify({
-    format: 'srs-member-recovery',
-    version: 1,
-    eventSlug: result.event.slug,
-    memberId: result.member.id,
-    secret: recoverySecret,
-  }), [recoverySecret, result.event.slug, result.member.id])
+  const payload = useMemo(
+    () => createMemberRecoveryQrPayload(result.event.slug, result.member.id, recoverySecret),
+    [recoverySecret, result.event.slug, result.member.id],
+  )
 
   useEffect(() => {
     let active = true
@@ -129,6 +128,8 @@ export function JoinRecoveryPanel({ eventSlug, mode, onSessionChange, onComplete
   const [replacementSecret, setReplacementSecret] = useState<string>()
   const [result, setResult] = useState<InviteResult>()
   const [working, setWorking] = useState(mode.kind === 'join')
+  const [qrWorking, setQrWorking] = useState(false)
+  const [qrStatus, setQrStatus] = useState<string>()
   const [error, setError] = useState<string>()
 
   useEffect(() => {
@@ -169,6 +170,28 @@ export function JoinRecoveryPanel({ eventSlug, mode, onSessionChange, onComplete
       setError(reason instanceof Error ? reason.message : '参加情報を復元できません')
     } finally {
       setWorking(false)
+    }
+  }
+
+  const readRecoveryQr = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    setQrWorking(true)
+    setQrStatus(undefined)
+    setError(undefined)
+    try {
+      const payload = await decodeMemberRecoveryQrImage(file)
+      if (payload.eventSlug !== eventSlug) {
+        throw new Error(`このQRは別の大会（${payload.eventSlug}）の復元カードです`)
+      }
+      setMemberId(payload.memberId)
+      setRecoveryCode(payload.secret)
+      setQrStatus('QRを読み取りました。大会名と担当を確認して復元してください。')
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '参加復元QRを読み取れません')
+    } finally {
+      setQrWorking(false)
     }
   }
 
@@ -218,6 +241,13 @@ export function JoinRecoveryPanel({ eventSlug, mode, onSessionChange, onComplete
             <span className="eyebrow">端末喪失・機種変更</span>
             <h1>参加情報を復元</h1>
             <p className="join-intro">保存した参加復元カードのメンバーIDと手入力コードを入力してください。成功後、旧セッションと旧コードは失効します。</p>
+            <label className={`recovery-qr-import ${qrWorking ? 'is-working' : ''}`}>
+              <input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => void readRecoveryQr(event)} disabled={qrWorking || working} />
+              {qrWorking ? <LoaderCircle className="is-spinning" size={22} /> : <ScanQrCode size={22} />}
+              <span><strong>{qrWorking ? 'QR画像を解析中…' : '復元カードのQR画像を読み込む'}</strong><small>スクリーンショットは端末内だけで処理し、サーバーへ送信しません</small></span>
+            </label>
+            {qrStatus && <div className="recovery-qr-status" role="status"><CheckCircle2 size={17} />{qrStatus}</div>}
+            <div className="recovery-or"><span>または手入力</span></div>
             <form onSubmit={(event) => void submitRecovery(event)}>
               <label><span>メンバーID</span><input value={memberId} onChange={(event) => setMemberId(event.target.value)} autoCapitalize="none" autoCorrect="off" required /></label>
               <label><span>手入力コード</span><input value={recoveryCode} onChange={(event) => setRecoveryCode(event.target.value)} autoCapitalize="none" autoCorrect="off" required /></label>

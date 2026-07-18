@@ -224,6 +224,11 @@ async function revokeInvite(request: Request, env: AppEnv, eventReference: strin
       `DELETE FROM event_member_scopes
        WHERE event_member_id IN (SELECT id FROM event_members WHERE invite_id = ?)`,
     ).bind(inviteId),
+    env.DB.prepare(
+      `UPDATE member_recovery_credentials SET revoked_at = ?
+       WHERE event_member_id IN (SELECT id FROM event_members WHERE invite_id = ?)
+         AND revoked_at IS NULL AND used_at IS NULL`,
+    ).bind(now, inviteId),
   ])
   await env.EVENT_ROOMS.getByName(access.eventId).disconnectAccess(
     affectedMembers.map((member) => member.id),
@@ -234,7 +239,7 @@ async function revokeInvite(request: Request, env: AppEnv, eventReference: strin
     action: 'invite.revoke',
     entityType: 'invite',
     entityId: inviteId,
-    after: { revokedAt: now, sessionsRevoked: true },
+    after: { revokedAt: now, sessionsRevoked: true, recoveryCredentialsRevoked: true },
   })
   return json({ revoked: true, revokedAt: now })
 }
@@ -358,11 +363,20 @@ async function recoverMember(request: Request, env: AppEnv, eventReference: stri
   ).bind(eventReference, eventReference).first<{ id: string }>()
   if (!event) return json({ error: '大会が見つかりません' }, { status: 404 })
   const since = new Date(Date.now() - 15 * 60_000).toISOString()
+  const networkHash = await sha256Base64Url(request.headers.get('cf-connecting-ip') ?? 'local')
   const failures = await env.DB.prepare(
-    `SELECT COUNT(*) AS count FROM recovery_attempts
-     WHERE regatta_id = ? AND event_member_id = ? AND success = 0 AND attempted_at >= ?`,
-  ).bind(event.id, memberId, since).first<{ count: number }>()
-  if ((failures?.count ?? 0) >= 5) return json({ error: '試行回数が多すぎます。15分後に再試行してください' }, { status: 429 })
+    `SELECT
+       SUM(CASE WHEN event_member_id = ? AND success = 0 THEN 1 ELSE 0 END) AS member_failures,
+       SUM(CASE WHEN network_hash = ? AND success = 0 THEN 1 ELSE 0 END) AS network_failures
+     FROM recovery_attempts
+     WHERE regatta_id = ? AND attempted_at >= ?`,
+  ).bind(memberId, networkHash, event.id, since).first<{
+    member_failures: number | null
+    network_failures: number | null
+  }>()
+  if ((failures?.member_failures ?? 0) >= 5 || (failures?.network_failures ?? 0) >= 20) {
+    return json({ error: '試行回数が多すぎます。15分後に再試行してください' }, { status: 429 })
+  }
 
   const secretHash = await sha256Base64Url(recoverySecret)
   const credential = await env.DB.prepare(
@@ -376,7 +390,6 @@ async function recoverMember(request: Request, env: AppEnv, eventReference: stri
      WHERE rc.event_member_id = ? AND em.regatta_id = ? AND rc.secret_hash = ? LIMIT 1`,
   ).bind(memberId, event.id, secretHash).first<RecoveryRow>()
   const attemptedAt = new Date().toISOString()
-  const networkHash = await sha256Base64Url(request.headers.get('cf-connecting-ip') ?? 'local')
   if (!credential || credential.member_status !== 'active' || credential.used_at || credential.revoked_at || Date.parse(credential.expires_at) <= Date.now()) {
     await env.DB.prepare(
       `INSERT INTO recovery_attempts (id, regatta_id, event_member_id, attempted_at, success, network_hash)
@@ -390,23 +403,37 @@ async function recoverMember(request: Request, env: AppEnv, eventReference: stri
 
   const replacementId = crypto.randomUUID()
   const newHash = await sha256Base64Url(newRecoverySecret)
-  await env.DB.batch([
+  const rotation = await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO member_recovery_credentials
        (id, event_member_id, secret_hash, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?)`,
-    ).bind(replacementId, credential.event_member_id, newHash, attemptedAt, credential.expires_at),
+       SELECT ?, event_member_id, ?, ?, expires_at
+       FROM member_recovery_credentials
+       WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?`,
+    ).bind(replacementId, newHash, attemptedAt, credential.credential_id, attemptedAt),
     env.DB.prepare(
-      `UPDATE member_recovery_credentials SET used_at = ?, replaced_by_id = ? WHERE id = ?`,
-    ).bind(attemptedAt, replacementId, credential.credential_id),
+      `UPDATE member_recovery_credentials SET used_at = ?, replaced_by_id = ?
+       WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL
+         AND EXISTS (SELECT 1 FROM member_recovery_credentials WHERE id = ?)`,
+    ).bind(attemptedAt, replacementId, credential.credential_id, replacementId),
     env.DB.prepare(
-      'UPDATE auth_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL',
-    ).bind(attemptedAt, credential.user_id),
+      `UPDATE auth_sessions SET revoked_at = ?
+       WHERE user_id = ? AND revoked_at IS NULL
+         AND EXISTS (SELECT 1 FROM member_recovery_credentials WHERE id = ?)`,
+    ).bind(attemptedAt, credential.user_id, replacementId),
     env.DB.prepare(
       `INSERT INTO recovery_attempts (id, regatta_id, event_member_id, attempted_at, success, network_hash)
-       VALUES (?, ?, ?, ?, 1, ?)`,
-    ).bind(crypto.randomUUID(), event.id, memberId, attemptedAt, networkHash),
+       SELECT ?, ?, ?, ?, 1, ?
+       WHERE EXISTS (SELECT 1 FROM member_recovery_credentials WHERE id = ?)`,
+    ).bind(crypto.randomUUID(), event.id, memberId, attemptedAt, networkHash, replacementId),
   ])
+  if (!rotation[0].meta.changes) {
+    await env.DB.prepare(
+      `INSERT INTO recovery_attempts (id, regatta_id, event_member_id, attempted_at, success, network_hash)
+       VALUES (?, ?, ?, ?, 0, ?)`,
+    ).bind(crypto.randomUUID(), event.id, memberId, attemptedAt, networkHash).run()
+    return json({ error: 'この復元コードはすでに使用されています' }, { status: 409 })
+  }
   await env.EVENT_ROOMS.getByName(event.id).disconnectAccess(
     [memberId],
     [credential.user_id],
