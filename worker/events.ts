@@ -206,6 +206,8 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
     ['mark-1p', '上ゲート 1P', 'gate'],
     ['mark-1a', 'オフセット 1A', 'offset'],
     ['mark-2', '2マーク', 'rounding'],
+    ['mark-2s', '中ゲート 2S', 'gate'],
+    ['mark-2p', '中ゲート 2P', 'gate'],
     ['mark-3s', '下ゲート 3S', 'gate'],
     ['mark-3p', '下ゲート 3P', 'gate'],
     ['mark-3', '3マーク', 'rounding'],

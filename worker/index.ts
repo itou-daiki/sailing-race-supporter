@@ -566,7 +566,7 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
     if (!regatta) return json({ error: 'Event not found' }, { status: 404 })
 
     const races = await env.DB.prepare(
-      'SELECT id, race_number, class_name, course_code, status, warning_at, target_minutes FROM races WHERE regatta_id = ? ORDER BY race_order',
+      'SELECT id, race_area_id, race_number, class_name, course_code, status, warning_at, target_minutes FROM races WHERE regatta_id = ? ORDER BY race_order',
     ).bind(regatta.id).all()
 
     const signalEvents = await env.DB.prepare(
@@ -605,7 +605,7 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
 
     const markEvents = await env.DB.prepare(
       `SELECT me.race_id, me.mark_id, me.event_type, me.lng, me.lat,
-              me.accuracy_metres, me.client_time, me.server_time, me.sequence
+              me.accuracy_metres, me.committee_boat_id, me.client_time, me.server_time, me.sequence
        FROM mark_events me
        JOIN races race ON race.id = me.race_id
        WHERE race.regatta_id = ?
@@ -716,7 +716,7 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
     ).bind(regatta.id).first<{ count: number }>()
 
     const availableMarks = await env.DB.prepare(
-      'SELECT id, label, mark_type FROM marks WHERE regatta_id = ? ORDER BY label',
+      'SELECT id, label, mark_type, race_area_id FROM marks WHERE regatta_id = ? ORDER BY label',
     ).bind(regatta.id).all()
 
     const availableMembers = await env.DB.prepare(

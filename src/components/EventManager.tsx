@@ -123,6 +123,7 @@ export function EventManager({
   const [center, setCenter] = useState<{ longitude: number; latitude: number }>()
   const [invites, setInvites] = useState<InviteRecord[]>([])
   const [inviteRole, setInviteRole] = useState('mark-boat')
+  const [inviteAreaId, setInviteAreaId] = useState('')
   const [inviteAssignment, setInviteAssignment] = useState('1マーク')
   const [inviteBoatId, setInviteBoatId] = useState('')
   const [inviteMarkId, setInviteMarkId] = useState('')
@@ -272,6 +273,7 @@ export function EventManager({
       const created = await createInvite(currentEventSlug, {
         role: inviteRole,
         assignment: inviteAssignment.trim(),
+        raceAreaId: inviteAreaId || undefined,
         committeeBoatId: inviteBoatId || undefined,
         markId: inviteMarkId || undefined,
         maxUses: inviteMaxUses,
@@ -574,6 +576,7 @@ export function EventManager({
                   <div className="event-form-grid">
                     <label className="event-field"><span>役割</span><select value={inviteRole} onChange={(event) => setInviteRole(event.target.value)}><option value="mark-boat">マークボート</option><option value="signal-boat">シグナルボート</option><option value="course-setter">コースセッター</option><option value="safety-boat">安全ボート</option><option value="jury">ジュリー</option><option value="protest">プロテスト</option><option value="pro">PRO</option><option value="ro">RO</option><option value="viewer">閲覧者</option></select></label>
                     <label className="event-field"><span>表示する担当</span><input value={inviteAssignment} onChange={(event) => setInviteAssignment(event.target.value)} maxLength={100} required /></label>
+                    <label className="event-field"><span>担当レースエリア</span><select value={inviteAreaId} onChange={(event) => setInviteAreaId(event.target.value)}><option value="">大会全体</option>{resources.areas.map((area) => <option value={area.id} key={area.id}>{area.name}</option>)}</select></label>
                     <label className="event-field"><span>担当運営ボート</span><select value={inviteBoatId} onChange={(event) => {
                       setInviteBoatId(event.target.value)
                       const boat = resources.boats.find((item) => item.id === event.target.value)

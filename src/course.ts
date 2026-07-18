@@ -94,6 +94,7 @@ export interface CoursePlanInput {
   courseCode: CourseTemplate
   lowerGate: boolean
   upperGate: boolean
+  secondGate?: boolean
   gateWidthMetres?: number
   startLineLengthMetres?: number
 }
@@ -146,15 +147,25 @@ export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
     const reachAngle = input.courseCode === 'O2' ? 120 : -120
     const offset = destinationPoint(upwind, Math.min(200, leg * 0.18), wind + 90)
     nodes.push({ key: 'mark-1a', label: 'オフセット 1A', nodeType: 'offset', target: offset })
-    nodes.push({
-      key: 'mark-2',
-      label: '2マーク',
-      nodeType: 'single',
-      target: destinationPoint(offset, leg * 0.67, wind + reachAngle),
-    })
+    const mark2 = destinationPoint(offset, leg * 0.67, wind + reachAngle)
+    if (input.secondGate) {
+      nodes.push(
+        { key: 'mark-2s', label: '中ゲート 2S', nodeType: 'gate', target: destinationPoint(mark2, gateWidth / 2, wind - 90) },
+        { key: 'mark-2p', label: '中ゲート 2P', nodeType: 'gate', target: destinationPoint(mark2, gateWidth / 2, wind + 90) },
+      )
+    } else {
+      nodes.push({ key: 'mark-2', label: '2マーク', nodeType: 'single', target: mark2 })
+    }
   } else if (input.courseCode === 'トライアングル') {
     const mark2 = destinationPoint(upwind, leg * 0.86, wind + 120)
-    nodes.push({ key: 'mark-2', label: '2マーク', nodeType: 'single', target: mark2 })
+    if (input.secondGate) {
+      nodes.push(
+        { key: 'mark-2s', label: '中ゲート 2S', nodeType: 'gate', target: destinationPoint(mark2, gateWidth / 2, wind - 90) },
+        { key: 'mark-2p', label: '中ゲート 2P', nodeType: 'gate', target: destinationPoint(mark2, gateWidth / 2, wind + 90) },
+      )
+    } else {
+      nodes.push({ key: 'mark-2', label: '2マーク', nodeType: 'single', target: mark2 })
+    }
     lowerRoundingCenter = destinationPoint(mark2, leg * 0.86, wind + 240)
   }
 

@@ -19,6 +19,7 @@ export interface InviteRecord {
   id: string
   role: string
   assignment: string
+  race_area_id: string | null
   committee_boat_id: string | null
   mark_id: string | null
   max_uses: number | null
@@ -31,6 +32,7 @@ export interface InviteRecord {
 export interface CreateInviteInput {
   role: string
   assignment: string
+  raceAreaId?: string
   committeeBoatId?: string
   markId?: string
   maxUses?: number | null
@@ -119,6 +121,7 @@ export async function createInvite(
       id: created.invite.id,
       role: created.invite.role,
       assignment: created.invite.assignment,
+      race_area_id: input.raceAreaId ?? null,
       committee_boat_id: input.committeeBoatId ?? null,
       mark_id: input.markId ?? null,
       max_uses: created.invite.maxUses,

@@ -51,6 +51,8 @@ export interface CurrentObservation {
 
 export interface RaceDefinition {
   id: string
+  raceAreaId?: string
+  raceAreaName?: string
   number: string
   className: SailingClass
   courseCode: string
@@ -147,7 +149,7 @@ export interface OperationalMessage {
   acknowledgement?: 'pending' | 'acknowledged' | 'done'
   senderMemberId?: string
   target?: {
-    type: 'event' | 'race' | 'boat' | 'mark' | 'role' | 'member'
+    type: 'event' | 'area' | 'race' | 'boat' | 'mark' | 'role' | 'member'
     id?: string
     label: string
   }

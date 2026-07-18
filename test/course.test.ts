@@ -56,4 +56,19 @@ describe('course calculations', () => {
     expect(plan.some((node) => node.key === 'mark-2')).toBe(false)
     expect(plan.some((node) => node.key === 'mark-3')).toBe(true)
   })
+
+  it('can switch the second rounding point between a single mark and a gate', () => {
+    const plan = generateCoursePlan({
+      center: [139.46, 35.28],
+      windDirection: 15,
+      totalLengthMetres: 5_000,
+      courseCode: 'トライアングル',
+      lowerGate: false,
+      upperGate: false,
+      secondGate: true,
+    })
+    expect(plan.some((node) => node.key === 'mark-2')).toBe(false)
+    expect(plan.filter((node) => node.key === 'mark-2s' || node.key === 'mark-2p')).toHaveLength(2)
+    expect(plan.filter((node) => node.nodeType === 'gate')).toHaveLength(2)
+  })
 })

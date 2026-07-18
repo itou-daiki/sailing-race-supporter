@@ -19,6 +19,7 @@ interface CourseRevisionInput {
   targetLengthMetres?: number
   lowerGate?: boolean
   upperGate?: boolean
+  secondGate?: boolean
   nodes?: CourseNodeInput[]
 }
 
@@ -40,8 +41,8 @@ export async function handleCourseRequest(request: Request, env: AppEnv): Promis
     return json({ error: 'コース案を作成する権限がありません' }, { status: 403 })
   }
   const race = await env.DB.prepare(
-    'SELECT status FROM races WHERE id = ? AND regatta_id = ? LIMIT 1',
-  ).bind(raceId, access.eventId).first<{ status: string }>()
+    'SELECT status, race_area_id FROM races WHERE id = ? AND regatta_id = ? LIMIT 1',
+  ).bind(raceId, access.eventId).first<{ status: string; race_area_id: string }>()
   if (!race) return json({ error: 'レースが見つかりません' }, { status: 404 })
   if (race.status === 'finalized') return json({ error: '確定済みレースは管理者修正版を使用してください' }, { status: 409 })
   const body = await readJson<CourseRevisionInput>(request, 128 * 1_024)
@@ -54,8 +55,8 @@ export async function handleCourseRequest(request: Request, env: AppEnv): Promis
     return json({ error: 'コース点は3〜30個で指定してください' }, { status: 400 })
   }
   const availableMarks = new Set((await env.DB.prepare(
-    'SELECT id FROM marks WHERE regatta_id = ?',
-  ).bind(access.eventId).all<{ id: string }>()).results.map((mark) => mark.id))
+    'SELECT id FROM marks WHERE regatta_id = ? AND race_area_id = ?',
+  ).bind(access.eventId, race.race_area_id).all<{ id: string }>()).results.map((mark) => mark.id))
   const nodes: Array<{
     markId: string; label: string; nodeType: string; rounding: string | null; target: [number, number]
   }> = []
@@ -87,7 +88,7 @@ export async function handleCourseRequest(request: Request, env: AppEnv): Promis
     body.windDirection,
     body.windSpeed,
     body.targetLengthMetres,
-    JSON.stringify({ lower: body.lowerGate === true, upper: body.upperGate === true }),
+    JSON.stringify({ lower: body.lowerGate === true, upper: body.upperGate === true, second: body.secondGate === true }),
     previous?.revision || null,
     access.userId,
     createdAt,
@@ -107,7 +108,7 @@ export async function handleCourseRequest(request: Request, env: AppEnv): Promis
     action: 'course.revision.create',
     entityType: 'course_revision',
     entityId: revisionId,
-    after: { revision, courseCode, windDirection: body.windDirection, windSpeed: body.windSpeed, targetLengthMetres: body.targetLengthMetres, lowerGate: body.lowerGate, upperGate: body.upperGate, nodes },
+    after: { revision, courseCode, windDirection: body.windDirection, windSpeed: body.windSpeed, targetLengthMetres: body.targetLengthMetres, lowerGate: body.lowerGate, upperGate: body.upperGate, secondGate: body.secondGate, nodes },
   })
   return json({ revisionId, revision, createdAt, nodes })
 }

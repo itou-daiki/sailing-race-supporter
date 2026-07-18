@@ -185,6 +185,7 @@ function messageTargetLabel(value: string, raceNumber: string, resources: EventR
   const separator = value.indexOf(':')
   const type = value.slice(0, separator)
   const id = value.slice(separator + 1)
+  if (type === 'area') return resources.areas.find((area) => area.id === id)?.name ?? 'レースエリア'
   if (type === 'boat') return resources.boats.find((boat) => boat.id === id)?.assignment ?? '運営ボート'
   if (type === 'mark') return resources.marks.find((mark) => mark.id === id)?.label ?? 'マーク'
   if (type === 'role') return `${operationRoleLabel(id)}担当`
@@ -219,7 +220,7 @@ export default function App() {
   const [recoveryOpen, setRecoveryOpen] = useState(false)
   const [session, setSession] = useState<SessionState>({ mode: 'checking' })
   const [eventAccess, setEventAccess] = useState<EventAccessSummary>()
-  const [eventResources, setEventResources] = useState<EventResources>({ boats: [], marks: [], members: [] })
+  const [eventResources, setEventResources] = useState<EventResources>({ areas: [], boats: [], marks: [], members: [] })
   const [confirmFinalize, setConfirmFinalize] = useState(false)
   const [finalizeConfirmation, setFinalizeConfirmation] = useState('')
   const [finalizeWorking, setFinalizeWorking] = useState(false)
@@ -247,6 +248,7 @@ export default function App() {
   const [courseTemplate, setCourseTemplate] = useState<CourseTemplate>('O2')
   const [lowerGate, setLowerGate] = useState(true)
   const [upperGate, setUpperGate] = useState(false)
+  const [secondGate, setSecondGate] = useState(false)
   const [courseSaving, setCourseSaving] = useState(false)
   const [courseSaveError, setCourseSaveError] = useState<string>()
   const [scheduleWarningDrafts, setScheduleWarningDrafts] = useState<Record<string, string>>(() => ({
@@ -1035,6 +1037,7 @@ export default function App() {
     setCourseTemplate(supported)
     setLowerGate(activeRace.marks.some((mark) => mark.label.startsWith('下ゲート')) || activeRace.courseCode.includes('ゲート'))
     setUpperGate(activeRace.marks.some((mark) => mark.label.startsWith('上ゲート')))
+    setSecondGate(activeRace.marks.some((mark) => mark.label.startsWith('中ゲート')))
     setCourseSaveError(undefined)
     setSettingsOpen(true)
   }
@@ -1055,18 +1058,21 @@ export default function App() {
       courseCode: courseTemplate,
       lowerGate,
       upperGate,
+      secondGate,
     })
     const allPhysicalMarks = new Map<string, { id: string; label: string }>()
     marks.forEach((mark) => allPhysicalMarks.set(mark.label, mark))
-    eventResources.marks.forEach((mark) => allPhysicalMarks.set(mark.label, mark))
+    eventResources.marks
+      .filter((mark) => !activeRace.raceAreaId || !mark.raceAreaId || mark.raceAreaId === activeRace.raceAreaId)
+      .forEach((mark) => allPhysicalMarks.set(mark.label, mark))
     const plannedMarks = plan.flatMap((node) => {
-      const physical = allPhysicalMarks.get(node.label)
+      const physical = allPhysicalMarks.get(node.label) ?? (!eventAccess ? { id: node.key, label: node.label } : undefined)
       if (!physical) return []
       const existing = marks.find((mark) => mark.id === physical.id)
       return [{
         id: physical.id,
         label: node.label,
-        shortLabel: node.label === 'スタート・ピン' ? 'PIN' : node.label === 'シグナルボート' ? 'RC' : node.label.replace('オフセット ', '').replace('下ゲート ', '').replace('上ゲート ', '').replace('マーク', '').trim(),
+        shortLabel: node.label === 'スタート・ピン' ? 'PIN' : node.label === 'シグナルボート' ? 'RC' : node.label.replace('オフセット ', '').replace('下ゲート ', '').replace('中ゲート ', '').replace('上ゲート ', '').replace('マーク', '').trim(),
         target: node.target,
         actual: existing?.actual,
         status: existing?.status ?? 'planned' as const,
@@ -1089,6 +1095,7 @@ export default function App() {
           targetLengthMetres: recommendation.kilometres * 1_000,
           lowerGate,
           upperGate,
+          secondGate,
           nodes: plannedMarks.map((mark) => ({
             markId: mark.id,
             label: mark.label,
@@ -1347,6 +1354,9 @@ export default function App() {
               <select value={messageTarget} onChange={(event) => setMessageTarget(event.target.value)}>
                 <option value="event">大会全体</option>
                 <option value="race">{activeRace.number}・全運営</option>
+                {eventResources.areas.length > 0 && <optgroup label="レースエリア">
+                  {eventResources.areas.map((area) => <option key={area.id} value={`area:${area.id}`}>{area.name}・全運営</option>)}
+                </optgroup>}
                 {eventResources.boats.length > 0 && <optgroup label="運営ボート">
                   {eventResources.boats.map((boat) => <option key={boat.id} value={`boat:${boat.id}`}>{boat.assignment}</option>)}
                 </optgroup>}
@@ -1431,6 +1441,7 @@ export default function App() {
             <label><span>準備信号</span><select value={preparatoryFlag} onChange={(event) => setPreparatoryFlag(event.target.value)}><option>P旗</option><option>I旗</option><option>Z旗</option><option>Z旗 + I旗</option><option>U旗</option><option>黒旗</option></select></label>
             <label className="switch-row"><span><strong>下ゲート</strong><small>3S / 3Pを使用</small></span><input type="checkbox" checked={lowerGate} onChange={(event) => setLowerGate(event.target.checked)} /></label>
             <label className="switch-row"><span><strong>上ゲート</strong><small>1S / 1Pを使用</small></span><input type="checkbox" checked={upperGate} onChange={(event) => setUpperGate(event.target.checked)} /></label>
+            {(courseTemplate === 'O2' || courseTemplate === 'I2' || courseTemplate === 'トライアングル') && <label className="switch-row"><span><strong>中ゲート</strong><small>2マークを2S / 2Pへ切替</small></span><input type="checkbox" checked={secondGate} onChange={(event) => setSecondGate(event.target.checked)} /></label>}
             {courseSaveError && <div className="auth-error" role="alert">{courseSaveError}</div>}
             <button type="button" className="sheet-secondary" onClick={() => { setSettingsOpen(false); setEventManagerOpen(true) }}><Anchor size={17} /> 大会URL・参加者・バックアップ</button>
             {session.mode === 'authenticated' && <button type="button" className="sheet-secondary" onClick={() => { setSettingsOpen(false); setLogsOpen(true) }}><ScrollText size={17} /> 大会・レース別の運営ログ</button>}

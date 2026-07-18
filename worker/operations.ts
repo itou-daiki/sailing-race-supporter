@@ -547,7 +547,7 @@ async function persistFinish(env: AppEnv, access: EventAccess, operation: Realti
   }
 }
 
-type MessageTargetType = 'event' | 'race' | 'boat' | 'mark' | 'role' | 'member'
+type MessageTargetType = 'event' | 'area' | 'race' | 'boat' | 'mark' | 'role' | 'member'
 
 interface ResolvedMessageTarget {
   type: MessageTargetType
@@ -593,7 +593,7 @@ async function resolveMessageTarget(
   payload: Record<string, unknown>,
   senderMemberId: string,
 ): Promise<ResolvedMessageTarget> {
-  const type = ['event', 'race', 'boat', 'mark', 'role', 'member'].includes(String(payload.targetType))
+  const type = ['event', 'area', 'race', 'boat', 'mark', 'role', 'member'].includes(String(payload.targetType))
     ? String(payload.targetType) as MessageTargetType
     : operation.raceId ? 'race' : 'event'
   const requestedId = typeof payload.targetId === 'string' && payload.targetId.trim()
@@ -609,6 +609,39 @@ async function resolveMessageTarget(
       `SELECT id FROM event_members
        WHERE regatta_id = ? AND status = 'active' AND id <> ? ORDER BY id`,
     ).bind(access.eventId, senderMemberId).all<{ id: string }>()).results
+  } else if (type === 'area') {
+    if (!id) throw new Response('Race area message target required', { status: 400 })
+    const area = await env.DB.prepare(
+      'SELECT name FROM race_areas WHERE id = ? AND regatta_id = ? LIMIT 1',
+    ).bind(id, access.eventId).first<{ name: string }>()
+    if (!area) throw new Response('Race area not found', { status: 404 })
+    label = `${area.name}・全運営`
+    channelKey = `area:${id}`
+    rows = (await env.DB.prepare(
+      `SELECT DISTINCT member.id
+       FROM event_members member
+       WHERE member.regatta_id = ? AND member.status = 'active' AND member.id <> ?
+         AND (
+           member.role IN ('owner', 'pro', 'ro')
+           OR (SELECT COUNT(*) FROM race_areas WHERE regatta_id = ?) = 1
+           OR EXISTS (
+             SELECT 1 FROM event_member_scopes scope
+             WHERE scope.event_member_id = member.id AND scope.race_area_id = ?
+           )
+           OR EXISTS (
+             SELECT 1 FROM event_member_scopes scope
+             JOIN marks mark ON mark.id = scope.mark_id
+             WHERE scope.event_member_id = member.id AND mark.race_area_id = ?
+           )
+           OR EXISTS (
+             SELECT 1 FROM event_member_scopes scope
+             JOIN boat_assignments assignment ON assignment.committee_boat_id = scope.committee_boat_id
+             JOIN races race ON race.id = assignment.race_id
+             WHERE scope.event_member_id = member.id AND race.race_area_id = ?
+           )
+         )
+       ORDER BY member.id`,
+    ).bind(access.eventId, senderMemberId, access.eventId, id, id, id).all<{ id: string }>()).results
   } else if (type === 'race') {
     id = requestedId ?? operation.raceId ?? null
     if (!id) throw new Response('Race message target required', { status: 400 })

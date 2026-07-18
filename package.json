@@ -10,7 +10,7 @@
     "dev": "vite",
     "build": "npm run build:pages",
     "build:pages": "tsc -b && vite build --config vite.pages.config.ts && node scripts/prepare-pages.mjs",
-    "build:cloudflare": "tsc -b && vite build",
+    "build:cloudflare": "tsc -b && vite build && node scripts/remove-local-secret-artifacts.mjs",
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",

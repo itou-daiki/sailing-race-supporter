@@ -128,6 +128,12 @@ async function createInvite(request: Request, env: AppEnv, eventReference: strin
     ).bind(body.committeeBoatId, access.eventId).first()
     if (!boat) return json({ error: '運営ボートが大会に存在しません' }, { status: 400 })
   }
+  if (body.raceAreaId) {
+    const area = await env.DB.prepare(
+      'SELECT id FROM race_areas WHERE id = ? AND regatta_id = ? LIMIT 1',
+    ).bind(body.raceAreaId, access.eventId).first()
+    if (!area) return json({ error: 'レースエリアが大会に存在しません' }, { status: 400 })
+  }
   if (body.markId) {
     const mark = await env.DB.prepare(
       'SELECT id FROM marks WHERE id = ? AND regatta_id = ? LIMIT 1',

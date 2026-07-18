@@ -51,8 +51,9 @@ export interface EventBootstrap {
 }
 
 export interface EventResources {
+  areas: Array<{ id: string; name: string }>
   boats: Array<{ id: string; name: string; assignment: string; role: string }>
-  marks: Array<{ id: string; label: string }>
+  marks: Array<{ id: string; label: string; raceAreaId?: string }>
   members: Array<{ id: string; displayName: string; role: string; assignment: string }>
 }
 
@@ -126,7 +127,7 @@ interface BootstrapResponse {
   access: EventAccessSummary
   regatta: { id: string; slug: string; name: string; starts_on: string; ends_on: string; status: string }
   races: Array<{
-    id: string; race_number: string; class_name: SailingClass; course_code: string
+    id: string; race_area_id: string; race_number: string; class_name: SailingClass; course_code: string
     status: RaceDefinition['status']; warning_at: string; target_minutes: number
   }>
   signalEvents: Array<{
@@ -142,7 +143,7 @@ interface BootstrapResponse {
   }>
   markEvents: Array<{
     race_id: string; mark_id: string; event_type: string; lng: number | null; lat: number | null
-    sequence: number
+    accuracy_metres: number | null; committee_boat_id: string | null; sequence: number
   }>
   boats: Array<{
     id: string; name: string; role: string; call_sign: string | null; status: string
@@ -159,7 +160,7 @@ interface BootstrapResponse {
   messages: Array<{
     id: string; race_id: string | null; channel_key: string; priority: OperationalMessage['priority']
     body: string; sent_at: string; sender: string; sender_member_id: string
-    target_type: 'event' | 'race' | 'boat' | 'mark' | 'role' | 'member' | null
+    target_type: 'event' | 'area' | 'race' | 'boat' | 'mark' | 'role' | 'member' | null
     target_id: string | null; target_label: string | null
     target_count: number; delivered_count: number; read_count: number; acknowledged_count: number
     own_receipt_message_id: string | null; own_read_at: string | null; own_acknowledged_at: string | null
@@ -184,7 +185,7 @@ interface BootstrapResponse {
   raceCorrections: Array<{
     race_id: string; revision: number; patch_json: string; reason: string; state_hash: string; created_at: string
   }>
-  availableMarks: Array<{ id: string; label: string; mark_type: string }>
+  availableMarks: Array<{ id: string; label: string; mark_type: string; race_area_id: string }>
   availableMembers: Array<{ id: string; display_name: string; role: string; assignment: string }>
 }
 
@@ -214,6 +215,7 @@ function shortLabel(label: string): string {
   return label
     .replace('オフセット ', '')
     .replace('下ゲート ', '')
+    .replace('中ゲート ', '')
     .replace('上ゲート ', '')
     .replace('マーク', '')
     .trim()
@@ -248,6 +250,7 @@ function bootstrapMarks(response: BootstrapResponse, raceId: string): CourseMark
         target: [node.target_lng, node.target_lat],
         actual: hasActual ? [event.lng as number, event.lat as number] : undefined,
         status,
+        assignedBoatId: event?.committee_boat_id ?? undefined,
         isGate: node.node_type === 'gate',
         gateSide: node.label.endsWith('S') ? 'S' : node.label.endsWith('P') ? 'P' : undefined,
       }
@@ -400,6 +403,8 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
       ) : undefined
       return {
         id: race.id,
+        raceAreaId: race.race_area_id,
+        raceAreaName: response.raceAreas.find((area) => area.id === race.race_area_id)?.name,
         number: race.race_number,
         className: race.class_name,
         courseCode: corrections.courseCode ?? race.course_code,
@@ -474,6 +479,7 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
     finishes: bootstrapFinishes(response.finishes ?? []),
     memberCount: response.memberCount ?? 0,
     resources: {
+      areas: (response.raceAreas ?? []).map((area) => ({ id: area.id, name: area.name })),
       boats: response.boats.map((boat) => ({
         id: boat.id,
         name: boat.name,
@@ -482,8 +488,8 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
       })),
       marks: (response.availableMarks ?? [...new Map(response.courseNodes
         .filter((node) => node.mark_id)
-        .map((node) => [node.mark_id as string, { id: node.mark_id as string, label: node.label, mark_type: node.mark_type ?? 'rounding' }])).values()])
-        .map((mark) => ({ id: mark.id, label: mark.label })),
+        .map((node) => [node.mark_id as string, { id: node.mark_id as string, label: node.label, mark_type: node.mark_type ?? 'rounding', race_area_id: undefined }])).values()])
+        .map((mark) => ({ id: mark.id, label: mark.label, raceAreaId: mark.race_area_id })),
       members: (response.availableMembers ?? []).map((member) => ({
         id: member.id,
         displayName: member.display_name,
@@ -560,6 +566,7 @@ export async function saveCourseRevision(
     targetLengthMetres: number
     lowerGate: boolean
     upperGate: boolean
+    secondGate?: boolean
     nodes: Array<{ markId: string; label: string; nodeType: string; rounding?: string; target: readonly [number, number] }>
   },
 ): Promise<{ revisionId: string; revision: number; createdAt: string }> {

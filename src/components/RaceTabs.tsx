@@ -38,12 +38,12 @@ export function RaceTabs({ races, activeRaceId, serverOffsetMs, messages, onSele
             className={`${activeRaceId === race.id ? 'is-active' : ''} tone-${overview.tone} ${overview.needsAttention || urgent ? 'needs-attention' : ''} ${urgent ? 'has-urgent' : ''}`}
             onClick={() => onSelectRace(race.id)}
             aria-current={activeRaceId === race.id ? 'page' : undefined}
-            aria-label={`${race.number} ${race.className}・${overview.description}${urgent ? '・未確認の緊急連絡あり' : ''}`}
-            title={`${race.className}・${overview.description}${urgent ? '・未確認の緊急連絡あり' : ''}`}
+            aria-label={`${race.number} ${race.className}${race.raceAreaName ? `・${race.raceAreaName}` : ''}・${overview.description}${urgent ? '・未確認の緊急連絡あり' : ''}`}
+            title={`${race.className}${race.raceAreaName ? `・${race.raceAreaName}` : ''}・${overview.description}${urgent ? '・未確認の緊急連絡あり' : ''}`}
             key={race.id}
           >
             <span>{race.number}</span>
-            <small>{race.className}</small>
+            <small>{race.className}{race.raceAreaName ? `・${race.raceAreaName}` : ''}</small>
             <em>{overview.shortLabel}</em>
             {race.status === 'finalized' && <LockKeyhole size={11} />}
             {urgent && <ShieldAlert className="race-tab__urgent" size={12} />}
