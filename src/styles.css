@@ -189,6 +189,35 @@ select:focus-visible {
   color: var(--muted);
 }
 
+.race-tabs em {
+  color: #58748a;
+  font-size: 8px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.race-tabs button.tone-scheduled em,
+.race-tabs button.tone-live em {
+  color: #0875c4;
+}
+
+.race-tabs button.tone-held em,
+.race-tabs button.has-urgent em {
+  color: #b9382c;
+}
+
+.race-tabs button.tone-complete em {
+  color: #48705f;
+}
+
+.race-tabs .race-tab__urgent {
+  color: var(--danger);
+  right: 3px;
+  top: 27px;
+}
+
 .race-tabs svg {
   position: absolute;
   right: 4px;
@@ -5274,6 +5303,10 @@ select:focus-visible {
 
   .race-tabs button:not(.is-active) small {
     display: none;
+  }
+
+  .race-tabs button.needs-attention {
+    min-width: 58px;
   }
 
   .start-sequence {

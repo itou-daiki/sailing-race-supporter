@@ -43,6 +43,7 @@ import {
 } from './domain'
 import { OperationsBoard } from './components/OperationsBoard'
 import { StartSequence } from './components/StartSequence'
+import { RaceTabs } from './components/RaceTabs'
 import {
   authenticatePasskey,
   authErrorMessage,
@@ -1135,23 +1136,16 @@ export default function App() {
           <ChevronDown size={16} />
         </button>
 
-        <nav className="race-tabs" aria-label="レース切替">
-          {races.map((race) => (
-            <button
-              type="button"
-              className={activeRace.id === race.id ? 'is-active' : ''}
-              onClick={() => {
-                setActiveRaceId(race.id)
-                setSelectedMarkId(undefined)
-              }}
-              key={race.id}
-            >
-              <span>{race.number}</span>
-              <small>{race.className}</small>
-              {race.status === 'finalized' && <LockKeyhole size={11} />}
-            </button>
-          ))}
-        </nav>
+        <RaceTabs
+          races={races}
+          activeRaceId={activeRace.id}
+          serverOffsetMs={realtime.serverOffsetMs}
+          messages={messages}
+          onSelectRace={(raceId) => {
+            setActiveRaceId(raceId)
+            setSelectedMarkId(undefined)
+          }}
+        />
 
         <div className="header-actions">
           <span className={`connection-pill status-${realtime.status}`}>

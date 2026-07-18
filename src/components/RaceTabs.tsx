@@ -1,0 +1,55 @@
+import { LockKeyhole, ShieldAlert } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import type { OperationalMessage, RaceDefinition } from '../domain'
+import { raceTabOverview } from '../raceOverview'
+
+interface RaceTabsProps {
+  races: readonly RaceDefinition[]
+  activeRaceId: string
+  serverOffsetMs: number
+  messages: readonly OperationalMessage[]
+  onSelectRace: (raceId: string) => void
+}
+
+function hasUnconfirmedUrgentMessage(messages: readonly OperationalMessage[], raceId: string): boolean {
+  return messages.some((message) => (
+    message.raceId === raceId &&
+    message.priority === 'urgent' &&
+    (message.ownReceipt === 'unread' || message.acknowledgement === 'pending')
+  ))
+}
+
+export function RaceTabs({ races, activeRaceId, serverOffsetMs, messages, onSelectRace }: RaceTabsProps) {
+  const [now, setNow] = useState(() => Date.now() + serverOffsetMs)
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now() + serverOffsetMs), 1_000)
+    return () => window.clearInterval(interval)
+  }, [serverOffsetMs])
+
+  return (
+    <nav className="race-tabs" aria-label="レース切替">
+      {races.map((race) => {
+        const overview = raceTabOverview(race, now)
+        const urgent = hasUnconfirmedUrgentMessage(messages, race.id)
+        return (
+          <button
+            type="button"
+            className={`${activeRaceId === race.id ? 'is-active' : ''} tone-${overview.tone} ${overview.needsAttention || urgent ? 'needs-attention' : ''} ${urgent ? 'has-urgent' : ''}`}
+            onClick={() => onSelectRace(race.id)}
+            aria-current={activeRaceId === race.id ? 'page' : undefined}
+            aria-label={`${race.number} ${race.className}・${overview.description}${urgent ? '・未確認の緊急連絡あり' : ''}`}
+            title={`${race.className}・${overview.description}${urgent ? '・未確認の緊急連絡あり' : ''}`}
+            key={race.id}
+          >
+            <span>{race.number}</span>
+            <small>{race.className}</small>
+            <em>{overview.shortLabel}</em>
+            {race.status === 'finalized' && <LockKeyhole size={11} />}
+            {urgent && <ShieldAlert className="race-tab__urgent" size={12} />}
+          </button>
+        )
+      })}
+    </nav>
+  )
+}
