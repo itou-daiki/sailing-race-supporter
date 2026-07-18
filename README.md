@@ -21,7 +21,12 @@ npm run dev
 npm run lint
 npm test
 npm run build
+npm run preview
 ```
+
+`npm run build` はPagesへ公開する静的クライアントだけを `dist` に残します。
+Worker統合成果物を確認する場合は `npm run build:cloudflare`、Workers
+Runtimeで確認する場合は `npm run preview` を使用します。
 
 ## Cloudflare
 
