@@ -1,4 +1,4 @@
-const CACHE_NAME = 'sailing-race-supporter-v2'
+const CACHE_NAME = 'sailing-race-supporter-v3'
 const APP_SHELL = ['/manifest.webmanifest', '/icon.svg', '/icon-180.png', '/icon-192.png', '/icon-512.png']
 
 async function cacheApplicationShell() {
@@ -55,4 +55,34 @@ self.addEventListener('fetch', (event) => {
       return response
     })),
   )
+})
+
+self.addEventListener('message', (event) => {
+  if (event.data?.type !== 'SHOW_RACE_REMINDER') return
+  const notification = event.data.notification
+  if (!notification || typeof notification.title !== 'string') return
+  event.waitUntil(self.registration.showNotification(notification.title, {
+    body: typeof notification.body === 'string' ? notification.body : '',
+    tag: typeof notification.tag === 'string' ? notification.tag : undefined,
+    data: { url: typeof notification.url === 'string' ? notification.url : '/' },
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    renotify: false,
+  }))
+})
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  const requestedUrl = new URL(event.notification.data?.url ?? '/', self.location.origin)
+  const targetUrl = requestedUrl.origin === self.location.origin
+    ? requestedUrl.href
+    : `${self.location.origin}/`
+  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (clients) => {
+    const existing = clients.find((client) => new URL(client.url).origin === self.location.origin)
+    if (existing) {
+      await existing.navigate(targetUrl)
+      return existing.focus()
+    }
+    return self.clients.openWindow(targetUrl)
+  }))
 })

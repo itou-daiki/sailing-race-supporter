@@ -5,6 +5,7 @@ import {
   CirclePause,
   Flag,
   RotateCcw,
+  Smartphone,
   Scissors,
   Volume2,
   VolumeX,
@@ -23,10 +24,16 @@ import {
   signalDefinition,
   signalFlagDescription,
 } from '../signals'
+import { useRaceDeviceAssist } from '../raceDeviceAssist'
 
 type SignalExecution = Omit<RaceSignalEvent, 'id'> & { officialAudioDeviceSecret?: string }
 
 interface StartSequenceProps {
+  eventSlug: string
+  eventName: string
+  raceId: string
+  raceNumber: string
+  className: string
   warningAt: string
   latestSignal?: RaceSignalEvent
   marks: readonly CourseMark[]
@@ -123,6 +130,11 @@ function signalKey(signal: Pick<RaceSignalEvent, 'action' | 'executedAt'>): stri
 }
 
 export function StartSequence({
+  eventSlug,
+  eventName,
+  raceId,
+  raceNumber,
+  className,
   warningAt,
   latestSignal,
   marks,
@@ -166,6 +178,16 @@ export function StartSequence({
   )
   const held = isRaceSignalHeld(latestSignal)
   const terminal = isTerminalRaceSignal(latestSignal)
+  const deviceAssist = useRaceDeviceAssist({
+    eventSlug,
+    eventName,
+    raceId,
+    raceNumber,
+    className,
+    warningAt,
+    serverOffsetMs,
+    remindersPaused: held || terminal,
+  })
 
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now() + serverOffsetMs), 250)
@@ -372,7 +394,7 @@ export function StartSequence({
     : latestControlSignal?.flag ?? (activeStage.action === 'preparatory' ? preparatoryFlag : activeStage.flag)
   const displayDetail = latestControlSignal
     ? `${latestControlSignal.sound}・視覚 ${formatTime(latestControlSignal.visualExecutedAt)}・音響 ${latestControlSignal.soundStatus === 'played' && latestControlSignal.soundExecutedAt ? formatTime(latestControlSignal.soundExecutedAt) : latestControlSignal.soundStatus === 'not-required' ? 'なし' : latestControlSignal.soundStatus === 'pending' ? '公式端末待ち' : '記録不明'}${latestControlSignal.reason ? `・${latestControlSignal.reason}` : ''}`
-    : `${activeStage.sound}・${audioStatus}`
+    : `${activeStage.sound}・${audioStatus}・${deviceAssist.status}`
   const clearDefinition = useMemo(() => latestSignal && canClearRaceSignal(latestSignal)
     ? signalDefinition(clearActionFor(latestSignal))
     : undefined, [latestSignal])
@@ -391,6 +413,17 @@ export function StartSequence({
         </div>
       </div>
       <div className="start-sequence__actions">
+        <button
+          type="button"
+          className={`device-assist-button ${deviceAssist.enabled ? 'is-active' : ''}`}
+          onClick={() => void deviceAssist.toggle()}
+          aria-pressed={deviceAssist.enabled}
+          aria-label={deviceAssist.label}
+          title={`${deviceAssist.label}（アプリを開いている間の端末内リマインド）`}
+        >
+          <Smartphone size={18} />
+          <span>{deviceAssist.enabled ? '運営モードON' : '通知・画面維持'}</span>
+        </button>
         <button
           type="button"
           className={`audio-button ${audioArmed ? 'is-armed' : ''}`}

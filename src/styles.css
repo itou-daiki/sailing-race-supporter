@@ -384,6 +384,18 @@ select:focus-visible {
   border: 1px solid #34576e;
 }
 
+.device-assist-button {
+  color: #dbe9f3;
+  background: #183d57;
+  border: 1px solid #34576e;
+}
+
+.device-assist-button.is-active {
+  color: #082238;
+  background: #72c6ff;
+  border-color: #a9ddff;
+}
+
 .audio-button.is-armed {
   color: #b7f4df;
   background: #0b5948;

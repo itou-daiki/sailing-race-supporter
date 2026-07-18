@@ -1178,6 +1178,11 @@ export default function App() {
       </header>
 
       <StartSequence
+        eventSlug={eventId}
+        eventName={eventName}
+        raceId={activeRace.id}
+        raceNumber={activeRace.number}
+        className={activeRace.className}
         warningAt={activeRace.warningAt}
         latestSignal={activeRace.latestSignal}
         marks={marks}
