@@ -3014,6 +3014,22 @@ select:focus-visible {
   text-align: center;
 }
 
+.auth-panel > footer strong,
+.auth-panel > footer small,
+.auth-panel > footer span {
+  display: block;
+}
+
+.auth-panel > footer strong {
+  color: var(--navy);
+  font-size: 10px;
+}
+
+.auth-panel > footer small {
+  margin: 1px 0 3px;
+  font-size: 8px;
+}
+
 .passkey-intro {
   display: flex;
   flex-direction: column;
@@ -4696,6 +4712,21 @@ select:focus-visible {
   align-items: center;
   padding-top: 42px;
   text-align: center;
+}
+
+.join-product-brand {
+  display: flex;
+  flex-direction: column;
+  color: var(--navy);
+}
+
+.join-product-brand strong {
+  font-size: 13px;
+}
+
+.join-product-brand small {
+  color: var(--muted);
+  font-size: 8px;
 }
 
 .join-icon {

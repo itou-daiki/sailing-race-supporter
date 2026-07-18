@@ -220,7 +220,7 @@ export function AuthPanel({ session, onSessionChange, onClose }: AuthPanelProps)
         )}
 
         {error && <div className="auth-error" role="alert">{error}</div>}
-        <footer>Sailing Race Supporterはパスキーの秘密鍵を保存しません。</footer>
+        <footer><strong>Sailing Race Supporter</strong><small>Created by Dit-Lab.（Daiki ITO）</small><span>パスキーの秘密鍵を保存しません。</span></footer>
       </aside>
     </div>
     {replacementKit && <OwnerRecoveryKitPanel kit={replacementKit} onConfirm={confirmReplacementKit} />}

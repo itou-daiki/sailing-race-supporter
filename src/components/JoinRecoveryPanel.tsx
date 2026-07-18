@@ -100,7 +100,7 @@ function RecoveryCard({
         <p>端末を紛失したときに、同じ名前・担当へ復元するための情報です。第三者へ送らないでください。</p>
       </div>
       <section className="recovery-card">
-        <div className="recovery-card__brand"><ShieldCheck size={21} /><span><strong>Sailing Race Supporter</strong><small>参加復元カード</small></span></div>
+        <div className="recovery-card__brand"><ShieldCheck size={21} /><span><strong>Sailing Race Supporter</strong><small>Created by Dit-Lab.（Daiki ITO）</small><small>参加復元カード</small></span></div>
         <dl>
           <div><dt>大会</dt><dd>{result.event.name}</dd></div>
           <div><dt>名前</dt><dd>{result.member.displayName}</dd></div>
@@ -196,6 +196,7 @@ export function JoinRecoveryPanel({ eventSlug, mode, onSessionChange, onComplete
           <RecoveryCard result={result} recoverySecret={replacementSecret} onContinue={finish} />
         ) : mode.kind === 'join' ? (
           <div className="join-form-screen">
+            <div className="join-product-brand"><strong>Sailing Race Supporter</strong><small>Created by Dit-Lab.（Daiki ITO）</small></div>
             <span className="join-icon"><KeyRound size={30} /></span>
             <span className="eyebrow">招待URLから参加</span>
             <h1>{preview?.event.name ?? '大会情報を確認中'}</h1>
@@ -212,6 +213,7 @@ export function JoinRecoveryPanel({ eventSlug, mode, onSessionChange, onComplete
           </div>
         ) : (
           <div className="join-form-screen">
+            <div className="join-product-brand"><strong>Sailing Race Supporter</strong><small>Created by Dit-Lab.（Daiki ITO）</small></div>
             <span className="join-icon"><RotateCcw size={30} /></span>
             <span className="eyebrow">端末喪失・機種変更</span>
             <h1>参加情報を復元</h1>
