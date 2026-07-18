@@ -1219,6 +1219,37 @@ select:focus-visible {
   transform: translateX(-50%);
 }
 
+.map-basemap-status {
+  position: absolute;
+  top: 112px;
+  left: 14px;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  color: #fff;
+  background: rgba(21, 55, 76, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  pointer-events: none;
+}
+
+.map-basemap-status > span {
+  display: flex;
+  flex-direction: column;
+}
+
+.map-basemap-status strong {
+  font-size: 9px;
+}
+
+.map-basemap-status small {
+  color: #d8efff;
+  font-size: 7px;
+}
+
 .map-watermark {
   position: absolute;
   left: 14px;

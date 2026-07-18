@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   CircleCheckBig,
+  CloudOff,
   Crosshair,
   LocateFixed,
   MapPin,
@@ -96,6 +97,7 @@ export function MapView({
   const watchRef = useRef<number | undefined>(undefined)
   const firstTrackingFix = useRef(true)
   const [mapReady, setMapReady] = useState(false)
+  const [basemapUnavailable, setBasemapUnavailable] = useState(false)
   const [locationError, setLocationError] = useState<string>()
   const [tracking, setTracking] = useState(false)
   const [freshnessNow, setFreshnessNow] = useState(() => Date.now())
@@ -138,6 +140,14 @@ export function MapView({
     mapRef.current = map
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right')
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left')
+    map.on('error', (event) => {
+      const sourceId = 'sourceId' in event ? event.sourceId : undefined
+      const message = event.error instanceof Error ? event.error.message : String(event.error ?? '')
+      if (sourceId === 'gsi' || message.includes('cyberjapandata.gsi.go.jp')) setBasemapUnavailable(true)
+    })
+    map.on('sourcedata', (event) => {
+      if (event.sourceId === 'gsi' && event.isSourceLoaded) setBasemapUnavailable(false)
+    })
 
     map.on('load', () => {
       map.addSource('course-points', { type: 'geojson', data: initialFeaturesRef.current.points })
@@ -412,6 +422,7 @@ export function MapView({
       )}
 
       {locationError && <div className="map-error" role="alert">{locationError}</div>}
+      {basemapUnavailable && <div className="map-basemap-status" role="status"><CloudOff size={14} /><span><strong>背景地図オフライン</strong><small>コース・マーク・運営ボート表示は継続中</small></span></div>}
       <div className="map-offline-grid" aria-hidden="true" />
       <div className="map-watermark"><Waves size={14} /> 海上運営支援・航海用ではありません</div>
     </section>
