@@ -15,6 +15,22 @@ export interface AuthenticatedSessionState {
   authenticatedAt: string
 }
 
+export interface AuthSecuritySummary {
+  credentialCount: number
+  backedUpCredentialCount: number
+  resilientForEventCreation: boolean
+}
+
+export interface OwnerRecoveryKit {
+  recoveryId: string
+  eventId: string
+  eventSlug: string
+  eventName: string
+  ownerUserId: string
+  issuedAt: string
+  recoveryCode: string
+}
+
 export type SessionState =
   | { mode: 'checking' }
   | { mode: 'offline-demo' }
@@ -80,6 +96,66 @@ export async function registerPasskey(displayName: string): Promise<Authenticate
     body: JSON.stringify({ response }),
   })
   return { mode: 'authenticated', user: verified.user, expiresAt: verified.expiresAt, authenticatedAt: verified.authenticatedAt }
+}
+
+export async function registerAdditionalPasskey(): Promise<AuthenticatedSessionState> {
+  const generated = await apiJson<{ options: PublicKeyCredentialCreationOptionsJSON }>(
+    '/api/auth/passkeys/registration/options',
+    { method: 'POST', body: '{}' },
+  )
+  const { startRegistration } = await import('@simplewebauthn/browser')
+  const response = await startRegistration({ optionsJSON: generated.options })
+  const verified = await apiJson<{
+    verified: boolean
+    user: AuthenticatedUser
+    expiresAt: string
+    authenticatedAt: string
+  }>('/api/auth/registration/verify', {
+    method: 'POST',
+    body: JSON.stringify({ response }),
+  })
+  return { mode: 'authenticated', user: verified.user, expiresAt: verified.expiresAt, authenticatedAt: verified.authenticatedAt }
+}
+
+export async function loadAuthSecurity(): Promise<AuthSecuritySummary> {
+  return apiJson<AuthSecuritySummary>('/api/auth/security', { method: 'GET', headers: {} })
+}
+
+export async function recoverOwnerAccount(eventReference: string, recoveryCode: string): Promise<{
+  session: AuthenticatedSessionState
+  event: { id: string; slug: string; name: string }
+  ownerRecoveryKit: OwnerRecoveryKit
+}> {
+  const generated = await apiJson<{
+    options: PublicKeyCredentialCreationOptionsJSON
+    event: { id: string; slug: string; name: string }
+  }>('/api/auth/owner-recovery/options', {
+    method: 'POST',
+    body: JSON.stringify({ eventReference, recoveryCode }),
+  })
+  const { startRegistration } = await import('@simplewebauthn/browser')
+  const response = await startRegistration({ optionsJSON: generated.options })
+  const verified = await apiJson<{
+    verified: boolean
+    user: AuthenticatedUser
+    expiresAt: string
+    authenticatedAt: string
+    event: { id: string; slug: string; name: string }
+    ownerRecoveryKit: OwnerRecoveryKit
+  }>('/api/auth/owner-recovery/verify', {
+    method: 'POST',
+    body: JSON.stringify({ response }),
+  })
+  return {
+    session: {
+      mode: 'authenticated',
+      user: verified.user,
+      expiresAt: verified.expiresAt,
+      authenticatedAt: verified.authenticatedAt,
+    },
+    event: verified.event,
+    ownerRecoveryKit: verified.ownerRecoveryKit,
+  }
 }
 
 export async function authenticatePasskey(): Promise<AuthenticatedSessionState> {

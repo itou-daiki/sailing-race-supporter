@@ -103,6 +103,29 @@ export async function appendAuditEvent(env: AppEnv, input: AuditInput): Promise<
   throw new Error('Unable to append audit event')
 }
 
+/**
+ * One-time secret workflows must still return their newly issued secret if the
+ * append-only audit chain is temporarily unavailable. Their authoritative D1
+ * state keeps the security timestamps; the failure is also sent to Worker logs.
+ */
+export async function appendAuditEventWithoutBlockingSecretDelivery(
+  env: AppEnv,
+  input: AuditInput,
+): Promise<boolean> {
+  try {
+    await appendAuditEvent(env, input)
+    return true
+  } catch (error) {
+    console.error('Audit append failed during one-time secret delivery', {
+      eventId: input.access.eventId,
+      action: input.action,
+      entityType: input.entityType,
+      entityId: input.entityId,
+    }, error)
+    return false
+  }
+}
+
 export async function finalizeRace(
   env: AppEnv,
   access: EventAccess,

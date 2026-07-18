@@ -239,7 +239,7 @@ async function exchangeInvite(request: Request, env: AppEnv, inviteId: string): 
   if (invite.role === 'pro' || invite.role === 'ro') {
     if (!currentSession) return json({ error: 'PRO/ROは先にパスキーでログインしてください' }, { status: 403 })
     const credential = await env.DB.prepare(
-      'SELECT id FROM passkey_credentials WHERE user_id = ? LIMIT 1',
+      'SELECT id FROM passkey_credentials WHERE user_id = ? AND revoked_at IS NULL LIMIT 1',
     ).bind(currentSession.userId).first()
     if (!credential) return json({ error: 'PRO/ROにはパスキー登録が必要です' }, { status: 403 })
   }

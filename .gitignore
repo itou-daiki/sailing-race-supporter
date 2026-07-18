@@ -3,6 +3,8 @@ node_modules/
 dist/
 coverage/
 *.tsbuildinfo
+.playwright-cli/
+output/playwright/
 
 # local logs and secrets
 *.log

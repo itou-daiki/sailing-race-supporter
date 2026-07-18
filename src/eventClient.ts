@@ -12,6 +12,7 @@ import type {
   SailingClass,
   WindObservation,
 } from './domain'
+import type { OwnerRecoveryKit } from './authClient'
 import { makeRaceSignalEvent } from './signals'
 
 export interface EventSummary {
@@ -518,8 +519,22 @@ export async function listEvents(): Promise<EventSummary[]> {
   return (await apiJson<{ events: EventSummary[] }>('/api/events', { method: 'GET', headers: {} })).events
 }
 
-export async function createEvent(input: CreateEventInput): Promise<{ event: EventBootstrap['event']; url: string }> {
+export async function createEvent(input: CreateEventInput): Promise<{
+  event: EventBootstrap['event']
+  url: string
+  ownerRecoveryKit: OwnerRecoveryKit | null
+}> {
   return apiJson('/api/events', { method: 'POST', body: JSON.stringify(input) })
+}
+
+export async function confirmOwnerRecoveryKit(
+  eventSlug: string,
+  recoveryId: string,
+): Promise<{ recoveryId: string; confirmedAt: string; ready: true }> {
+  return apiJson(
+    `/api/events/${encodeURIComponent(eventSlug)}/owner-recovery/${encodeURIComponent(recoveryId)}/confirm`,
+    { method: 'POST', body: JSON.stringify({ saved: true }) },
+  )
 }
 
 export async function createPostFinalizationRevision(

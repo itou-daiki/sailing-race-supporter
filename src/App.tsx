@@ -94,6 +94,10 @@ function eventSlugFromLocation(): string {
   return match ? decodeURIComponent(match[1]) : 'enoshima-summer-regatta'
 }
 
+function hasEventLocation(): boolean {
+  return /^\/e\/[^/]+/u.test(window.location.pathname)
+}
+
 function localMemberId(): string {
   const key = 'srs-local-member-id'
   const existing = window.localStorage.getItem(key)
@@ -185,6 +189,7 @@ function messageTargetLabel(value: string, raceNumber: string, resources: EventR
 
 export default function App() {
   const [eventId] = useState(eventSlugFromLocation)
+  const [eventRoute] = useState(hasEventLocation)
   const [eventDatabaseId, setEventDatabaseId] = useState<string>()
   const [eventName, setEventName] = useState('2026 江の島サマーレガッタ')
   const [memberId, setMemberId] = useState(localMemberId)
@@ -488,7 +493,7 @@ export default function App() {
     eventId,
     memberId,
     connectionKey: sessionConnectionKey,
-    enabled: session.mode === 'authenticated',
+    enabled: session.mode === 'authenticated' && eventRoute && Boolean(eventAccess),
     onEvent: applyRemoteEvent,
   })
   const sendRealtimeOperation = realtime.send
@@ -586,6 +591,7 @@ export default function App() {
       void applyCachedState()
       return () => { active = false }
     }
+    if (!eventRoute) return () => { active = false }
     void loadEventBootstrap(eventId)
       .then((bootstrap) => {
         if (!active) return
@@ -614,7 +620,7 @@ export default function App() {
       })
       .catch(() => void applyCachedState())
     return () => { active = false }
-  }, [eventId, session.mode, sessionUserId])
+  }, [eventId, eventRoute, session.mode, sessionUserId])
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {

@@ -1,8 +1,9 @@
 import type { EventAccess } from './authorization.js'
-import { appendAuditEvent } from './audit.js'
+import { appendAuditEventWithoutBlockingSecretDelivery } from './audit.js'
 import { json, readJson } from './http.js'
 import type { AppEnv } from './index.js'
-import { assertSameOrigin, randomToken, requireSession } from './security.js'
+import { generateOwnerRecoveryCode, normalizeOwnerRecoveryCode } from '../shared/ownerRecovery.js'
+import { assertSameOrigin, hasRecentAuthentication, randomToken, requireSession, sha256Base64Url } from './security.js'
 
 const CLASSES = new Set(['OP', 'ILCA 4', 'ILCA 6', 'ILCA 7', '420', '470', 'スナイプ'])
 const COURSES = new Set(['O2', 'I2', 'L2', 'L3', 'W2', 'トライアングル'])
@@ -125,6 +126,18 @@ async function listEvents(request: Request, env: AppEnv): Promise<Response> {
 async function createEvent(request: Request, env: AppEnv): Promise<Response> {
   assertSameOrigin(request)
   const session = await requireSession(request, env)
+  if (!hasRecentAuthentication(session)) {
+    return json({
+      error: '大会URLの発行にはパスキーでの再認証が必要です',
+      code: 'REAUTHENTICATION_REQUIRED',
+    }, { status: 428 })
+  }
+  const credentialCount = await env.DB.prepare(
+    'SELECT COUNT(*) AS count FROM passkey_credentials WHERE user_id = ? AND revoked_at IS NULL',
+  ).bind(session.userId).first<{ count: number }>()
+  if (!credentialCount?.count) {
+    return json({ error: '大会管理者の有効なパスキーを確認できません。再認証してください' }, { status: 403 })
+  }
   const body = await readJson<CreateEventInput>(request, 16_384)
   const name = body.name?.trim()
   if (!name || name.length < 2 || name.length > 100) {
@@ -149,6 +162,8 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
   const slug = `${slugBase(name)}-${randomToken(6).replace(/[^a-z0-9]/giu, '').toLowerCase()}`
   const areaId = crypto.randomUUID()
   const ownerMemberId = crypto.randomUUID()
+  const ownerRecoveryCode = credentialCount.count < 2 ? generateOwnerRecoveryCode() : null
+  const ownerRecoveryId = ownerRecoveryCode ? crypto.randomUUID() : null
   const targets = initialTargets(center)
   const warning = warningTime(body.firstWarningAt)
   const statements: D1PreparedStatement[] = [
@@ -171,6 +186,19 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
        VALUES (?, ?, '海面A', 'area-a', ?, ?)`,
     ).bind(areaId, eventId, center[0], center[1]),
   ]
+  if (ownerRecoveryCode && ownerRecoveryId) {
+    statements.push(env.DB.prepare(
+      `INSERT INTO owner_recovery_credentials
+       (id, regatta_id, owner_user_id, secret_hash, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).bind(
+      ownerRecoveryId,
+      eventId,
+      session.userId,
+      await sha256Base64Url(normalizeOwnerRecoveryCode(ownerRecoveryCode)),
+      now,
+    ))
+  }
 
   const markDefinitions = [
     ['mark-1', '1マーク', 'rounding'],
@@ -279,17 +307,30 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
     assignment: '大会管理者',
     isOwner: true,
   }
-  await appendAuditEvent(env, {
+  const auditRecorded = await appendAuditEventWithoutBlockingSecretDelivery(env, {
     access,
     action: 'regatta.create',
     entityType: 'regatta',
     entityId: eventId,
-    after: { name, slug, startsOn, endsOn, raceCount, className, courseCode },
+    after: {
+      name, slug, startsOn, endsOn, raceCount, className, courseCode,
+      ownerRecovery: ownerRecoveryId ? 'issued-pending-confirmation' : 'two-or-more-passkeys',
+    },
   })
 
   return json({
     event: { id: eventId, slug, name, startsOn, endsOn, status: 'draft' },
     url: `/e/${encodeURIComponent(slug)}`,
+    auditRecorded,
+    ownerRecoveryKit: ownerRecoveryCode && ownerRecoveryId ? {
+      recoveryId: ownerRecoveryId,
+      eventId,
+      eventSlug: slug,
+      eventName: name,
+      ownerUserId: session.userId,
+      issuedAt: now,
+      recoveryCode: ownerRecoveryCode,
+    } : null,
   }, { status: 201 })
 }
 

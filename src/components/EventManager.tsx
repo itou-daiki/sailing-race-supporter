@@ -22,10 +22,11 @@ import {
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import type { SessionState } from '../authClient'
+import type { OwnerRecoveryKit, SessionState } from '../authClient'
 import { CLASS_PROFILES, type SailingClass } from '../domain'
 import {
   createEvent,
+  confirmOwnerRecoveryKit,
   listEvents,
   loadRetentionPreview,
   loadRetentionSettings,
@@ -59,6 +60,7 @@ import {
   type EncryptedBackup,
 } from '../backup'
 import { exportLocalEventData } from '../offlineStore'
+import { OwnerRecoveryKitPanel } from './OwnerRecoveryKitPanel'
 
 interface EventManagerProps {
   session: SessionState
@@ -158,6 +160,7 @@ export function EventManager({
   const [holdReason, setHoldReason] = useState('抗議・審問・事故調査に関する記録を保全するため')
   const [retentionPreview, setRetentionPreview] = useState<RetentionPreview>()
   const [latestBackupAt, setLatestBackupAt] = useState<string>()
+  const [pendingOwnerRecovery, setPendingOwnerRecovery] = useState<{ kit: OwnerRecoveryKit; url: string }>()
 
   useEffect(() => {
     if (session.mode !== 'authenticated') return
@@ -232,10 +235,32 @@ export function EventManager({
         firstWarningAt: new Date(firstWarningAt).toISOString(),
         center,
       })
-      window.location.assign(created.url)
+      if (created.ownerRecoveryKit) {
+        setPendingOwnerRecovery({ kit: created.ownerRecoveryKit, url: created.url })
+        setCreating(false)
+      } else {
+        window.location.assign(created.url)
+      }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '大会を作成できません')
+      const message = reason instanceof Error ? reason.message : '大会を作成できません'
+      setError(message)
+      if (message.includes('再認証')) onRequestAuthentication()
       setCreating(false)
+    }
+  }
+
+  const confirmPendingOwnerRecovery = async () => {
+    if (!pendingOwnerRecovery) return
+    try {
+      await confirmOwnerRecoveryKit(
+        pendingOwnerRecovery.kit.eventSlug,
+        pendingOwnerRecovery.kit.recoveryId,
+      )
+      window.location.assign(pendingOwnerRecovery.url)
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : '復旧キットの保存を確定できません'
+      if (message.includes('再認証')) onRequestAuthentication()
+      throw reason
     }
   }
 
@@ -504,7 +529,8 @@ export function EventManager({
   }
 
   return (
-    <div className="drawer-backdrop" role="presentation" onMouseDown={onClose}>
+    <>
+    <div className="drawer-backdrop" role="presentation" onMouseDown={pendingOwnerRecovery ? undefined : onClose}>
       <aside className="event-manager" aria-label="大会URLと大会作成" onMouseDown={(event) => event.stopPropagation()}>
         <header>
           <div><span className="eyebrow">固定共有URL</span><strong>大会を選択・作成</strong></div>
@@ -709,7 +735,7 @@ export function EventManager({
               <button type="button" className={`event-location-button ${center ? 'is-set' : ''}`} onClick={useCurrentLocation}>
                 <LocateFixed size={17} />{center ? `海面中心 ${center.latitude.toFixed(4)}, ${center.longitude.toFixed(4)}` : '現在地を海面中心にする'}
               </button>
-              <div className="event-create-note"><CalendarDays size={17} /><p>大会内の1R〜{raceCount}R、海面A、標準マークと運営ボートを作成します。後から個別に変更できます。</p></div>
+              <div className="event-create-note"><CalendarDays size={17} /><p>大会内の1R〜{raceCount}R、海面A、標準マークと運営ボートを作成します。予備パスキーが2個未満の場合は、発行直後に一回限りのオーナー復旧キットを保存します。</p></div>
               <button type="submit" className="event-create-submit" disabled={creating || name.trim().length < 2}>
                 {creating ? <LoaderCircle className="is-spinning" size={18} /> : <Clipboard size={18} />}
                 {creating ? '大会URLを発行中…' : '大会URLを発行する'}
@@ -720,5 +746,7 @@ export function EventManager({
         {error && <div className="auth-error" role="alert">{error}</div>}
       </aside>
     </div>
+    {pendingOwnerRecovery && <OwnerRecoveryKitPanel kit={pendingOwnerRecovery.kit} onConfirm={confirmPendingOwnerRecovery} />}
+    </>
   )
 }

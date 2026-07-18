@@ -128,12 +128,20 @@ export async function previewRetentionForEvent(
                 WHERE regatta_id = ? AND priority = 'normal' AND deleted_at IS NULL`, eventId),
     count(env, `SELECT COUNT(*) AS count FROM event_members
                 WHERE regatta_id = ? AND role <> 'owner' AND display_name NOT LIKE '匿名メンバー-%'`, eventId),
-    count(env, `SELECT COUNT(*) AS count FROM member_recovery_credentials
-                WHERE event_member_id IN (SELECT id FROM event_members WHERE regatta_id = ?)`, eventId),
+    count(env, `SELECT (
+      (SELECT COUNT(*) FROM member_recovery_credentials
+       WHERE event_member_id IN (SELECT id FROM event_members WHERE regatta_id = ?)) +
+      (SELECT COUNT(*) FROM owner_recovery_credentials
+       WHERE regatta_id = ? AND secret_hash NOT LIKE 'purged:%')
+    ) AS count`, eventId, eventId),
     count(env, `SELECT COUNT(*) AS count FROM invites
                 WHERE regatta_id = ? AND token_hash NOT LIKE 'purged:%'`, eventId),
-    count(env, `SELECT COUNT(*) AS count FROM recovery_attempts
-                WHERE regatta_id = ? AND network_hash IS NOT NULL`, eventId),
+    count(env, `SELECT (
+      (SELECT COUNT(*) FROM recovery_attempts
+       WHERE regatta_id = ? AND network_hash IS NOT NULL) +
+      (SELECT COUNT(*) FROM owner_recovery_attempts
+       WHERE regatta_id = ? AND network_hash IS NOT NULL)
+    ) AS count`, eventId, eventId),
     env.DB.prepare(
       'SELECT created_at FROM backup_records WHERE regatta_id = ? ORDER BY created_at DESC LIMIT 1',
     ).bind(eventId).first<{ created_at: string }>(),
@@ -279,6 +287,12 @@ export async function runRetentionForEvent(
         `DELETE FROM member_recovery_credentials
          WHERE event_member_id IN (SELECT id FROM event_members WHERE regatta_id = ?)`,
       ).bind(eventId).run())
+      counts.ownerRecoveryCredentials = changes(await env.DB.prepare(
+        `UPDATE owner_recovery_credentials
+         SET secret_hash = 'purged:' || id,
+             revoked_at = COALESCE(revoked_at, ?)
+         WHERE regatta_id = ? AND secret_hash NOT LIKE 'purged:%'`,
+      ).bind(startedAt, eventId).run())
       counts.inviteSecrets = changes(await env.DB.prepare(
         `UPDATE invites SET token_hash = 'purged:' || id, revoked_at = COALESCE(revoked_at, ?)
          WHERE regatta_id = ? AND token_hash NOT LIKE 'purged:%'`,
@@ -296,6 +310,9 @@ export async function runRetentionForEvent(
     if (hasExpired(end, policy.securityLogsDays, nowTime)) {
       counts.securityNetworkHashes = changes(await env.DB.prepare(
         'UPDATE recovery_attempts SET network_hash = NULL WHERE regatta_id = ? AND network_hash IS NOT NULL',
+      ).bind(eventId).run())
+      counts.ownerSecurityNetworkHashes = changes(await env.DB.prepare(
+        'UPDATE owner_recovery_attempts SET network_hash = NULL WHERE regatta_id = ? AND network_hash IS NOT NULL',
       ).bind(eventId).run())
     }
 
@@ -321,5 +338,7 @@ export async function runDailyRetention(env: AppEnv): Promise<void> {
   await env.DB.batch([
     env.DB.prepare('DELETE FROM auth_challenges WHERE expires_at < ?').bind(now),
     env.DB.prepare('DELETE FROM auth_sessions WHERE expires_at < ? OR (revoked_at IS NOT NULL AND revoked_at < ?)').bind(now, new Date(Date.now() - 30 * DAY).toISOString()),
+    env.DB.prepare('DELETE FROM owner_recovery_attempts WHERE regatta_id IS NULL AND attempted_at < ?')
+      .bind(new Date(Date.now() - 365 * DAY).toISOString()),
   ])
 }

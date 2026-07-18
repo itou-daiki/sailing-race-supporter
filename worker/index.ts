@@ -18,6 +18,7 @@ import { json } from './http.js'
 import { handleInviteRequest } from './invites.js'
 import { handleLogRequest } from './logs.js'
 import { authorizeCommitteeBoat, persistRealtimeOperation } from './operations.js'
+import { handleOwnerRecoveryRequest } from './ownerRecovery.js'
 import { handleRevisionRequest } from './revisions.js'
 import { requireSession } from './security.js'
 import { handleSettingsRequest } from './settings.js'
@@ -798,6 +799,9 @@ export default {
 
       const eventCollectionResponse = await handleEventCollectionRequest(request, env)
       if (eventCollectionResponse) return eventCollectionResponse
+
+      const ownerRecoveryResponse = await handleOwnerRecoveryRequest(request, env)
+      if (ownerRecoveryResponse) return ownerRecoveryResponse
 
       const inviteResponse = await handleInviteRequest(request, env)
       if (inviteResponse) return inviteResponse
