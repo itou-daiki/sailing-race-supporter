@@ -336,7 +336,15 @@ export function MapView({
       element.type = 'button'
       element.className = `boat-marker ${boat.isSelf ? 'boat-marker--self' : ''}`
       element.setAttribute('aria-label', `${boat.name} ${boat.assignment}`)
-      element.innerHTML = `<span class="boat-marker__arrow" style="transform: rotate(${boat.courseDegrees ?? 0}deg)">▲</span><span class="boat-marker__label">${boat.assignment}</span>`
+      const direction = document.createElement('span')
+      direction.className = boat.courseDegrees === undefined ? 'boat-marker__stationary' : 'boat-marker__arrow'
+      direction.textContent = boat.courseDegrees === undefined ? '●' : '▲'
+      if (boat.courseDegrees !== undefined) direction.style.transform = `rotate(${boat.courseDegrees}deg)`
+      const label = document.createElement('span')
+      label.className = 'boat-marker__label'
+      label.textContent = boat.assignment
+      element.appendChild(direction)
+      element.appendChild(label)
       return new maplibregl.Marker({ element, anchor: 'center' })
         .setLngLat([...boat.position])
         .addTo(map)

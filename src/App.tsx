@@ -62,6 +62,7 @@ import { adoptFinishObservation, finishRecordKey, mergeFinishObservation } from 
 import { isRaceSignalHeld, makeRaceSignalEvent } from './signals'
 import { raceFinalizationPhrase } from '../shared/finalization'
 import { estimateRegattaFreeTierUsage, STANDARD_REGATTA_LOAD } from '../shared/freeTierBudget'
+import { normalizeBoatMotion } from './boatMotion'
 
 const DETAIL_KEY = 'srs-board-detail'
 const SCALE_KEY = 'srs-board-scale'
@@ -274,16 +275,17 @@ export default function App() {
 
   const applyRemoteEvent = useCallback((event: SequencedOperation) => {
     if (event.type === 'position') {
-      const payload = event.payload as { committeeBoatId?: string; position?: LngLat; speedKnots?: number; courseDegrees?: number; accuracyMetres?: number }
+      const payload = event.payload as { committeeBoatId?: string; position?: LngLat; speedKnots?: number | null; courseDegrees?: number | null; accuracyMetres?: number | null }
       if (!payload.committeeBoatId || !payload.position) return
+      const motion = normalizeBoatMotion(payload)
       setBoats((current) => current.map((boat) => (
         boat.id === payload.committeeBoatId
           ? {
               ...boat,
               position: payload.position as LngLat,
-              speedKnots: payload.speedKnots ?? boat.speedKnots,
-              courseDegrees: payload.courseDegrees ?? boat.courseDegrees,
-              accuracyMetres: payload.accuracyMetres ?? boat.accuracyMetres,
+              speedKnots: motion.speedKnots,
+              courseDegrees: motion.courseDegrees,
+              accuracyMetres: motion.accuracyMetres,
               freshnessSeconds: 0,
             }
           : boat
@@ -704,13 +706,14 @@ export default function App() {
 
   const updateSelfLocation = (position: LngLat, motion: { speedKnots?: number; courseDegrees?: number; accuracyMetres?: number }) => {
     const selfBoat = boats.find((boat) => boat.isSelf)
+    const normalizedMotion = normalizeBoatMotion(motion)
     setBoats((current) => current.map((boat) => (
       boat.isSelf ? {
         ...boat,
         position,
-        speedKnots: motion.speedKnots ?? boat.speedKnots,
-        courseDegrees: motion.courseDegrees ?? boat.courseDegrees,
-        accuracyMetres: motion.accuracyMetres ?? boat.accuracyMetres,
+        speedKnots: normalizedMotion.speedKnots,
+        courseDegrees: normalizedMotion.courseDegrees,
+        accuracyMetres: normalizedMotion.accuracyMetres,
         freshnessSeconds: 0,
         status: 'moving' as const,
       } : boat
@@ -719,9 +722,9 @@ export default function App() {
       void sendRealtimeOperation('position', {
         committeeBoatId: selfBoat.id,
         position,
-        speedKnots: motion.speedKnots ?? selfBoat.speedKnots,
-        courseDegrees: motion.courseDegrees ?? selfBoat.courseDegrees,
-        accuracyMetres: motion.accuracyMetres,
+        speedKnots: normalizedMotion.speedKnots,
+        courseDegrees: normalizedMotion.courseDegrees ?? null,
+        accuracyMetres: normalizedMotion.accuracyMetres ?? null,
       }, activeRace.id)
     }
   }

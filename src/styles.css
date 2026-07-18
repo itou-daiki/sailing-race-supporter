@@ -1259,6 +1259,11 @@ select:focus-visible {
   line-height: 1;
 }
 
+.boat-marker__stationary {
+  font-size: 10px;
+  line-height: 1;
+}
+
 .boat-marker__label {
   position: absolute;
   top: 34px;
