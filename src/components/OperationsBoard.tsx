@@ -34,7 +34,7 @@ import type {
 } from '../domain'
 import { signalDefinition } from '../signals'
 import { FirstFinishPanel } from './FirstFinishPanel'
-import type { FreeTierBudgetEstimate } from '../../shared/freeTierBudget'
+import type { FreeTierBudgetEstimate, RuntimeBudgetStatus } from '../../shared/freeTierBudget'
 import type { LatestPassageSummary } from '../passages'
 
 interface OperationsBoardProps {
@@ -46,6 +46,7 @@ interface OperationsBoardProps {
   wind: WindObservation
   current: CurrentObservation
   freeTierBudget: FreeTierBudgetEstimate
+  runtimeBudget?: RuntimeBudgetStatus
   scale: number
   detail: BoardDetail
   postponed: boolean
@@ -91,6 +92,7 @@ export function OperationsBoard({
   wind,
   current,
   freeTierBudget,
+  runtimeBudget,
   scale,
   detail,
   postponed,
@@ -212,10 +214,16 @@ export function OperationsBoard({
             <strong>{current.directionDegrees}°T <small>{current.speedKnots.toFixed(1)}kt</small></strong>
             <small>{current.source}・信頼度 {current.confidence === 'high' ? '高' : current.confidence === 'medium' ? '中' : '低'}</small>
           </article>
-          <article className={`metric-card budget-stage-${freeTierBudget.stage}`}>
-            <span><RadioTower size={16} /> 無料枠・標準負荷試算</span>
-            <strong>{Math.ceil(freeTierBudget.maxPercent)}<small>%</small></strong>
-            <small>最大：{freeTierBudget.limitingMetric.label}・実測はCloudflareで確認</small>
+          <article className={`metric-card budget-stage-${runtimeBudget?.stage ?? freeTierBudget.stage}`}>
+            <span><RadioTower size={16} /> 無料枠・稼働監視</span>
+            <strong>{Math.ceil(runtimeBudget?.maxPercent ?? freeTierBudget.maxPercent)}<small>%</small></strong>
+            <small>最大：{runtimeBudget?.limitingMetricLabel ?? `${freeTierBudget.limitingMetric.label}（標準負荷試算）`}</small>
+            {runtimeBudget && <small>
+              大会ルーム実測 {runtimeBudget.observedDurableObjectRowsWritten.toLocaleString('ja-JP')} / {runtimeBudget.durableObjectRowsWrittenLimit.toLocaleString('ja-JP')}行（UTC日次）
+            </small>}
+            {runtimeBudget && runtimeBudget.stage !== 'normal' && runtimeBudget.stage !== 'observe' && <small>
+              位置更新 {runtimeBudget.policy.transientPositionMinIntervalMs / 1_000}秒以上へ縮退・重要イベントは維持
+            </small>}
           </article>
           <article className={`metric-card ${latestPassage?.hasConflict ? 'metric-card--warning' : ''}`}>
             <span><Clock3 size={16} /> 最新先頭通過</span>

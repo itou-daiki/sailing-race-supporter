@@ -6,6 +6,7 @@ import {
   removeQueuedOperation,
   type QueuedOperation,
 } from './offlineStore'
+import type { RuntimeBudgetStatus } from '../shared/freeTierBudget'
 
 export type RealtimeStatus = 'connecting' | 'live' | 'offline'
 
@@ -92,6 +93,7 @@ export function useEventRoom({ eventId, memberId, connectionKey = '', enabled = 
   const [pendingCount, setPendingCount] = useState(0)
   const [lastSequence, setLastSequence] = useState(0)
   const [serverOffsetMs, setServerOffsetMs] = useState(0)
+  const [budgetStatus, setBudgetStatus] = useState<RuntimeBudgetStatus>()
   const [connectedKey, setConnectedKey] = useState('')
   const socketRef = useRef<WebSocket | undefined>(undefined)
   const eventHandlerRef = useRef(onEvent)
@@ -160,14 +162,16 @@ export function useEventRoom({ eventId, memberId, connectionKey = '', enabled = 
         if (typeof message.data !== 'string') return
         try {
           const envelope = JSON.parse(message.data) as {
-            type?: RoomEnvelope['type'] | RoomErrorEnvelope['type'] | 'snapshot' | 'ack'
+            type?: RoomEnvelope['type'] | RoomErrorEnvelope['type'] | 'snapshot' | 'ack' | 'budget'
             event?: SequencedOperation
             code?: string
             id?: string
             operation?: OperationType
             sequence?: number
             serverTime?: string
+            budget?: RuntimeBudgetStatus
           }
+          if (envelope.budget) setBudgetStatus(envelope.budget)
           const serverTime = envelope.type === 'event' ? envelope.event?.serverTime : envelope.serverTime
           if (serverTime) {
             const measuredOffset = Date.parse(serverTime) - Date.now()
@@ -194,6 +198,9 @@ export function useEventRoom({ eventId, memberId, connectionKey = '', enabled = 
               void removeQueuedOperation(envelope.id).then(refreshPendingCount)
               errorHandlerRef.current?.(operationError, envelope.operation)
             }
+          } else if (envelope.type === 'ack' && envelope.id) {
+            void removeQueuedOperation(envelope.id).then(refreshPendingCount)
+            if (typeof envelope.sequence === 'number') setLastSequence(envelope.sequence)
           } else if (typeof envelope.sequence === 'number') {
             setLastSequence(envelope.sequence)
           }
@@ -292,6 +299,7 @@ export function useEventRoom({ eventId, memberId, connectionKey = '', enabled = 
     pendingCount,
     lastSequence,
     serverOffsetMs,
+    budgetStatus,
     connectedKey,
     send,
     sendConfirmed,

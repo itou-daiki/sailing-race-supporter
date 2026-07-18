@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useEventRoom } from '../src/realtime'
+import { runtimeBudgetStatus } from '../shared/freeTierBudget'
 
 class FakeWebSocket {
   static readonly OPEN = 1
@@ -63,6 +64,35 @@ describe('realtime operation rejection', () => {
       'mark',
     ))
     await waitFor(() => expect(result.current.pendingCount).toBe(0))
+    unmount()
+  })
+
+  it('applies room budget telemetry and removes a throttled position from the outbox', async () => {
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    const { result, unmount } = renderHook(() => useEventRoom({
+      eventId: 'budget-test-event',
+      memberId: 'member-1',
+    }))
+    const socket = FakeWebSocket.instances[0]
+    act(() => socket.emit('open'))
+    const budget = runtimeBudgetStatus('2026-07-18', 70_000)
+    act(() => socket.emit('message', {
+      data: JSON.stringify({ type: 'snapshot', sequence: 100, serverTime: new Date().toISOString(), budget }),
+    }))
+    await waitFor(() => expect(result.current.budgetStatus?.stage).toBe('warning'))
+
+    let operationId = ''
+    await act(async () => {
+      operationId = await result.current.send('position', { committeeBoatId: 'boat-1', position: [139, 35] }, 'race-1')
+    })
+    await waitFor(() => expect(result.current.pendingCount).toBe(1))
+    act(() => socket.emit('message', {
+      data: JSON.stringify({
+        type: 'ack', id: operationId, sequence: 100, serverTime: new Date().toISOString(), throttled: true, budget,
+      }),
+    }))
+    await waitFor(() => expect(result.current.pendingCount).toBe(0))
+    expect(result.current.budgetStatus?.policy.preservesOperationalEvents).toBe(true)
     unmount()
   })
 })

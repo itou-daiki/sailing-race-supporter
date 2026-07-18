@@ -1,10 +1,12 @@
 import { DurableObject } from 'cloudflare:workers'
 import { FINALIZATION_AUTH_MAX_AGE_MINUTES } from '../shared/finalization.js'
 import {
-  DURABLE_OBJECT_POSITION_SNAPSHOT_MS,
   estimateRegattaFreeTierUsage,
   ROOM_SEQUENCE_ALLOCATION_SIZE,
+  runtimeBudgetStatus,
   STANDARD_REGATTA_LOAD,
+  type BudgetStage,
+  type RuntimeBudgetStatus,
 } from '../shared/freeTierBudget.js'
 import { handleAuthRequest } from './auth.js'
 import { handleAudioDeviceRequest } from './audioDevices.js'
@@ -101,7 +103,12 @@ export class EventRoom extends DurableObject<AppEnv> {
   private sequenceAllocationEnd = 0
   private readonly positionAuthorization = new Map<string, number>()
   private readonly positionPersistenceSchedule = new Map<string, PositionPersistenceSchedule>()
+  private readonly lastPositionBroadcastAt = new Map<string, number>()
   private readonly socketMessageQueues = new WeakMap<WebSocket, Promise<void>>()
+  private usageDay = new Date().toISOString().slice(0, 10)
+  private roomEventWritesToday = 0
+  private positionSnapshotWritesToday = 0
+  private sequenceAllocationWritesToday = 0
 
   constructor(ctx: DurableObjectState, env: AppEnv) {
     super(ctx, env)
@@ -126,13 +133,22 @@ export class EventRoom extends DurableObject<AppEnv> {
         payload_json TEXT NOT NULL,
         client_time TEXT,
         server_time TEXT NOT NULL,
-        last_sampled_at TEXT
+        last_sampled_at TEXT,
+        snapshot_day TEXT,
+        snapshot_count INTEGER NOT NULL DEFAULT 0
       );
       CREATE TABLE IF NOT EXISTS room_meta (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
     `)
+    const positionColumns = [...this.ctx.storage.sql.exec<{ name: string }>('PRAGMA table_info(current_positions)')]
+    if (!positionColumns.some((column) => column.name === 'snapshot_day')) {
+      this.ctx.storage.sql.exec('ALTER TABLE current_positions ADD COLUMN snapshot_day TEXT')
+    }
+    if (!positionColumns.some((column) => column.name === 'snapshot_count')) {
+      this.ctx.storage.sql.exec('ALTER TABLE current_positions ADD COLUMN snapshot_count INTEGER NOT NULL DEFAULT 0')
+    }
     const rows = [...this.ctx.storage.sql.exec<{ sequence: number }>(
       'SELECT COALESCE(MAX(sequence), 0) AS sequence FROM room_events',
     )]
@@ -142,23 +158,77 @@ export class EventRoom extends DurableObject<AppEnv> {
     const allocationRows = [...this.ctx.storage.sql.exec<{ value: string }>(
       "SELECT value FROM room_meta WHERE key = 'sequence-allocation-end' LIMIT 1",
     )]
-    const allocationEnd = Number(allocationRows[0]?.value ?? 0)
+    const allocationValue = allocationRows[0]?.value ?? '0'
+    let allocationEnd = Number(allocationValue)
+    try {
+      const allocation = JSON.parse(allocationValue) as { end?: unknown; day?: unknown; dailyCount?: unknown }
+      if (typeof allocation.end === 'number') allocationEnd = allocation.end
+      if (allocation.day === this.usageDay && typeof allocation.dailyCount === 'number') {
+        this.sequenceAllocationWritesToday = Math.max(0, allocation.dailyCount)
+      }
+    } catch {
+      // Previous deployments stored the allocation end as a plain number.
+    }
     this.sequence = Math.max(
       rows[0]?.sequence ?? 0,
       positionRows[0]?.sequence ?? 0,
       Number.isFinite(allocationEnd) ? allocationEnd : 0,
     )
     this.sequenceAllocationEnd = this.sequence
+    this.refreshObservedUsage(this.usageDay)
+  }
+
+  private refreshObservedUsage(day: string): void {
+    this.usageDay = day
+    const roomEvents = [...this.ctx.storage.sql.exec<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM room_events WHERE substr(server_time, 1, 10) = ?',
+      day,
+    )][0]
+    const positionSnapshots = [...this.ctx.storage.sql.exec<{ count: number }>(
+      'SELECT COALESCE(SUM(snapshot_count), 0) AS count FROM current_positions WHERE snapshot_day = ?',
+      day,
+    )][0]
+    this.roomEventWritesToday = roomEvents?.count ?? 0
+    this.positionSnapshotWritesToday = positionSnapshots?.count ?? 0
+  }
+
+  private budgetStatus(): RuntimeBudgetStatus {
+    const today = new Date().toISOString().slice(0, 10)
+    if (today !== this.usageDay) {
+      this.sequenceAllocationWritesToday = 0
+      this.refreshObservedUsage(today)
+    }
+    return runtimeBudgetStatus(
+      this.usageDay,
+      this.roomEventWritesToday + this.positionSnapshotWritesToday + this.sequenceAllocationWritesToday,
+    )
+  }
+
+  private recordDurableObjectWrite(kind: 'room-event' | 'position-snapshot' | 'sequence-allocation'): void {
+    const previousStage: BudgetStage = this.budgetStatus().stage
+    if (kind === 'room-event') this.roomEventWritesToday += 1
+    if (kind === 'position-snapshot') this.positionSnapshotWritesToday += 1
+    if (kind === 'sequence-allocation') this.sequenceAllocationWritesToday += 1
+    const nextStatus = this.budgetStatus()
+    if (nextStatus.stage !== previousStage) {
+      this.broadcast({ type: 'budget', budget: nextStatus })
+    }
   }
 
   private nextSequence(): number {
     if (this.sequence >= this.sequenceAllocationEnd) {
       this.sequenceAllocationEnd = this.sequence + ROOM_SEQUENCE_ALLOCATION_SIZE
+      const nextDailyAllocationCount = this.sequenceAllocationWritesToday + 1
       this.ctx.storage.sql.exec(
         `INSERT INTO room_meta (key, value) VALUES ('sequence-allocation-end', ?)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-        String(this.sequenceAllocationEnd),
+        JSON.stringify({
+          end: this.sequenceAllocationEnd,
+          day: this.usageDay,
+          dailyCount: nextDailyAllocationCount,
+        }),
       )
+      this.recordDurableObjectWrite('sequence-allocation')
     }
     this.sequence += 1
     return this.sequence
@@ -202,6 +272,7 @@ export class EventRoom extends DurableObject<AppEnv> {
         sequence: this.sequence,
         members: this.ctx.getWebSockets().length,
         serverTime: new Date().toISOString(),
+        budget: this.budgetStatus(),
       }))
       this.broadcast({
         type: 'presence',
@@ -403,6 +474,29 @@ export class EventRoom extends DurableObject<AppEnv> {
         if (parsed.type === 'position') {
           const payload = parsed.payload as { committeeBoatId?: unknown }
           if (typeof payload?.committeeBoatId === 'string') {
+            const authorizationKey = `${access.memberId}:${payload.committeeBoatId}`
+            const authorizationExpiresAt = this.positionAuthorization.get(authorizationKey) ?? 0
+            if (authorizationExpiresAt <= Date.now()) {
+              await authorizeCommitteeBoat(this.env, access, payload.committeeBoatId)
+              this.positionAuthorization.set(authorizationKey, Date.now() + 30_000)
+            }
+            const budget = this.budgetStatus()
+            const lastBroadcastAt = this.lastPositionBroadcastAt.get(payload.committeeBoatId) ?? 0
+            if (
+              budget.policy.transientPositionMinIntervalMs > 0 &&
+              Date.now() - lastBroadcastAt < budget.policy.transientPositionMinIntervalMs
+            ) {
+              socket.send(JSON.stringify({
+                type: 'ack',
+                id: parsed.id,
+                sequence: this.sequence,
+                serverTime: new Date().toISOString(),
+                throttled: true,
+                budget,
+              }))
+              return
+            }
+            this.lastPositionBroadcastAt.set(payload.committeeBoatId, Date.now())
             const current = [...this.ctx.storage.sql.exec<{ last_sampled_at: string | null; server_time: string }>(
               'SELECT last_sampled_at, server_time FROM current_positions WHERE committee_boat_id = ? LIMIT 1',
               payload.committeeBoatId,
@@ -419,8 +513,8 @@ export class EventRoom extends DurableObject<AppEnv> {
               Number.isFinite(storedSnapshotAt) ? storedSnapshotAt : 0,
               scheduled?.snapshottedAt ?? 0,
             )
-            samplePosition = now - lastSampledAt >= 60_000
-            persistPositionSnapshot = samplePosition || now - lastSnapshotAt >= DURABLE_OBJECT_POSITION_SNAPSHOT_MS
+            samplePosition = now - lastSampledAt >= budget.policy.d1PositionSampleMs
+            persistPositionSnapshot = samplePosition || now - lastSnapshotAt >= budget.policy.durableObjectPositionSnapshotMs
             if (samplePosition || persistPositionSnapshot) {
               const reservation = {
                 sampledAt: samplePosition ? now : lastSampledAt,
@@ -434,12 +528,6 @@ export class EventRoom extends DurableObject<AppEnv> {
               // Reserve synchronously before the first await below. Durable Object handlers may
               // interleave at awaits, so later live frames must observe this reservation.
               this.positionPersistenceSchedule.set(payload.committeeBoatId, reservation)
-            }
-            const authorizationKey = `${access.memberId}:${payload.committeeBoatId}`
-            const authorizationExpiresAt = this.positionAuthorization.get(authorizationKey) ?? 0
-            if (authorizationExpiresAt <= Date.now()) {
-              await authorizeCommitteeBoat(this.env, access, payload.committeeBoatId)
-              this.positionAuthorization.set(authorizationKey, Date.now() + 30_000)
             }
           }
         }
@@ -494,8 +582,9 @@ export class EventRoom extends DurableObject<AppEnv> {
       if (payload.committeeBoatId) {
         this.ctx.storage.sql.exec(
           `INSERT INTO current_positions
-           (committee_boat_id, sequence, event_id, member_id, payload_json, client_time, server_time, last_sampled_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           (committee_boat_id, sequence, event_id, member_id, payload_json, client_time, server_time,
+            last_sampled_at, snapshot_day, snapshot_count)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
            ON CONFLICT(committee_boat_id) DO UPDATE SET
              sequence = excluded.sequence,
              event_id = excluded.event_id,
@@ -503,7 +592,12 @@ export class EventRoom extends DurableObject<AppEnv> {
              payload_json = excluded.payload_json,
              client_time = excluded.client_time,
              server_time = excluded.server_time,
-             last_sampled_at = COALESCE(excluded.last_sampled_at, current_positions.last_sampled_at)`,
+             last_sampled_at = COALESCE(excluded.last_sampled_at, current_positions.last_sampled_at),
+             snapshot_count = CASE
+               WHEN current_positions.snapshot_day = excluded.snapshot_day THEN current_positions.snapshot_count + 1
+               ELSE 1
+             END,
+             snapshot_day = excluded.snapshot_day`,
           payload.committeeBoatId,
           sequenced.sequence,
           sequenced.id,
@@ -512,7 +606,9 @@ export class EventRoom extends DurableObject<AppEnv> {
           sequenced.clientTime ?? null,
           sequenced.serverTime,
           payload.lastSampledAt ?? null,
+          this.usageDay,
         )
+        this.recordDurableObjectWrite('position-snapshot')
       }
     } else if (sequenced.type !== 'position') {
       this.ctx.storage.sql.exec(
@@ -528,6 +624,7 @@ export class EventRoom extends DurableObject<AppEnv> {
         sequenced.clientTime ?? null,
         sequenced.serverTime,
       )
+      this.recordDurableObjectWrite('room-event')
     }
 
     if (sequenced.type === 'message' && (sequenced.payload as { body?: unknown }).body) {

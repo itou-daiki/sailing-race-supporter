@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   budgetStage,
   estimateRegattaFreeTierUsage,
+  freeTierProtectionPolicy,
+  runtimeBudgetStatus,
   STANDARD_REGATTA_LOAD,
 } from '../shared/freeTierBudget'
 
@@ -29,5 +31,21 @@ describe('Cloudflare free tier budget model', () => {
     expect(budgetStage(70)).toBe('warning')
     expect(budgetStage(85)).toBe('protect')
     expect(budgetStage(95)).toBe('critical')
+  })
+
+  it('automatically reduces only transient position frequency near the write limit', () => {
+    const warning = runtimeBudgetStatus('2026-07-18', 70_000)
+    expect(warning.stage).toBe('warning')
+    expect(warning.limitingMetricKey).toBe('observed-do-rows-written')
+    expect(warning.policy).toMatchObject({
+      transientPositionMinIntervalMs: 3_000,
+      durableObjectPositionSnapshotMs: 60_000,
+      d1PositionSampleMs: 120_000,
+      preservesOperationalEvents: true,
+    })
+    expect(freeTierProtectionPolicy('critical')).toMatchObject({
+      transientPositionMinIntervalMs: 10_000,
+      preservesOperationalEvents: true,
+    })
   })
 })

@@ -49,6 +49,27 @@ export interface FreeTierBudgetEstimate {
   positionMessages: number
 }
 
+export interface FreeTierProtectionPolicy {
+  stage: BudgetStage
+  transientPositionMinIntervalMs: number
+  durableObjectPositionSnapshotMs: number
+  d1PositionSampleMs: number
+  preservesOperationalEvents: true
+}
+
+export interface RuntimeBudgetStatus {
+  source: 'app-observed-plus-standard-model'
+  day: string
+  maxPercent: number
+  targetPercent: 70
+  stage: BudgetStage
+  limitingMetricKey: string
+  limitingMetricLabel: string
+  observedDurableObjectRowsWritten: number
+  durableObjectRowsWrittenLimit: number
+  policy: FreeTierProtectionPolicy
+}
+
 export const DURABLE_OBJECT_POSITION_SNAPSHOT_MS = 30_000
 export const ROOM_SEQUENCE_ALLOCATION_SIZE = 1_000
 
@@ -90,6 +111,43 @@ export function budgetStage(percent: number): BudgetStage {
   if (percent >= 70) return 'warning'
   if (percent >= 50) return 'observe'
   return 'normal'
+}
+
+export function freeTierProtectionPolicy(stage: BudgetStage): FreeTierProtectionPolicy {
+  if (stage === 'critical') {
+    return {
+      stage,
+      transientPositionMinIntervalMs: 10_000,
+      durableObjectPositionSnapshotMs: 300_000,
+      d1PositionSampleMs: 600_000,
+      preservesOperationalEvents: true,
+    }
+  }
+  if (stage === 'protect') {
+    return {
+      stage,
+      transientPositionMinIntervalMs: 5_000,
+      durableObjectPositionSnapshotMs: 120_000,
+      d1PositionSampleMs: 300_000,
+      preservesOperationalEvents: true,
+    }
+  }
+  if (stage === 'warning') {
+    return {
+      stage,
+      transientPositionMinIntervalMs: 3_000,
+      durableObjectPositionSnapshotMs: 60_000,
+      d1PositionSampleMs: 120_000,
+      preservesOperationalEvents: true,
+    }
+  }
+  return {
+    stage,
+    transientPositionMinIntervalMs: 0,
+    durableObjectPositionSnapshotMs: DURABLE_OBJECT_POSITION_SNAPSHOT_MS,
+    d1PositionSampleMs: 60_000,
+    preservesOperationalEvents: true,
+  }
 }
 
 function metric(
@@ -149,5 +207,33 @@ export function estimateRegattaFreeTierUsage(
     limitingMetric,
     metrics,
     positionMessages,
+  }
+}
+
+export function runtimeBudgetStatus(
+  day: string,
+  observedDurableObjectRowsWritten: number,
+  limits: CloudflareFreeTierLimits = DEFAULT_CLOUDFLARE_FREE_LIMITS,
+  designEstimate: FreeTierBudgetEstimate = estimateRegattaFreeTierUsage(STANDARD_REGATTA_LOAD, limits),
+): RuntimeBudgetStatus {
+  const observedPercent = limits.durableObjectRowsWrittenPerDay > 0
+    ? observedDurableObjectRowsWritten / limits.durableObjectRowsWrittenPerDay * 100
+    : 100
+  const observedIsLimiting = observedPercent >= designEstimate.maxPercent
+  const maxPercent = Math.max(observedPercent, designEstimate.maxPercent)
+  const stage = budgetStage(maxPercent)
+  return {
+    source: 'app-observed-plus-standard-model',
+    day,
+    maxPercent,
+    targetPercent: 70,
+    stage,
+    limitingMetricKey: observedIsLimiting ? 'observed-do-rows-written' : designEstimate.limitingMetric.key,
+    limitingMetricLabel: observedIsLimiting
+      ? 'Durable Objects行書込（アプリ実測）'
+      : `${designEstimate.limitingMetric.label}（標準負荷試算）`,
+    observedDurableObjectRowsWritten,
+    durableObjectRowsWrittenLimit: limits.durableObjectRowsWrittenPerDay,
+    policy: freeTierProtectionPolicy(stage),
   }
 }

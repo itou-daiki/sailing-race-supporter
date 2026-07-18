@@ -1412,6 +1412,7 @@ export default function App() {
           wind={{ ...windDetails, directionDegrees: windDirection, speedKnots: windSpeed }}
           current={seaCurrent}
           freeTierBudget={freeTierBudget}
+          runtimeBudget={realtime.budgetStatus}
           scale={boardScale}
           detail={boardDetail}
           postponed={postponed}
