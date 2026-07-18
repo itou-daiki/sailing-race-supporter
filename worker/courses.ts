@@ -1,5 +1,6 @@
 import { eventAccess } from './authorization.js'
 import { appendAuditEvent, canonical } from './audit.js'
+import { buildGateConfiguration } from '../shared/gates.js'
 import { json, readJson } from './http.js'
 import type { AppEnv } from './index.js'
 import { assertSameOrigin, hasRecentAuthentication, requireSession, sha256Base64Url } from './security.js'
@@ -264,6 +265,16 @@ export async function handleCourseRequest(request: Request, env: AppEnv): Promis
     }
     nodes.push({ markId: node.markId, label: node.label.trim(), nodeType: node.nodeType, rounding: node.rounding?.slice(0, 20) ?? null, target: node.target })
   }
+  let gateConfiguration: ReturnType<typeof buildGateConfiguration>
+  try {
+    gateConfiguration = buildGateConfiguration({
+      lower: body.lowerGate === true,
+      upper: body.upperGate === true,
+      second: body.secondGate === true,
+    }, nodes)
+  } catch (reason) {
+    return json({ error: reason instanceof Error ? reason.message : 'ゲート構成を確認してください' }, { status: 400 })
+  }
   const previous = await env.DB.prepare(
     'SELECT COALESCE(MAX(revision), 0) AS revision FROM course_revisions WHERE race_id = ?',
   ).bind(raceId).first<{ revision: number }>()
@@ -288,7 +299,7 @@ export async function handleCourseRequest(request: Request, env: AppEnv): Promis
       body.windDirection,
       body.windSpeed,
       body.targetLengthMetres,
-      JSON.stringify({ lower: body.lowerGate === true, upper: body.upperGate === true, second: body.secondGate === true }),
+      JSON.stringify(gateConfiguration),
       previous?.revision || null,
       access.userId,
       createdAt,
@@ -312,7 +323,15 @@ export async function handleCourseRequest(request: Request, env: AppEnv): Promis
     action: 'course.revision.create',
     entityType: 'course_revision',
     entityId: revisionId,
-    after: { revision, courseCode, windDirection: body.windDirection, windSpeed: body.windSpeed, targetLengthMetres: body.targetLengthMetres, lowerGate: body.lowerGate, upperGate: body.upperGate, secondGate: body.secondGate, nodes },
+    after: {
+      revision,
+      courseCode,
+      windDirection: body.windDirection,
+      windSpeed: body.windSpeed,
+      targetLengthMetres: body.targetLengthMetres,
+      gateConfiguration,
+      nodes,
+    },
   })
-  return json({ revisionId, revision, createdAt, nodes })
+  return json({ revisionId, revision, createdAt, gateConfiguration, nodes })
 }

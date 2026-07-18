@@ -14,6 +14,7 @@ import type {
 } from './domain'
 import type { OwnerRecoveryKit } from './authClient'
 import { makeRaceSignalEvent } from './signals'
+import type { GateGeometry } from '../shared/gates'
 
 export interface EventSummary {
   id: string
@@ -72,7 +73,7 @@ export interface CourseRevisionSummary {
   windDirection?: number
   windSpeed?: number
   targetLengthMetres?: number
-  gateConfig: { lower?: boolean; upper?: boolean; second?: boolean }
+  gateConfig: { lower?: boolean; upper?: boolean; second?: boolean; gates?: GateGeometry[] }
   status: string
   basedOnRevision?: number
   createdBy?: string

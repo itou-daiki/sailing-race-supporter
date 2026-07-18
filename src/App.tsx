@@ -155,6 +155,10 @@ function formatCourseRevisionTime(iso: string): string {
   }).format(new Date(iso))
 }
 
+function formatGateBearing(value: number): string {
+  return String(Math.round(value) % 360).padStart(3, '0')
+}
+
 function dateTimeLocalValue(iso: string): string {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return ''
@@ -267,6 +271,7 @@ export default function App() {
   const [lowerGate, setLowerGate] = useState(true)
   const [upperGate, setUpperGate] = useState(false)
   const [secondGate, setSecondGate] = useState(false)
+  const [gateWidthMetres, setGateWidthMetres] = useState(130)
   const [courseSaving, setCourseSaving] = useState(false)
   const [courseSaveError, setCourseSaveError] = useState<string>()
   const [courseHistory, setCourseHistory] = useState<CourseRevisionSummary[]>([])
@@ -1094,13 +1099,18 @@ export default function App() {
     setLowerGate(activeRace.marks.some((mark) => mark.label.startsWith('下ゲート')) || activeRace.courseCode.includes('ゲート'))
     setUpperGate(activeRace.marks.some((mark) => mark.label.startsWith('上ゲート')))
     setSecondGate(activeRace.marks.some((mark) => mark.label.startsWith('中ゲート')))
+    setGateWidthMetres(130)
     setCourseSaveError(undefined)
     setCourseHistory([])
     setSettingsOpen(true)
     if (canViewCourseHistory) {
       setCourseHistoryLoading(true)
       void loadCourseRevisions(eventId, activeRace.id)
-        .then(setCourseHistory)
+        .then((revisions) => {
+          setCourseHistory(revisions)
+          const savedWidth = revisions[0]?.gateConfig.gates?.[0]?.widthMetres
+          if (savedWidth && Number.isFinite(savedWidth)) setGateWidthMetres(Math.round(savedWidth))
+        })
         .catch((reason) => setCourseSaveError(reason instanceof Error ? reason.message : 'コース版履歴を取得できません'))
         .finally(() => setCourseHistoryLoading(false))
     }
@@ -1149,6 +1159,7 @@ export default function App() {
       lowerGate,
       upperGate,
       secondGate,
+      gateWidthMetres,
     })
     const allPhysicalMarks = new Map<string, { id: string; label: string }>()
     marks.forEach((mark) => allPhysicalMarks.set(mark.label, mark))
@@ -1538,6 +1549,7 @@ export default function App() {
             <label className="switch-row"><span><strong>下ゲート</strong><small>3S / 3Pを使用</small></span><input type="checkbox" checked={lowerGate} onChange={(event) => setLowerGate(event.target.checked)} /></label>
             <label className="switch-row"><span><strong>上ゲート</strong><small>1S / 1Pを使用</small></span><input type="checkbox" checked={upperGate} onChange={(event) => setUpperGate(event.target.checked)} /></label>
             {(courseTemplate === 'O2' || courseTemplate === 'I2' || courseTemplate === 'トライアングル') && <label className="switch-row"><span><strong>中ゲート</strong><small>2マークを2S / 2Pへ切替</small></span><input type="checkbox" checked={secondGate} onChange={(event) => setSecondGate(event.target.checked)} /></label>}
+            {(lowerGate || upperGate || secondGate) && <label><span>計画ゲート幅（m・全ゲート共通）</span><input type="number" min="40" max="600" step="5" value={gateWidthMetres} onChange={(event) => setGateWidthMetres(Math.min(600, Math.max(40, Number(event.target.value) || 40)))} /></label>}
             {canViewCourseHistory && <section className="course-history" aria-label="コース版履歴">
               <div className="settings-subsection">
                 <span className="eyebrow">コース版履歴</span>
@@ -1551,6 +1563,9 @@ export default function App() {
                     <span>第{revision.revision}版{index === 0 && <em>現在</em>}</span>
                     <strong>{revision.courseCode}</strong>
                     <small>{revision.createdBy ?? '運営メンバー'}・{formatCourseRevisionTime(revision.createdAt)}・{revision.nodeCount}点</small>
+                    {revision.gateConfig.gates?.map((gate) => <small className="course-history-gate" key={gate.key}>
+                      {gate.label}: {Math.round(gate.widthMetres)}m / {formatGateBearing(gate.bearingDegreesTrue)}°T（S→P）・中央 {gate.center[1].toFixed(5)}, {gate.center[0].toFixed(5)}
+                    </small>)}
                     {revision.basedOnRevision != null && <small>第{revision.basedOnRevision}版を基に作成</small>}
                   </div>
                   {index > 0 && <button

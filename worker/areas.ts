@@ -1,5 +1,6 @@
 import { eventAccess, type EventAccess } from './authorization.js'
 import { appendAuditEvent } from './audit.js'
+import { buildGateConfiguration } from '../shared/gates.js'
 import { json, readJson } from './http.js'
 import type { AppEnv } from './index.js'
 import { assertSameOrigin, hasRecentAuthentication, randomToken, requireSession } from './security.js'
@@ -161,6 +162,32 @@ export async function assignRaceToArea(
 
   const deltaLng = targetArea.center_lng != null && race.center_lng != null ? targetArea.center_lng - race.center_lng : 0
   const deltaLat = targetArea.center_lat != null && race.center_lat != null ? targetArea.center_lat - race.center_lat : 0
+  const shiftedNodes = nodes.map((node) => ({
+    ...node,
+    markId: targetMarks.get(node.label) as string,
+    nodeType: node.node_type,
+    target: [
+      Math.max(-180, Math.min(180, node.target_lng + deltaLng)),
+      Math.max(-85, Math.min(85, node.target_lat + deltaLat)),
+    ] as const,
+  }))
+  let sourceGateFlags: { lower?: unknown; upper?: unknown; second?: unknown } = {}
+  try {
+    const parsed = JSON.parse(source.gate_config_json) as unknown
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) sourceGateFlags = parsed
+  } catch {
+    return json({ error: '移動元コースのゲート構成を読み取れません' }, { status: 409 })
+  }
+  let movedGateConfiguration: ReturnType<typeof buildGateConfiguration>
+  try {
+    movedGateConfiguration = buildGateConfiguration({
+      lower: sourceGateFlags.lower === true,
+      upper: sourceGateFlags.upper === true,
+      second: sourceGateFlags.second === true,
+    }, shiftedNodes)
+  } catch (reason) {
+    return json({ error: reason instanceof Error ? reason.message : '移動元コースのゲート構成が不正です' }, { status: 409 })
+  }
   const revision = source.revision + 1
   const revisionId = crypto.randomUUID()
   const createdAt = new Date().toISOString()
@@ -177,23 +204,22 @@ export async function assignRaceToArea(
        FROM races WHERE id = ? AND regatta_id = ? AND status = 'planning'`,
     ).bind(
       revisionId, raceId, revision, source.course_code, source.wind_direction, source.wind_speed,
-      source.target_length_metres, source.gate_config_json, source.revision, authorized.userId, createdAt,
+      source.target_length_metres, JSON.stringify(movedGateConfiguration), source.revision, authorized.userId, createdAt,
       raceId, authorized.eventId,
     ),
     env.DB.prepare(
       'UPDATE races SET race_area_id = ?, updated_at = ? WHERE id = ? AND regatta_id = ? AND status = \'planning\'',
     ).bind(targetArea.id, createdAt, raceId, authorized.eventId),
   ]
-  for (const node of nodes) {
+  for (const node of shiftedNodes) {
     statements.push(env.DB.prepare(
       `INSERT INTO course_nodes
        (id, course_revision_id, mark_id, node_order, label, node_type, rounding, target_lng, target_lat)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).bind(
-      crypto.randomUUID(), revisionId, targetMarks.get(node.label), node.node_order, node.label,
+      crypto.randomUUID(), revisionId, node.markId, node.node_order, node.label,
       node.node_type, node.rounding,
-      Math.max(-180, Math.min(180, node.target_lng + deltaLng)),
-      Math.max(-85, Math.min(85, node.target_lat + deltaLat)),
+      node.target[0], node.target[1],
     ))
   }
   await env.DB.batch(statements)
@@ -204,7 +230,7 @@ export async function assignRaceToArea(
     entityType: 'race',
     entityId: raceId,
     before: { raceAreaId: race.race_area_id, areaName: race.area_name, courseRevision: source.revision },
-    after: { raceAreaId: targetArea.id, areaName: targetArea.name, courseRevision: revision },
+    after: { raceAreaId: targetArea.id, areaName: targetArea.name, courseRevision: revision, gateConfiguration: movedGateConfiguration },
     reason: `${race.race_number}を${targetArea.name}へ移動`,
   })
   return json({

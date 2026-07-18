@@ -2952,6 +2952,12 @@ select:focus-visible {
   white-space: nowrap;
 }
 
+.course-history-item .course-history-gate {
+  color: #176591;
+  line-height: 1.35;
+  white-space: normal;
+}
+
 .course-history-item button {
   flex: 0 0 auto;
   max-width: 118px;

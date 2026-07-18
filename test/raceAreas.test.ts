@@ -43,6 +43,8 @@ describe('multi-area race operations', () => {
                 { node_order: 1, label: 'スタート・ピン', node_type: 'start', rounding: null, target_lng: 139.1, target_lat: 35.1 },
                 { node_order: 2, label: '1マーク', node_type: 'single', rounding: 'port', target_lng: 139.2, target_lat: 35.2 },
                 { node_order: 3, label: 'シグナルボート', node_type: 'start', rounding: null, target_lng: 139.3, target_lat: 35.3 },
+                { node_order: 4, label: '下ゲート 3S', node_type: 'gate', rounding: 'gate', target_lng: 139.0995, target_lat: 35.1 },
+                { node_order: 5, label: '下ゲート 3P', node_type: 'gate', rounding: 'gate', target_lng: 139.1005, target_lat: 35.1 },
               ] }
             }
             if (sql.includes('SELECT id, label FROM marks')) {
@@ -50,6 +52,8 @@ describe('multi-area race operations', () => {
                 { id: 'b-pin', label: 'スタート・ピン' },
                 { id: 'b-one', label: '1マーク' },
                 { id: 'b-rc', label: 'シグナルボート' },
+                { id: 'b-3s', label: '下ゲート 3S' },
+                { id: 'b-3p', label: '下ゲート 3P' },
               ] }
             }
             throw new Error(`Unexpected all query: ${sql}`)
@@ -80,19 +84,30 @@ describe('multi-area race operations', () => {
     const result = await response.json() as { revisionId: string; revision: number; raceAreaId: string; areaName: string }
 
     expect(result).toMatchObject({ revision: 2, raceAreaId: 'area-b', areaName: '海面B' })
-    expect(batchSize).toBe(6)
+    expect(batchSize).toBe(8)
     expect(prepared.find((item) => item.sql.includes("UPDATE course_revisions SET status"))?.values).toEqual(['course-v1', 'race-2'])
     expect(prepared.find((item) => item.sql.includes('UPDATE races SET race_area_id'))?.values).toEqual([
       'area-b', expect.any(String), 'race-2', 'event-1',
     ])
     const copiedNodes = prepared.filter((item) => item.sql.includes('INSERT INTO course_nodes'))
-    expect(copiedNodes).toHaveLength(3)
+    expect(copiedNodes).toHaveLength(5)
     expect(copiedNodes[0].values.slice(2)).toEqual([
       'b-pin', 1, 'スタート・ピン', 'start', null, 140.1, 36.1,
     ])
     expect(copiedNodes[1].values.slice(2)).toEqual([
       'b-one', 2, '1マーク', 'single', 'port', 140.2, 36.2,
     ])
+    expect(copiedNodes[3].values.slice(2)).toEqual([
+      'b-3s', 4, '下ゲート 3S', 'gate', 'gate', 140.0995, 36.1,
+    ])
+    const movedGateConfiguration = JSON.parse(String(
+      prepared.find((item) => item.sql.includes('INSERT INTO course_revisions'))?.values[7],
+    )) as { gates: Array<{ starboardMarkId: string; portMarkId: string; center: [number, number] }> }
+    expect(movedGateConfiguration.gates[0]).toMatchObject({
+      starboardMarkId: 'b-3s',
+      portMarkId: 'b-3p',
+      center: [140.1, 36.1],
+    })
     const auditInsert = prepared.find((item) => item.sql.includes('INSERT INTO audit_events'))
     expect(auditInsert?.values[6]).toBe('race-area.assign')
     expect(auditInsert?.values[8]).toBe('race-2')

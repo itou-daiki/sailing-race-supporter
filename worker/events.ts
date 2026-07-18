@@ -1,5 +1,6 @@
 import type { EventAccess } from './authorization.js'
 import { appendAuditEventWithoutBlockingSecretDelivery } from './audit.js'
+import { buildGateConfiguration } from '../shared/gates.js'
 import { json, readJson } from './http.js'
 import type { AppEnv } from './index.js'
 import { generateOwnerRecoveryCode, normalizeOwnerRecoveryCode } from '../shared/ownerRecovery.js'
@@ -237,6 +238,15 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
     const raceId = crypto.randomUUID()
     const revisionId = crypto.randomUUID()
     const raceWarning = new Date(warning.getTime() + index * 75 * 60_000).toISOString()
+    const initialCourseNodes = nodeDefinitions.map(([key, label, nodeType]) => {
+      const markId = markIds.get(key)
+      if (!markId) throw new Error(`標準マーク ${key} が見つかりません`)
+      return { markId, label, nodeType, target: targets[key] }
+    })
+    const gateConfiguration = buildGateConfiguration(
+      { lower: true, upper: false, second: false },
+      initialCourseNodes,
+    )
     statements.push(env.DB.prepare(
       `INSERT INTO races
        (id, regatta_id, race_area_id, race_number, race_order, class_name, course_code,
@@ -248,14 +258,13 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
        (id, race_id, revision, course_code, wind_direction, wind_speed, target_length_metres,
         gate_config_json, status, created_by, created_at)
        VALUES (?, ?, 1, ?, 350, 8, 3000, ?, 'draft', ?, ?)`,
-    ).bind(revisionId, raceId, courseCode, JSON.stringify({ lower: true, upper: false }), session.userId, now))
-    nodeDefinitions.forEach(([key, label, nodeType], nodeIndex) => {
-      const target = targets[key]
+    ).bind(revisionId, raceId, courseCode, JSON.stringify(gateConfiguration), session.userId, now))
+    initialCourseNodes.forEach(({ markId, label, nodeType, target }, nodeIndex) => {
       statements.push(env.DB.prepare(
         `INSERT INTO course_nodes
          (id, course_revision_id, mark_id, node_order, label, node_type, rounding, target_lng, target_lat)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(crypto.randomUUID(), revisionId, markIds.get(key), nodeIndex + 1, label, nodeType, key.includes('3') ? 'gate' : 'port', target[0], target[1]))
+      ).bind(crypto.randomUUID(), revisionId, markId, nodeIndex + 1, label, nodeType, nodeType === 'gate' ? 'gate' : 'port', target[0], target[1]))
     })
     const taskDefinitions = [
       ['全体運営準備を開始', 'waiting', 'required', -30],
