@@ -78,6 +78,72 @@ describe('Cloudflare Workers runtime integration', () => {
     expect(tableCount?.count).toBeGreaterThanOrEqual(50)
   })
 
+  it('exports branded race logs for CSV and the client-side PDF report', async () => {
+    const now = new Date().toISOString()
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1_000).toISOString()
+    const token = 'runtime-log-export-session'
+    const tokenHash = await sha256Base64Url(token)
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO users (id, display_name, created_at, updated_at)
+         VALUES (?, ?, ?, ?)`,
+      ).bind('runtime-log-owner', 'ログ大会管理者', now, now),
+      env.DB.prepare(
+        `INSERT INTO auth_sessions
+         (token_hash, user_id, created_at, expires_at, last_seen_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).bind(tokenHash, 'runtime-log-owner', now, expiresAt, now),
+      env.DB.prepare(
+        `INSERT INTO regattas
+         (id, slug, name, owner_user_id, starts_on, ends_on, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
+      ).bind('runtime-log-event', 'runtime-log-event', 'ログ出力テスト大会', 'runtime-log-owner', '2026-07-18', '2026-07-19', now, now),
+      env.DB.prepare(
+        `INSERT INTO race_areas (id, regatta_id, name, room_key, center_lng, center_lat)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).bind('runtime-log-area', 'runtime-log-event', 'A海面', 'runtime-log-room', 139.76, 35.25),
+      env.DB.prepare(
+        `INSERT INTO races
+         (id, regatta_id, race_area_id, race_number, race_order, class_name, course_code,
+          target_minutes, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'setup', ?, ?)`,
+      ).bind('runtime-log-race', 'runtime-log-event', 'runtime-log-area', '1R', 1, '470', 'L2', 50, now, now),
+    ])
+
+    const headers = { Cookie: `srs_session=${token}` }
+    const csvResponse = await exports.default.fetch(
+      'https://example.test/api/events/runtime-log-event/logs?raceId=runtime-log-race&format=csv&download=1',
+      { headers },
+    )
+    const csv = await csvResponse.text()
+
+    expect(csvResponse.status).toBe(200)
+    expect(csvResponse.headers.get('content-type')).toContain('text/csv')
+    expect(csv).toContain('"Sailing Race Supporter"')
+    expect(csv).toContain('"Created by Dit-Lab.（Daiki ITO）"')
+    expect(csv).toContain('"大会","ログ出力テスト大会"')
+    expect(csv).toContain('"対象範囲","1R"')
+
+    const jsonResponse = await exports.default.fetch(
+      'https://example.test/api/events/runtime-log-event/logs?raceId=runtime-log-race&format=json&download=1',
+      { headers },
+    )
+    const report = await jsonResponse.json<{
+      createdBy: string
+      event: { id: string; slug: string; name: string }
+      raceId: string
+      entries: unknown[]
+    }>()
+
+    expect(jsonResponse.status).toBe(200)
+    expect(report).toMatchObject({
+      createdBy: 'Sailing Race Supporter / Created by Dit-Lab.（Daiki ITO）',
+      event: { id: 'runtime-log-event', slug: 'runtime-log-event', name: 'ログ出力テスト大会' },
+      raceId: 'runtime-log-race',
+      entries: [],
+    })
+  })
+
   it('persists an event room snapshot across Durable Object eviction', async () => {
     const stub = env.EVENT_ROOMS.getByName('runtime-event-room')
     await runInDurableObject(stub, (instance: EventRoom, state) => {

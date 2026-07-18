@@ -108,7 +108,21 @@ function csvCell(value: unknown): string {
   return `"${normalized.replaceAll('"', '""')}"`
 }
 
-export function eventLogsToCsv(entries: readonly EventLogEntry[]): string {
+interface EventLogCsvMetadata {
+  eventName?: string
+  scope?: string
+  createdAt?: string
+}
+
+export function eventLogsToCsv(entries: readonly EventLogEntry[], metadata: EventLogCsvMetadata = {}): string {
+  const metadataRows = [
+    ['Sailing Race Supporter'],
+    ['Created by Dit-Lab.（Daiki ITO）'],
+    ['大会', metadata.eventName ?? ''],
+    ['対象範囲', metadata.scope ?? ''],
+    ['出力日時', metadata.createdAt ?? ''],
+    [],
+  ]
   const header = ['連番', 'レース', '発生時刻', '種別', '内容', '操作者', '詳細', 'イベントハッシュ']
   const rows = entries.map((entry) => [
     entry.sequence,
@@ -120,7 +134,7 @@ export function eventLogsToCsv(entries: readonly EventLogEntry[]): string {
     entry.detail,
     entry.eventHash,
   ])
-  return `\uFEFF${[header, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n')}`
+  return `\uFEFF${[...metadataRows, header, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n')}`
 }
 
 async function rows(env: AppEnv, sql: string, values: Array<string | number | null>): Promise<Row[]> {
@@ -345,10 +359,12 @@ export async function handleLogRequest(request: Request, env: AppEnv): Promise<R
   requirePermission(access, 'view')
 
   const raceId = url.searchParams.get('raceId') || null
+  let raceNumber: string | null = null
   if (raceId) {
-    const race = await env.DB.prepare('SELECT id FROM races WHERE id = ? AND regatta_id = ? LIMIT 1')
-      .bind(raceId, access.eventId).first<{ id: string }>()
+    const race = await env.DB.prepare('SELECT id, race_number FROM races WHERE id = ? AND regatta_id = ? LIMIT 1')
+      .bind(raceId, access.eventId).first<{ id: string; race_number: string }>()
     if (!race) return json({ error: 'Race not found' }, { status: 404 })
+    raceNumber = race.race_number
   }
   const format = url.searchParams.get('format') ?? 'json'
   const exportMode = format === 'csv' || url.searchParams.get('download') === '1'
@@ -358,8 +374,13 @@ export async function handleLogRequest(request: Request, env: AppEnv): Promise<R
     : Number.isFinite(requestedLimit) ? Math.min(500, Math.max(25, Math.trunc(requestedLimit))) : 250
   const entries = await collectLogs(env, access, raceId, limit)
   const filename = `${access.eventSlug}-${raceId ? 'race' : 'event'}-log`
+  const createdAt = new Date().toISOString()
   if (format === 'csv') {
-    return new Response(eventLogsToCsv(entries), {
+    return new Response(eventLogsToCsv(entries, {
+      eventName: access.eventName,
+      scope: raceNumber ?? '大会全体',
+      createdAt,
+    }), {
       headers: {
         'content-type': 'text/csv; charset=utf-8',
         'content-disposition': `attachment; filename="${filename}.csv"`,
@@ -371,7 +392,7 @@ export async function handleLogRequest(request: Request, env: AppEnv): Promise<R
   return json({
     format: 'srs-event-log',
     schemaVersion: 1,
-    createdAt: new Date().toISOString(),
+    createdAt,
     createdBy: 'Sailing Race Supporter / Created by Dit-Lab.（Daiki ITO）',
     event: { id: access.eventId, slug: access.eventSlug, name: access.eventName },
     raceId,

@@ -1,7 +1,8 @@
-import { Download, FileJson2, RefreshCw, ScrollText, ShieldCheck, X } from 'lucide-react'
+import { Download, FileJson2, Printer, RefreshCw, ScrollText, ShieldCheck, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { RaceDefinition } from '../domain'
 import { downloadEventLog, loadEventLogs, type EventLogCategory, type EventLogEntry } from '../logClient'
+import { openEventLogPrintView } from '../logReport'
 
 interface LogDrawerProps {
   eventSlug: string
@@ -28,7 +29,7 @@ export function LogDrawer({ eventSlug, eventName, races, activeRaceId, onClose }
   const [entries, setEntries] = useState<EventLogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
-  const [exporting, setExporting] = useState<'json' | 'csv'>()
+  const [exporting, setExporting] = useState<'json' | 'csv' | 'pdf'>()
   const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
@@ -57,11 +58,20 @@ export function LogDrawer({ eventSlug, eventName, races, activeRaceId, onClose }
     setRefreshKey((current) => current + 1)
   }
 
-  const exportLog = async (format: 'json' | 'csv') => {
+  const exportLog = async (format: 'json' | 'csv' | 'pdf') => {
     setExporting(format)
     setError(undefined)
     try {
-      await downloadEventLog(eventSlug, raceId, format)
+      if (format === 'pdf') {
+        await openEventLogPrintView({
+          eventSlug,
+          eventName,
+          raceId,
+          raceLabel: races.find((race) => race.id === raceId)?.number,
+        })
+      } else {
+        await downloadEventLog(eventSlug, raceId, format)
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'ログを書き出せません')
     } finally {
@@ -104,9 +114,10 @@ export function LogDrawer({ eventSlug, eventName, races, activeRaceId, onClose }
         ))}
       </div>
       <footer className="log-export">
-        <div><strong>{visibleEntries.length}件を表示</strong><small>出力は最大2,500件・大会URL単位</small></div>
+        <div><strong>{visibleEntries.length}件を表示</strong><small>最大2,500件・PDFは印刷画面で保存</small></div>
         <button type="button" onClick={() => void exportLog('json')} disabled={Boolean(exporting)}><FileJson2 size={16} /> {exporting === 'json' ? '作成中…' : 'JSON'}</button>
         <button type="button" onClick={() => void exportLog('csv')} disabled={Boolean(exporting)}><Download size={16} /> {exporting === 'csv' ? '作成中…' : 'CSV'}</button>
+        <button type="button" onClick={() => void exportLog('pdf')} disabled={Boolean(exporting)}><Printer size={16} /> {exporting === 'pdf' ? '作成中…' : 'PDF'}</button>
       </footer>
     </aside>
   )

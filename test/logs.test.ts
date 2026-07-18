@@ -16,8 +16,16 @@ describe('event log CSV export', () => {
       eventHash: 'hash-value',
     }
 
-    const csv = eventLogsToCsv([entry])
+    const csv = eventLogsToCsv([entry], {
+      eventName: 'テスト大会',
+      scope: '1R',
+      createdAt: '2026-07-18T00:01:00.000Z',
+    })
     expect(csv.startsWith('\uFEFF')).toBe(true)
+    expect(csv).toContain('"Sailing Race Supporter"')
+    expect(csv).toContain('"Created by Dit-Lab.（Daiki ITO）"')
+    expect(csv).toContain('"大会","テスト大会"')
+    expect(csv).toContain('"対象範囲","1R"')
     expect(csv).toContain('"\'=HYPERLINK(""https://invalid.example"")"')
     expect(csv).toContain('"\'+operator"')
     expect(csv).toContain('"hash-value"')

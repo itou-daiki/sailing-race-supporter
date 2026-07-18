@@ -2902,7 +2902,7 @@ select:focus-visible {
 
 .log-export {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 7px;
   padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
@@ -6168,7 +6168,7 @@ select:focus-visible {
   }
 
   .log-export {
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
   }
 
   .log-export small {

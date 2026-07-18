@@ -13,10 +13,17 @@ export interface EventLogEntry {
   eventHash: string | null
 }
 
-interface EventLogResponse {
+export interface EventLogResponse {
   format: 'srs-event-log'
   schemaVersion: number
   createdAt: string
+  createdBy?: string
+  event?: {
+    id: string
+    slug: string
+    name: string
+  }
+  raceId?: string | null
   entries: EventLogEntry[]
 }
 
@@ -30,6 +37,13 @@ export async function loadEventLogs(eventSlug: string, raceId: string | null): P
   const response = await fetch(endpoint(eventSlug, raceId, { limit: '300' }), { credentials: 'same-origin' })
   const body = await response.json() as EventLogResponse & { error?: string }
   if (!response.ok) throw new Error(body.error ?? `ログを取得できません (${response.status})`)
+  return body
+}
+
+export async function loadEventLogExport(eventSlug: string, raceId: string | null): Promise<EventLogResponse> {
+  const response = await fetch(endpoint(eventSlug, raceId, { format: 'json', download: '1' }), { credentials: 'same-origin' })
+  const body = await response.json() as EventLogResponse & { error?: string }
+  if (!response.ok) throw new Error(body.error ?? `ログレポートを作成できません (${response.status})`)
   return body
 }
 
