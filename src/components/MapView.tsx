@@ -12,9 +12,9 @@ import {
 } from 'lucide-react'
 import maplibregl, { type GeoJSONSource, type Map as MapLibreMap } from 'maplibre-gl'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { Feature, FeatureCollection, LineString, Point } from 'geojson'
-import { bearingDegrees, distanceMetres, estimateEtaSeconds, formatDistance, headingDifferenceDegrees, midpoint } from '../course'
+import { bearingDegrees, distanceMetres, estimateEtaSeconds, formatDistance, headingDifferenceDegrees } from '../course'
 import type { CommitteeBoat, CourseMark, CurrentObservation, LeadingPassageVisit, LngLat, WindObservation } from '../domain'
+import { buildCourseFeatures, findGatePairs } from '../mapCourseFeatures'
 import { passageVisitKey } from '../passages'
 
 interface MapViewProps {
@@ -54,35 +54,6 @@ const MAP_STYLE: maplibregl.StyleSpecification = {
   ],
 }
 
-interface GatePair {
-  key: string
-  starboard: CourseMark
-  port: CourseMark
-  positions: readonly [LngLat, LngLat]
-  actual: boolean
-  center: LngLat
-}
-
-function findGatePairs(marks: readonly CourseMark[]): GatePair[] {
-  const groups = new Map<string, { starboard?: CourseMark; port?: CourseMark }>()
-  marks.filter((mark) => mark.isGate && mark.gateSide).forEach((mark) => {
-    const key = mark.label.replace(/[SP]$/u, '').trim()
-    const group = groups.get(key) ?? {}
-    if (mark.gateSide === 'S') group.starboard = mark
-    if (mark.gateSide === 'P') group.port = mark
-    groups.set(key, group)
-  })
-  return [...groups.entries()].flatMap(([key, group]) => {
-    if (!group.starboard || !group.port) return []
-    const actual = Boolean(group.starboard.actual && group.port.actual)
-    const positions = [
-      actual ? group.starboard.actual as LngLat : group.starboard.target,
-      actual ? group.port.actual as LngLat : group.port.target,
-    ] as const
-    return [{ key, starboard: group.starboard, port: group.port, positions, actual, center: midpoint(positions[0], positions[1]) }]
-  })
-}
-
 function formatEta(seconds: number | undefined): string {
   if (seconds === undefined) return 'ETA —（0.5kt未満）'
   const minutes = Math.max(1, Math.ceil(seconds / 60))
@@ -98,81 +69,6 @@ function freshnessLabel(seconds: number): string {
   if (seconds < 60) return `${seconds}秒前`
   if (seconds < 3_600) return `${Math.floor(seconds / 60)}分前`
   return `${Math.floor(seconds / 3_600)}時間前`
-}
-
-function buildCourseFeatures(marks: readonly CourseMark[]): {
-  points: FeatureCollection<Point>
-  targetLinks: FeatureCollection<LineString>
-  course: FeatureCollection<LineString>
-  gates: FeatureCollection<LineString>
-} {
-  const gates = findGatePairs(marks)
-  const pointFeatures: Feature<Point>[] = marks.flatMap((mark) => {
-    const target: Feature<Point> = {
-      type: 'Feature',
-      id: `${mark.id}-target`,
-      properties: { markId: mark.id, kind: 'target', label: mark.shortLabel },
-      geometry: { type: 'Point', coordinates: [...mark.target] },
-    }
-    if (!mark.actual) return [target]
-    return [target, {
-      type: 'Feature',
-      id: `${mark.id}-actual`,
-      properties: { markId: mark.id, kind: 'actual', label: mark.shortLabel },
-      geometry: { type: 'Point', coordinates: [...mark.actual] },
-    }]
-  })
-  gates.forEach((gate) => pointFeatures.push({
-    type: 'Feature',
-    id: `gate-center-${gate.key}`,
-    properties: { kind: 'gate-center', label: `${gate.key}中央`, actual: gate.actual },
-    geometry: { type: 'Point', coordinates: [...gate.center] },
-  }))
-  const points: FeatureCollection<Point> = {
-    type: 'FeatureCollection',
-    features: pointFeatures,
-  }
-
-  const targetLinks: FeatureCollection<LineString> = {
-    type: 'FeatureCollection',
-    features: marks
-      .filter((mark) => mark.actual)
-      .map((mark) => ({
-        type: 'Feature' as const,
-        properties: { markId: mark.id },
-        geometry: {
-          type: 'LineString' as const,
-          coordinates: [[...mark.target], [...(mark.actual ?? mark.target)]],
-        },
-      })),
-  }
-
-  const ordered = marks.map((mark) => [...(mark.actual ?? mark.target)])
-
-  const course: FeatureCollection<LineString> = {
-    type: 'FeatureCollection',
-    features:
-      ordered.length > 1
-        ? [
-            {
-              type: 'Feature',
-              properties: {},
-              geometry: { type: 'LineString', coordinates: ordered },
-            },
-          ]
-        : [],
-  }
-
-  const gateLines: FeatureCollection<LineString> = {
-    type: 'FeatureCollection',
-    features: gates.map((gate) => ({
-      type: 'Feature',
-      properties: { key: gate.key, actual: gate.actual },
-      geometry: { type: 'LineString', coordinates: gate.positions.map((position) => [...position]) },
-    })),
-  }
-
-  return { points, targetLinks, course, gates: gateLines }
 }
 
 export function MapView({
