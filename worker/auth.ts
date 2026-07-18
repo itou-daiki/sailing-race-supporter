@@ -157,7 +157,12 @@ async function registrationVerification(request: Request, env: AppEnv): Promise<
   ])
   const created = await createSession(request, env, stored.user_id)
   return responseWithCookies(
-    { verified: true, user: { id: created.session.userId, displayName: created.session.displayName }, expiresAt: created.session.expiresAt },
+    {
+      verified: true,
+      user: { id: created.session.userId, displayName: created.session.displayName },
+      expiresAt: created.session.expiresAt,
+      authenticatedAt: created.session.createdAt,
+    },
     [created.cookie, clearAuthFlowCookie()],
   )
 }
@@ -234,9 +239,15 @@ async function authenticationVerification(request: Request, env: AppEnv): Promis
       'UPDATE auth_challenges SET consumed_at = ? WHERE id = ? AND consumed_at IS NULL',
     ).bind(now, flowId),
   ])
+  await revokeSession(request, env)
   const created = await createSession(request, env, credential.user_id)
   return responseWithCookies(
-    { verified: true, user: { id: created.session.userId, displayName: created.session.displayName }, expiresAt: created.session.expiresAt },
+    {
+      verified: true,
+      user: { id: created.session.userId, displayName: created.session.displayName },
+      expiresAt: created.session.expiresAt,
+      authenticatedAt: created.session.createdAt,
+    },
     [created.cookie, clearAuthFlowCookie()],
   )
 }
@@ -260,7 +271,12 @@ export async function handleAuthRequest(request: Request, env: AppEnv): Promise<
   if (request.method === 'GET' && pathname === '/api/auth/session') {
     const session = await getSession(request, env)
     return json(session
-      ? { authenticated: true, user: { id: session.userId, displayName: session.displayName }, expiresAt: session.expiresAt }
+      ? {
+          authenticated: true,
+          user: { id: session.userId, displayName: session.displayName },
+          expiresAt: session.expiresAt,
+          authenticatedAt: session.createdAt,
+        }
       : { authenticated: false })
   }
   if (request.method === 'POST' && pathname === '/api/auth/logout') {

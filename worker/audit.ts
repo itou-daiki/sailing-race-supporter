@@ -1,6 +1,7 @@
 import type { EventAccess } from './authorization.js'
 import type { AppEnv } from './index.js'
 import { sha256Base64Url } from './security.js'
+import { isFinalizationPhraseValid } from '../shared/finalization.js'
 
 interface AuditInput {
   access: EventAccess
@@ -107,6 +108,7 @@ export async function finalizeRace(
   access: EventAccess,
   raceId: string,
   reason: string,
+  confirmationPhrase: string,
 ): Promise<{ revision: number; finalizedAt: string; stateHash: string; alreadyFinalized: boolean }> {
   const race = await env.DB.prepare(
     `SELECT id, race_number, class_name, course_code, target_minutes, warning_at,
@@ -114,6 +116,9 @@ export async function finalizeRace(
      FROM races WHERE id = ? AND regatta_id = ? LIMIT 1`,
   ).bind(raceId, access.eventId).first<Record<string, unknown>>()
   if (!race) throw new Response('Race not found', { status: 404 })
+  if (!isFinalizationPhraseValid(String(race.race_number), confirmationPhrase)) {
+    throw new Response('Race confirmation phrase does not match', { status: 400 })
+  }
   if (race.status === 'finalized') {
     const existing = await env.DB.prepare(
       'SELECT state_hash FROM race_finalizations WHERE race_id = ? ORDER BY revision DESC LIMIT 1',

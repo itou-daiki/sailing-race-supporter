@@ -4250,6 +4250,116 @@ select:focus-visible {
   line-height: 1.7;
 }
 
+.finalize-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin: 0 0 14px;
+  text-align: left;
+}
+
+.finalize-summary > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 10px;
+  background: #f3f7fa;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+.finalize-summary span {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.finalize-summary strong {
+  overflow: hidden;
+  color: var(--navy);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.finalize-reauth {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0 0 12px;
+  padding: 11px;
+  color: #704708;
+  text-align: left;
+  background: #fff8e8;
+  border: 1px solid #ecd39f;
+  border-radius: 10px;
+}
+
+.finalize-reauth strong {
+  font-size: 11px;
+}
+
+.finalize-reauth small {
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.finalize-reauth button {
+  align-self: flex-start;
+  min-height: 34px;
+  padding: 0 11px;
+  color: #fff;
+  background: var(--navy-soft);
+  border: 0;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.finalize-confirmation-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 11px;
+  color: var(--muted);
+  text-align: left;
+  font-size: 10px;
+}
+
+.finalize-confirmation-field strong {
+  color: var(--navy);
+}
+
+.finalize-confirmation-field input {
+  width: 100%;
+  height: 42px;
+  padding: 0 11px;
+  color: var(--navy);
+  background: #fff;
+  border: 1px solid #b9cad5;
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.finalize-confirmation-field input:focus {
+  border-color: var(--dodger-strong);
+  box-shadow: 0 0 0 3px rgba(30, 144, 255, 0.14);
+  outline: 0;
+}
+
+.finalize-warning {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  color: #8b2f24;
+  text-align: left;
+  background: #fff0ed;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 750;
+}
+
 .confirm-modal > div:last-child {
   display: flex;
   gap: 8px;
@@ -4269,6 +4379,20 @@ select:focus-visible {
 .confirm-modal > div:last-child .danger-confirm {
   color: #fff;
   background: var(--danger);
+}
+
+.confirm-modal > div:last-child button:disabled,
+.finalize-reauth button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+@media (max-width: 420px) {
+  .confirm-modal {
+    max-height: calc(100dvh - 24px);
+    overflow: auto;
+    padding: 18px;
+  }
 }
 
 .revision-backdrop {

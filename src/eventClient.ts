@@ -178,7 +178,12 @@ interface BootstrapResponse {
   availableMembers: Array<{ id: string; display_name: string; role: string; assignment: string }>
 }
 
-class EventApiError extends Error {}
+export class EventApiError extends Error {
+  constructor(message: string, readonly code?: string) {
+    super(message)
+    this.name = 'EventApiError'
+  }
+}
 
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -188,8 +193,8 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   })
   const contentType = response.headers.get('content-type') ?? ''
   if (!contentType.includes('application/json')) throw new EventApiError('大会サーバーへ接続できません')
-  const body = await response.json() as T & { error?: string }
-  if (!response.ok) throw new EventApiError(body.error ?? `大会APIエラー (${response.status})`)
+  const body = await response.json() as T & { error?: string; code?: string }
+  if (!response.ok) throw new EventApiError(body.error ?? `大会APIエラー (${response.status})`, body.code)
   return body
 }
 

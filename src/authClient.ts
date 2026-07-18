@@ -8,11 +8,18 @@ export interface AuthenticatedUser {
   displayName: string
 }
 
+export interface AuthenticatedSessionState {
+  mode: 'authenticated'
+  user: AuthenticatedUser
+  expiresAt: string
+  authenticatedAt: string
+}
+
 export type SessionState =
   | { mode: 'checking' }
   | { mode: 'offline-demo' }
   | { mode: 'anonymous' }
-  | { mode: 'authenticated'; user: AuthenticatedUser; expiresAt: string }
+  | AuthenticatedSessionState
 
 class AuthApiError extends Error {
   constructor(message: string, readonly unavailable = false) {
@@ -45,9 +52,10 @@ export async function loadSession(): Promise<SessionState> {
       authenticated: boolean
       user?: AuthenticatedUser
       expiresAt?: string
+      authenticatedAt?: string
     }>('/api/auth/session', { method: 'GET', headers: {} })
-    return result.authenticated && result.user && result.expiresAt
-      ? { mode: 'authenticated', user: result.user, expiresAt: result.expiresAt }
+    return result.authenticated && result.user && result.expiresAt && result.authenticatedAt
+      ? { mode: 'authenticated', user: result.user, expiresAt: result.expiresAt, authenticatedAt: result.authenticatedAt }
       : { mode: 'anonymous' }
   } catch (error) {
     if (error instanceof AuthApiError && error.unavailable) return { mode: 'offline-demo' }
@@ -55,7 +63,7 @@ export async function loadSession(): Promise<SessionState> {
   }
 }
 
-export async function registerPasskey(displayName: string): Promise<SessionState> {
+export async function registerPasskey(displayName: string): Promise<AuthenticatedSessionState> {
   const generated = await apiJson<{ options: PublicKeyCredentialCreationOptionsJSON }>(
     '/api/auth/registration/options',
     { method: 'POST', body: JSON.stringify({ displayName }) },
@@ -66,14 +74,15 @@ export async function registerPasskey(displayName: string): Promise<SessionState
     verified: boolean
     user: AuthenticatedUser
     expiresAt: string
+    authenticatedAt: string
   }>('/api/auth/registration/verify', {
     method: 'POST',
     body: JSON.stringify({ response }),
   })
-  return { mode: 'authenticated', user: verified.user, expiresAt: verified.expiresAt }
+  return { mode: 'authenticated', user: verified.user, expiresAt: verified.expiresAt, authenticatedAt: verified.authenticatedAt }
 }
 
-export async function authenticatePasskey(): Promise<SessionState> {
+export async function authenticatePasskey(): Promise<AuthenticatedSessionState> {
   const generated = await apiJson<{ options: PublicKeyCredentialRequestOptionsJSON }>(
     '/api/auth/authentication/options',
     { method: 'POST', body: '{}' },
@@ -84,11 +93,18 @@ export async function authenticatePasskey(): Promise<SessionState> {
     verified: boolean
     user: AuthenticatedUser
     expiresAt: string
+    authenticatedAt: string
   }>('/api/auth/authentication/verify', {
     method: 'POST',
     body: JSON.stringify({ response }),
   })
-  return { mode: 'authenticated', user: verified.user, expiresAt: verified.expiresAt }
+  return { mode: 'authenticated', user: verified.user, expiresAt: verified.expiresAt, authenticatedAt: verified.authenticatedAt }
+}
+
+export function hasRecentPasskeyAuthentication(session: SessionState, maximumAgeMinutes = 15): boolean {
+  if (session.mode !== 'authenticated') return false
+  const authenticatedAt = Date.parse(session.authenticatedAt)
+  return Number.isFinite(authenticatedAt) && Date.now() - authenticatedAt <= maximumAgeMinutes * 60_000
 }
 
 export async function logout(): Promise<void> {

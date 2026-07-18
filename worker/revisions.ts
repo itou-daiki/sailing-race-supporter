@@ -2,7 +2,7 @@ import { eventAccess } from './authorization.js'
 import { appendAuditEvent, canonical } from './audit.js'
 import { json, readJson } from './http.js'
 import type { AppEnv } from './index.js'
-import { assertSameOrigin, requireSession, sha256Base64Url } from './security.js'
+import { assertSameOrigin, hasRecentAuthentication, requireSession, sha256Base64Url } from './security.js'
 
 interface RevisionInput {
   reason?: string
@@ -25,6 +25,12 @@ export async function handleRevisionRequest(request: Request, env: AppEnv): Prom
   const raceId = decodeURIComponent(match[2])
   const access = await eventAccess(env, eventReference, session.userId, session.displayName)
   if (!access || !access.isOwner) return json({ error: '確定後修正は大会を作成した管理者だけが実行できます' }, { status: 403 })
+  if (!hasRecentAuthentication(session)) {
+    return json({
+      code: 'RECENT_AUTHENTICATION_REQUIRED',
+      error: '確定後修正の前にパスキーで本人確認してください',
+    }, { status: 403 })
+  }
   const body = await readJson<RevisionInput>(request, 32_768)
   const reason = body.reason?.trim()
   if (!reason || reason.length < 5 || reason.length > 500) {

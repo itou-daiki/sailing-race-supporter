@@ -38,20 +38,59 @@ interface RoomEnvelope {
   event: SequencedOperation
 }
 
+interface RoomErrorEnvelope {
+  type: 'error'
+  code: string
+  id?: string
+  operation?: OperationType
+}
+
+interface PendingConfirmation {
+  resolve: (event: SequencedOperation) => void
+  reject: (error: RealtimeOperationError) => void
+  timeout: number
+}
+
+const OPERATION_ERROR_MESSAGES: Readonly<Record<string, string>> = {
+  RECENT_AUTHENTICATION_REQUIRED: '確定前にパスキーで本人確認してください',
+  AUTHENTICATION_REQUIRED: '認証が失効しました。パスキーでログインし直してください',
+  FORBIDDEN: 'この担当には操作権限がありません',
+  RACE_NOT_FOUND: '対象レースが見つかりません',
+  RACE_FINALIZED: 'このレースはすでに確定されています',
+  RACE_REQUIRED: '対象レースを指定してください',
+  LIVE_CONNECTION_REQUIRED: 'リアルタイム接続を確認してから実行してください',
+  CONNECTION_CLOSED: '確認中に接続が切れました。状態を確認してから再試行してください',
+  CONFIRMATION_TIMEOUT: 'サーバーの確定応答を確認できませんでした。再読み込みして状態を確認してください',
+  PERSISTENCE_FAILED: 'サーバーへ記録できませんでした',
+  HTTP_403: 'この操作はサーバーで拒否されました',
+  HTTP_400: '確認入力をサーバーで検証できませんでした',
+  HTTP_409: '状態が変更されたため操作を完了できませんでした',
+}
+
+export class RealtimeOperationError extends Error {
+  constructor(readonly code: string, readonly operationId?: string) {
+    super(OPERATION_ERROR_MESSAGES[code] ?? `リアルタイム操作に失敗しました（${code}）`)
+    this.name = 'RealtimeOperationError'
+  }
+}
+
 interface UseRealtimeOptions {
   eventId: string
   memberId: string
+  connectionKey?: string
   enabled?: boolean
   onEvent?: (event: SequencedOperation) => void
 }
 
-export function useEventRoom({ eventId, memberId, enabled = true, onEvent }: UseRealtimeOptions) {
+export function useEventRoom({ eventId, memberId, connectionKey = '', enabled = true, onEvent }: UseRealtimeOptions) {
   const [status, setStatus] = useState<RealtimeStatus>(enabled ? 'connecting' : 'offline')
   const [pendingCount, setPendingCount] = useState(0)
   const [lastSequence, setLastSequence] = useState(0)
   const [serverOffsetMs, setServerOffsetMs] = useState(0)
+  const [connectedKey, setConnectedKey] = useState('')
   const socketRef = useRef<WebSocket | undefined>(undefined)
   const eventHandlerRef = useRef(onEvent)
+  const pendingConfirmationsRef = useRef(new Map<string, PendingConfirmation>())
 
   useEffect(() => {
     eventHandlerRef.current = onEvent
@@ -96,6 +135,7 @@ export function useEventRoom({ eventId, memberId, enabled = true, onEvent }: Use
       }
 
       setStatus('connecting')
+      setConnectedKey('')
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       socket = new WebSocket(
         `${protocol}//${window.location.host}/api/events/${encodeURIComponent(eventId)}/room?member=${encodeURIComponent(memberId)}`,
@@ -103,12 +143,20 @@ export function useEventRoom({ eventId, memberId, enabled = true, onEvent }: Use
       socketRef.current = socket
       socket.addEventListener('open', () => {
         setStatus('live')
+        setConnectedKey(connectionKey)
         void flush()
       })
       socket.addEventListener('message', (message) => {
         if (typeof message.data !== 'string') return
         try {
-          const envelope = JSON.parse(message.data) as Partial<RoomEnvelope> & { sequence?: number; serverTime?: string }
+          const envelope = JSON.parse(message.data) as {
+            type?: RoomEnvelope['type'] | RoomErrorEnvelope['type'] | 'snapshot' | 'ack'
+            event?: SequencedOperation
+            code?: string
+            id?: string
+            sequence?: number
+            serverTime?: string
+          }
           const serverTime = envelope.type === 'event' ? envelope.event?.serverTime : envelope.serverTime
           if (serverTime) {
             const measuredOffset = Date.parse(serverTime) - Date.now()
@@ -118,6 +166,22 @@ export function useEventRoom({ eventId, memberId, enabled = true, onEvent }: Use
             setLastSequence(envelope.event.sequence)
             void removeQueuedOperation(envelope.event.id).then(refreshPendingCount)
             eventHandlerRef.current?.(envelope.event)
+            const confirmation = pendingConfirmationsRef.current.get(envelope.event.id)
+            if (confirmation) {
+              window.clearTimeout(confirmation.timeout)
+              pendingConfirmationsRef.current.delete(envelope.event.id)
+              confirmation.resolve(envelope.event)
+            }
+          } else if (envelope.type === 'error' && envelope.code && envelope.id) {
+            const confirmation = pendingConfirmationsRef.current.get(envelope.id)
+            const operationError = new RealtimeOperationError(envelope.code, envelope.id)
+            if (confirmation) {
+              window.clearTimeout(confirmation.timeout)
+              pendingConfirmationsRef.current.delete(envelope.id)
+              confirmation.reject(operationError)
+            } else {
+              void removeQueuedOperation(envelope.id).then(refreshPendingCount)
+            }
           } else if (typeof envelope.sequence === 'number') {
             setLastSequence(envelope.sequence)
           }
@@ -127,6 +191,12 @@ export function useEventRoom({ eventId, memberId, enabled = true, onEvent }: Use
       })
       socket.addEventListener('close', () => {
         setStatus('offline')
+        setConnectedKey('')
+        for (const [id, confirmation] of pendingConfirmationsRef.current) {
+          window.clearTimeout(confirmation.timeout)
+          confirmation.reject(new RealtimeOperationError('CONNECTION_CLOSED', id))
+        }
+        pendingConfirmationsRef.current.clear()
         if (!cancelled) reconnectTimer = window.setTimeout(connect, 5_000)
       })
       socket.addEventListener('error', () => setStatus('offline'))
@@ -146,7 +216,7 @@ export function useEventRoom({ eventId, memberId, enabled = true, onEvent }: Use
       socket?.close()
       if (socketRef.current === socket) socketRef.current = undefined
     }
-  }, [enabled, eventId, memberId, refreshPendingCount, transmit])
+  }, [connectionKey, enabled, eventId, memberId, refreshPendingCount, transmit])
 
   const send = useCallback(async (
     type: OperationType,
@@ -168,5 +238,47 @@ export function useEventRoom({ eventId, memberId, enabled = true, onEvent }: Use
     return operation.id
   }, [eventId, refreshPendingCount, transmit])
 
-  return { status: enabled ? status : 'offline' as RealtimeStatus, pendingCount, lastSequence, serverOffsetMs, send }
+  const sendConfirmed = useCallback((
+    type: OperationType,
+    payload: unknown,
+    raceId?: string,
+    timeoutMs = 12_000,
+  ): Promise<SequencedOperation> => {
+    const socket = socketRef.current
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new RealtimeOperationError('LIVE_CONNECTION_REQUIRED'))
+    }
+    const operation: QueuedOperation = {
+      id: crypto.randomUUID(),
+      eventId,
+      raceId,
+      type,
+      payload,
+      clientTime: new Date().toISOString(),
+      queuedAt: new Date().toISOString(),
+    }
+
+    return new Promise((resolve, reject) => {
+      const timeout = window.setTimeout(() => {
+        pendingConfirmationsRef.current.delete(operation.id)
+        reject(new RealtimeOperationError('CONFIRMATION_TIMEOUT', operation.id))
+      }, timeoutMs)
+      pendingConfirmationsRef.current.set(operation.id, { resolve, reject, timeout })
+      if (!transmit(operation)) {
+        window.clearTimeout(timeout)
+        pendingConfirmationsRef.current.delete(operation.id)
+        reject(new RealtimeOperationError('LIVE_CONNECTION_REQUIRED', operation.id))
+      }
+    })
+  }, [eventId, transmit])
+
+  return {
+    status: enabled ? status : 'offline' as RealtimeStatus,
+    pendingCount,
+    lastSequence,
+    serverOffsetMs,
+    connectedKey,
+    send,
+    sendConfirmed,
+  }
 }

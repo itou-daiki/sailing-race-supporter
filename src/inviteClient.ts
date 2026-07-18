@@ -9,6 +9,7 @@ export interface InviteResult {
   authenticated: true
   user: { id: string; displayName: string }
   expiresAt: string
+  authenticatedAt: string
   event: { slug: string; name: string }
   member: { id: string; displayName: string; role: string; assignment: string }
   recovery: { issuedAt: string; expiresAt: string }
@@ -62,7 +63,12 @@ export function newRecoverySecret(): string {
 }
 
 export function sessionFromInvite(result: InviteResult): SessionState {
-  return { mode: 'authenticated', user: result.user, expiresAt: result.expiresAt }
+  return {
+    mode: 'authenticated',
+    user: result.user,
+    expiresAt: result.expiresAt,
+    authenticatedAt: result.authenticatedAt,
+  }
 }
 
 export async function previewInvite(inviteId: string, secret: string): Promise<InvitePreview> {

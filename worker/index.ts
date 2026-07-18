@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers'
+import { FINALIZATION_AUTH_MAX_AGE_MINUTES } from '../shared/finalization.js'
 import { handleAuthRequest } from './auth.js'
 import { handleAudioDeviceRequest } from './audioDevices.js'
 import { can, eventAccess, requirePermission, type EventAccess } from './authorization.js'
@@ -32,6 +33,7 @@ interface ClientAttachment {
   assignment: string
   isOwner: boolean
   joinedAt: string
+  sessionTokenHash: string
 }
 
 interface RoomMessage {
@@ -122,7 +124,8 @@ export class EventRoom extends DurableObject<AppEnv> {
       const userId = request.headers.get('x-srs-user-id')
       const memberId = request.headers.get('x-srs-member-id')
       const role = request.headers.get('x-srs-role')
-      if (!eventId || !eventSlug || !userId || !memberId || !role) {
+      const sessionTokenHash = request.headers.get('x-srs-session-token-hash')
+      if (!eventId || !eventSlug || !userId || !memberId || !role || !sessionTokenHash) {
         return json({ error: 'Missing authenticated event context' }, { status: 403 })
       }
       const pair = new WebSocketPair()
@@ -139,6 +142,7 @@ export class EventRoom extends DurableObject<AppEnv> {
         assignment: decodeURIComponent(encodedAssignment),
         isOwner: request.headers.get('x-srs-owner') === '1',
         joinedAt: new Date().toISOString(),
+        sessionTokenHash,
       }
 
       this.ctx.acceptWebSocket(server)
@@ -200,13 +204,13 @@ export class EventRoom extends DurableObject<AppEnv> {
 
     const attachment = socket.deserializeAttachment() as ClientAttachment | null
     if (!attachment) {
-      socket.send(JSON.stringify({ type: 'error', code: 'AUTHENTICATION_REQUIRED' }))
+      socket.send(JSON.stringify({ type: 'error', code: 'AUTHENTICATION_REQUIRED', id: parsed.id }))
       return
     }
     const access = this.accessFromAttachment(attachment)
     const permission = parsed.type === 'presence' ? 'view' : parsed.type === 'signal-audio' ? 'signal' : parsed.type
     if (!can(access, permission)) {
-      socket.send(JSON.stringify({ type: 'error', code: 'FORBIDDEN', operation: parsed.type }))
+      socket.send(JSON.stringify({ type: 'error', code: 'FORBIDDEN', id: parsed.id, operation: parsed.type }))
       return
     }
 
@@ -215,7 +219,7 @@ export class EventRoom extends DurableObject<AppEnv> {
         'SELECT status FROM races WHERE id = ? AND regatta_id = ? LIMIT 1',
       ).bind(parsed.raceId, attachment.eventId).first<{ status: string }>()
       if (!race) {
-        socket.send(JSON.stringify({ type: 'error', code: 'RACE_NOT_FOUND' }))
+        socket.send(JSON.stringify({ type: 'error', code: 'RACE_NOT_FOUND', id: parsed.id }))
         return
       }
       const mutatesFinalizedState = new Set<RoomMessage['type']>([
@@ -228,7 +232,7 @@ export class EventRoom extends DurableObject<AppEnv> {
       const finalizedMutation = mutatesFinalizedState.has(parsed.type) || parsed.type === 'message' && !messageReceiptOnly
       const ownerAppendOnlyRevision = access.isOwner && ['leading-passage', 'finish', 'message'].includes(parsed.type)
       if (race.status === 'finalized' && finalizedMutation && !ownerAppendOnlyRevision) {
-        socket.send(JSON.stringify({ type: 'error', code: 'RACE_FINALIZED' }))
+        socket.send(JSON.stringify({ type: 'error', code: 'RACE_FINALIZED', id: parsed.id }))
         return
       }
     }
@@ -245,17 +249,60 @@ export class EventRoom extends DurableObject<AppEnv> {
     try {
       if (parsed.type === 'finalize') {
         if (!parsed.raceId) {
-          socket.send(JSON.stringify({ type: 'error', code: 'RACE_REQUIRED' }))
+          socket.send(JSON.stringify({ type: 'error', code: 'RACE_REQUIRED', id: parsed.id }))
           return
         }
-        const payload = parsed.payload as { reason?: string }
+        const currentAccess = await eventAccess(
+          this.env,
+          attachment.eventId,
+          attachment.userId,
+          attachment.displayName,
+        )
+        if (
+          !currentAccess ||
+          currentAccess.memberId !== attachment.memberId ||
+          !can(currentAccess, 'finalize')
+        ) {
+          socket.send(JSON.stringify({
+            type: 'error',
+            code: 'FORBIDDEN',
+            id: parsed.id,
+            operation: parsed.type,
+          }))
+          return
+        }
+        const authenticatedSession = await this.env.DB.prepare(
+          `SELECT created_at FROM auth_sessions
+           WHERE token_hash = ? AND user_id = ? AND revoked_at IS NULL AND expires_at > ?
+           LIMIT 1`,
+        ).bind(
+          attachment.sessionTokenHash,
+          attachment.userId,
+          new Date().toISOString(),
+        ).first<{ created_at: string }>()
+        const authenticatedAt = Date.parse(authenticatedSession?.created_at ?? '')
+        if (
+          !Number.isFinite(authenticatedAt) ||
+          Date.now() - authenticatedAt > FINALIZATION_AUTH_MAX_AGE_MINUTES * 60_000
+        ) {
+          socket.send(JSON.stringify({
+            type: 'error',
+            code: 'RECENT_AUTHENTICATION_REQUIRED',
+            id: parsed.id,
+            operation: parsed.type,
+          }))
+          return
+        }
+        const payload = parsed.payload as { reason?: string; confirmationPhrase?: string }
+        const finalizationReason = payload.reason?.trim() || '権限者による確定'
         const finalization = await finalizeRace(
           this.env,
-          access,
+          currentAccess,
           parsed.raceId,
-          payload.reason?.trim() || '権限者による確定',
+          finalizationReason,
+          payload.confirmationPhrase ?? '',
         )
-        parsed.payload = { ...payload, ...finalization }
+        parsed.payload = { reason: finalizationReason, ...finalization }
       } else {
         let samplePosition = false
         if (parsed.type === 'position') {
@@ -294,6 +341,8 @@ export class EventRoom extends DurableObject<AppEnv> {
       socket.send(JSON.stringify({
         type: 'error',
         code: error instanceof Response ? `HTTP_${error.status}` : 'PERSISTENCE_FAILED',
+        id: parsed.id,
+        operation: parsed.type,
       }))
       return
     }
@@ -675,6 +724,7 @@ export default {
         headers.set('x-srs-owner', access.isOwner ? '1' : '0')
         headers.set('x-srs-event-id', access.eventId)
         headers.set('x-srs-event-slug', access.eventSlug)
+        headers.set('x-srs-session-token-hash', session.tokenHash)
         return stub.fetch(new Request(request, { headers }))
       }
 

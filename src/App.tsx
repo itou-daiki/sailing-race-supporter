@@ -39,15 +39,22 @@ import {
 } from './domain'
 import { OperationsBoard } from './components/OperationsBoard'
 import { StartSequence } from './components/StartSequence'
-import { loadSession, type SessionState } from './authClient'
-import { createPostFinalizationRevision, loadEventBootstrap, saveCourseRevision } from './eventClient'
+import {
+  authenticatePasskey,
+  authErrorMessage,
+  hasRecentPasskeyAuthentication,
+  loadSession,
+  type SessionState,
+} from './authClient'
+import { createPostFinalizationRevision, EventApiError, loadEventBootstrap, saveCourseRevision } from './eventClient'
 import type { EventAccessSummary, EventResources } from './eventClient'
 import { loadEventSnapshot, saveEventSnapshot } from './offlineStore'
-import { useEventRoom, type SequencedOperation } from './realtime'
+import { RealtimeOperationError, useEventRoom, type SequencedOperation } from './realtime'
 import { useOfficialAudioDevice } from './audioDeviceClient'
 import { adoptPassageObservation, mergePassageObservation, passageVisitKey } from './passages'
 import { adoptFinishObservation, finishRecordKey, mergeFinishObservation } from './finishes'
 import { isRaceSignalHeld, makeRaceSignalEvent } from './signals'
+import { raceFinalizationPhrase } from '../shared/finalization'
 
 const DETAIL_KEY = 'srs-board-detail'
 const SCALE_KEY = 'srs-board-scale'
@@ -167,6 +174,11 @@ export default function App() {
   const [eventAccess, setEventAccess] = useState<EventAccessSummary>()
   const [eventResources, setEventResources] = useState<EventResources>({ boats: [], marks: [], members: [] })
   const [confirmFinalize, setConfirmFinalize] = useState(false)
+  const [finalizeConfirmation, setFinalizeConfirmation] = useState('')
+  const [finalizeWorking, setFinalizeWorking] = useState(false)
+  const [finalizeReauthWorking, setFinalizeReauthWorking] = useState(false)
+  const [finalizeError, setFinalizeError] = useState<string>()
+  const [finalizeNeedsReauth, setFinalizeNeedsReauth] = useState(false)
   const [revisionOpen, setRevisionOpen] = useState(false)
   const [revisionCourseCode, setRevisionCourseCode] = useState('')
   const [revisionTargetMinutes, setRevisionTargetMinutes] = useState(50)
@@ -384,9 +396,12 @@ export default function App() {
     }
   }, [])
 
+  const sessionUserId = session.mode === 'authenticated' ? session.user.id : ''
+  const sessionConnectionKey = session.mode === 'authenticated' ? `${session.user.id}:${session.expiresAt}` : session.mode
   const realtime = useEventRoom({
     eventId,
     memberId,
+    connectionKey: sessionConnectionKey,
     enabled: session.mode === 'authenticated',
     onEvent: applyRemoteEvent,
   })
@@ -416,6 +431,8 @@ export default function App() {
     !eventAccess || eventAccess.isOwner || ['pro', 'ro', 'timekeeper', 'record-keeper', 'signal-boat'].includes(eventAccess.role)
   )
   const canAdoptFinish = canRecordFinish
+  const finalizePhrase = raceFinalizationPhrase(activeRace.number)
+  const recentAuthentication = hasRecentPasskeyAuthentication(session) && !finalizeNeedsReauth
   const firstFinish = finishes[finishRecordKey(activeRace.id, 1)]
   const messageRoles = useMemo(
     () => [...new Set(eventResources.members.map((member) => member.role))].sort((left, right) => left.localeCompare(right, 'ja')),
@@ -452,7 +469,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (session.mode !== 'authenticated' && session.mode !== 'offline-demo') return
+    if (session.mode !== 'offline-demo' && (session.mode !== 'authenticated' || !sessionUserId)) return
     let active = true
     const applyCachedState = async () => {
       const cached = await loadEventSnapshot<CachedAppState>(eventId)
@@ -497,7 +514,7 @@ export default function App() {
       })
       .catch(() => void applyCachedState())
     return () => { active = false }
-  }, [eventId, session.mode])
+  }, [eventId, session.mode, sessionUserId])
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -691,15 +708,60 @@ export default function App() {
     }, activeRace.id)
   }
 
-  const finalizeRace = () => {
-    setRaces((current) => current.map((race) => (
-      race.id === activeRace.id ? { ...race, status: 'finalized' as const } : race
-    )))
-    void sendRealtimeOperation('finalize', {
-      finalizedAt: new Date().toISOString(),
-      reason: '大会管理者による確定',
-    }, activeRace.id)
-    setConfirmFinalize(false)
+  const openFinalizeConfirmation = () => {
+    setFinalizeConfirmation('')
+    setFinalizeError(undefined)
+    setConfirmFinalize(true)
+  }
+
+  const reauthenticateCriticalOperation = async (scope: 'finalize' | 'revision' = 'finalize') => {
+    const currentUserId = session.mode === 'authenticated' ? session.user.id : undefined
+    const setOperationError = scope === 'revision' ? setRevisionError : setFinalizeError
+    setFinalizeReauthWorking(true)
+    setOperationError(undefined)
+    try {
+      const refreshed = await authenticatePasskey()
+      if (currentUserId && refreshed.user.id !== currentUserId) {
+        setSession(refreshed)
+        setEventAccess(undefined)
+        setFinalizeNeedsReauth(true)
+        setOperationError('別の利用者として本人確認されました。この大会への権限を再読込しています')
+        return
+      }
+      setSession(refreshed)
+      setFinalizeNeedsReauth(false)
+    } catch (error) {
+      setOperationError(authErrorMessage(error))
+    } finally {
+      setFinalizeReauthWorking(false)
+    }
+  }
+
+  const finalizeRace = async () => {
+    if (
+      finalizeConfirmation !== finalizePhrase ||
+      !recentAuthentication ||
+      realtime.status !== 'live' ||
+      realtime.connectedKey !== sessionConnectionKey ||
+      realtime.pendingCount > 0
+    ) return
+    setFinalizeWorking(true)
+    setFinalizeError(undefined)
+    try {
+      await realtime.sendConfirmed('finalize', {
+        reason: '確定権限者によるレース確定',
+        confirmationPhrase: finalizeConfirmation,
+      }, activeRace.id)
+      setConfirmFinalize(false)
+      setFinalizeConfirmation('')
+    } catch (error) {
+      if (error instanceof RealtimeOperationError && error.code === 'RECENT_AUTHENTICATION_REQUIRED') {
+        setFinalizeNeedsReauth(true)
+      }
+      setFinalizeError(error instanceof RealtimeOperationError ? error.message : 'レースを確定できませんでした')
+    } finally {
+      setFinalizeWorking(false)
+    }
   }
 
   const recordSignal = useCallback((signal: Omit<RaceSignalEvent, 'id'> & { officialAudioDeviceSecret?: string }) => {
@@ -870,6 +932,9 @@ export default function App() {
       } : race))
       setRevisionOpen(false)
     } catch (reason) {
+      if (reason instanceof EventApiError && reason.code === 'RECENT_AUTHENTICATION_REQUIRED') {
+        setFinalizeNeedsReauth(true)
+      }
       setRevisionError(reason instanceof Error ? reason.message : '管理者修正版を作成できません')
     } finally {
       setRevisionWorking(false)
@@ -1040,7 +1105,7 @@ export default function App() {
 
       <div className="floating-owner-actions">
         {!locked && (!eventAccess || eventAccess.isOwner || eventAccess.role === 'pro' || eventAccess.role === 'ro') && (
-          <button type="button" className="finalize-button" onClick={() => setConfirmFinalize(true)}>
+          <button type="button" className="finalize-button" onClick={openFinalizeConfirmation}>
             <ShieldCheck size={17} /> {activeRace.number}を確定
           </button>
         )}
@@ -1139,10 +1204,57 @@ export default function App() {
         <div className="modal-backdrop" role="presentation">
           <section className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="finalize-title">
             <div className="confirm-icon"><LockKeyhole size={24} /></div>
-            <span className="eyebrow">大会管理者のみ</span>
+            <span className="eyebrow">大会管理者・PRO・RO</span>
             <h2 id="finalize-title">{activeRace.number}を確定しますか？</h2>
             <p>確定後、通常メンバーは編集できません。管理者の修正は旧版を残した新しい版として記録されます。</p>
-            <div><button type="button" onClick={() => setConfirmFinalize(false)}>キャンセル</button><button type="button" className="danger-confirm" onClick={finalizeRace}>確定してロック</button></div>
+            <div className="finalize-summary" aria-label="確定対象の要約">
+              <div><span>対象</span><strong>{activeRace.number}・1レース</strong></div>
+              <div><span>投下済みマーク</span><strong>{marks.filter((mark) => Boolean(mark.actual)).length}/{marks.length}</strong></div>
+              <div><span>未完了タスク</span><strong>{activeTasks.filter((task) => task.status !== 'done').length}件</strong></div>
+              <div><span>先頭フィニッシュ</span><strong>{firstFinish?.adoptedObservationId ? '採用済み' : '未採用'}</strong></div>
+            </div>
+            {!recentAuthentication && session.mode === 'authenticated' && (
+              <div className="finalize-reauth">
+                <strong>確定前の本人確認が必要です</strong>
+                <small>直近15分以内のパスキー認証をサーバーでも検証します。</small>
+                <button type="button" onClick={() => void reauthenticateCriticalOperation()} disabled={finalizeReauthWorking || finalizeWorking}>
+                  {finalizeReauthWorking ? '本人確認中…' : 'パスキーで本人確認'}
+                </button>
+              </div>
+            )}
+            <label className="finalize-confirmation-field">
+              <span>誤操作防止のため「<strong>{finalizePhrase}</strong>」と入力</span>
+              <input
+                value={finalizeConfirmation}
+                onChange={(event) => setFinalizeConfirmation(event.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+                disabled={finalizeWorking}
+              />
+            </label>
+            {realtime.status !== 'live' && <div className="finalize-warning">リアルタイム接続後に確定できます。</div>}
+            {recentAuthentication && realtime.status === 'live' && realtime.connectedKey !== sessionConnectionKey && (
+              <div className="finalize-warning">本人確認後の接続を更新しています。</div>
+            )}
+            {realtime.pendingCount > 0 && <div className="finalize-warning">未同期操作 {realtime.pendingCount}件の同期完了を待ってください。</div>}
+            {finalizeError && <div className="auth-error" role="alert">{finalizeError}</div>}
+            <div className="finalize-actions">
+              <button type="button" onClick={() => setConfirmFinalize(false)} disabled={finalizeWorking}>キャンセル</button>
+              <button
+                type="button"
+                className="danger-confirm"
+                onClick={() => void finalizeRace()}
+                disabled={
+                  finalizeWorking ||
+                  finalizeReauthWorking ||
+                  !recentAuthentication ||
+                  realtime.status !== 'live' ||
+                  realtime.connectedKey !== sessionConnectionKey ||
+                  realtime.pendingCount > 0 ||
+                  finalizeConfirmation !== finalizePhrase
+                }
+              >{finalizeWorking ? 'サーバーで確定中…' : '確定してロック'}</button>
+            </div>
           </section>
         </div>
       )}
@@ -1155,6 +1267,17 @@ export default function App() {
             <span className="eyebrow">大会作成者のみ・旧確定版を保持</span>
             <h2 id="revision-title">{activeRace.number} 管理者修正版</h2>
             <p>元の確定版は変更しません。以下の訂正を新しい確定版として追記し、差分・理由・時刻・ハッシュを監査ログへ残します。</p>
+            {!recentAuthentication && session.mode === 'authenticated' && (
+              <div className="finalize-reauth">
+                <strong>管理者修正版の作成前に本人確認が必要です</strong>
+                <small>直近15分以内のパスキー認証をサーバーでも検証します。</small>
+                <button
+                  type="button"
+                  onClick={() => void reauthenticateCriticalOperation('revision')}
+                  disabled={finalizeReauthWorking || revisionWorking}
+                >{finalizeReauthWorking ? '本人確認中…' : 'パスキーで本人確認'}</button>
+              </div>
+            )}
             <div className="revision-grid">
               <label><span>コース記号</span><input value={revisionCourseCode} onChange={(event) => setRevisionCourseCode(event.target.value)} maxLength={80} required /></label>
               <label><span>目標時間（分）</span><input type="number" min="5" max="360" value={revisionTargetMinutes} onChange={(event) => setRevisionTargetMinutes(Number(event.target.value))} required /></label>
@@ -1162,7 +1285,7 @@ export default function App() {
             <label><span>修正理由（必須）</span><textarea value={revisionReason} onChange={(event) => setRevisionReason(event.target.value)} minLength={5} maxLength={500} required /></label>
             <label><span>修正メモ</span><textarea value={revisionNote} onChange={(event) => setRevisionNote(event.target.value)} maxLength={2_000} placeholder="元記録との差異、確認者、根拠など" /></label>
             {revisionError && <div className="auth-error" role="alert">{revisionError}</div>}
-            <div className="revision-actions"><button type="button" onClick={() => setRevisionOpen(false)}>キャンセル</button><button type="submit" disabled={revisionWorking || revisionReason.trim().length < 5}>{revisionWorking ? '作成中…' : '新しい確定版を追記'}</button></div>
+            <div className="revision-actions"><button type="button" onClick={() => setRevisionOpen(false)}>キャンセル</button><button type="submit" disabled={revisionWorking || finalizeReauthWorking || !recentAuthentication || revisionReason.trim().length < 5}>{revisionWorking ? '作成中…' : '新しい確定版を追記'}</button></div>
           </form>
         </div>
       )}
