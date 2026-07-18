@@ -1481,6 +1481,18 @@ select:focus-visible {
   white-space: nowrap;
 }
 
+.metric-card.budget-stage-observe {
+  border-color: #e5c77f;
+  background: #fffaf0;
+}
+
+.metric-card.budget-stage-warning,
+.metric-card.budget-stage-protect,
+.metric-card.budget-stage-critical {
+  border-color: #e7a091;
+  background: #fff3f0;
+}
+
 .first-finish-card {
   margin-bottom: calc(8px * var(--board-scale));
   padding: calc(10px * var(--board-scale));

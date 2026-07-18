@@ -34,6 +34,7 @@ import type {
 } from '../domain'
 import { signalDefinition } from '../signals'
 import { FirstFinishPanel } from './FirstFinishPanel'
+import type { FreeTierBudgetEstimate } from '../../shared/freeTierBudget'
 
 interface OperationsBoardProps {
   race: RaceDefinition
@@ -43,6 +44,7 @@ interface OperationsBoardProps {
   messages: readonly OperationalMessage[]
   wind: WindObservation
   current: CurrentObservation
+  freeTierBudget: FreeTierBudgetEstimate
   scale: number
   detail: BoardDetail
   postponed: boolean
@@ -85,6 +87,7 @@ export function OperationsBoard({
   messages,
   wind,
   current,
+  freeTierBudget,
   scale,
   detail,
   postponed,
@@ -199,6 +202,11 @@ export function OperationsBoard({
             <span><Waves size={16} /> 潮流（流向）</span>
             <strong>{current.directionDegrees}°T <small>{current.speedKnots.toFixed(1)}kt</small></strong>
             <small>{current.source}・信頼度 {current.confidence === 'high' ? '高' : current.confidence === 'medium' ? '中' : '低'}</small>
+          </article>
+          <article className={`metric-card budget-stage-${freeTierBudget.stage}`}>
+            <span><RadioTower size={16} /> 無料枠・標準負荷試算</span>
+            <strong>{Math.ceil(freeTierBudget.maxPercent)}<small>%</small></strong>
+            <small>最大：{freeTierBudget.limitingMetric.label}・実測はCloudflareで確認</small>
           </article>
         </div>
 

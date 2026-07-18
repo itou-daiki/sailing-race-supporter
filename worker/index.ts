@@ -1,5 +1,11 @@
 import { DurableObject } from 'cloudflare:workers'
 import { FINALIZATION_AUTH_MAX_AGE_MINUTES } from '../shared/finalization.js'
+import {
+  DURABLE_OBJECT_POSITION_SNAPSHOT_MS,
+  estimateRegattaFreeTierUsage,
+  ROOM_SEQUENCE_ALLOCATION_SIZE,
+  STANDARD_REGATTA_LOAD,
+} from '../shared/freeTierBudget.js'
 import { handleAuthRequest } from './auth.js'
 import { handleAudioDeviceRequest } from './audioDevices.js'
 import { can, eventAccess, requirePermission, type EventAccess } from './authorization.js'
@@ -50,6 +56,11 @@ interface SequencedMessage extends RoomMessage {
   serverTime: string
 }
 
+interface PositionPersistenceSchedule {
+  sampledAt: number
+  snapshottedAt: number
+}
+
 const ROOM_MESSAGE_TYPES = new Set<RoomMessage['type']>([
   'presence',
   'position',
@@ -79,7 +90,10 @@ function isRoomMessage(value: unknown): value is RoomMessage {
 
 export class EventRoom extends DurableObject<AppEnv> {
   private sequence = 0
+  private sequenceAllocationEnd = 0
   private readonly positionAuthorization = new Map<string, number>()
+  private readonly positionPersistenceSchedule = new Map<string, PositionPersistenceSchedule>()
+  private readonly socketMessageQueues = new WeakMap<WebSocket, Promise<void>>()
 
   constructor(ctx: DurableObjectState, env: AppEnv) {
     super(ctx, env)
@@ -106,6 +120,10 @@ export class EventRoom extends DurableObject<AppEnv> {
         server_time TEXT NOT NULL,
         last_sampled_at TEXT
       );
+      CREATE TABLE IF NOT EXISTS room_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
     `)
     const rows = [...this.ctx.storage.sql.exec<{ sequence: number }>(
       'SELECT COALESCE(MAX(sequence), 0) AS sequence FROM room_events',
@@ -113,7 +131,29 @@ export class EventRoom extends DurableObject<AppEnv> {
     const positionRows = [...this.ctx.storage.sql.exec<{ sequence: number }>(
       'SELECT COALESCE(MAX(sequence), 0) AS sequence FROM current_positions',
     )]
-    this.sequence = Math.max(rows[0]?.sequence ?? 0, positionRows[0]?.sequence ?? 0)
+    const allocationRows = [...this.ctx.storage.sql.exec<{ value: string }>(
+      "SELECT value FROM room_meta WHERE key = 'sequence-allocation-end' LIMIT 1",
+    )]
+    const allocationEnd = Number(allocationRows[0]?.value ?? 0)
+    this.sequence = Math.max(
+      rows[0]?.sequence ?? 0,
+      positionRows[0]?.sequence ?? 0,
+      Number.isFinite(allocationEnd) ? allocationEnd : 0,
+    )
+    this.sequenceAllocationEnd = this.sequence
+  }
+
+  private nextSequence(): number {
+    if (this.sequence >= this.sequenceAllocationEnd) {
+      this.sequenceAllocationEnd = this.sequence + ROOM_SEQUENCE_ALLOCATION_SIZE
+      this.ctx.storage.sql.exec(
+        `INSERT INTO room_meta (key, value) VALUES ('sequence-allocation-end', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+        String(this.sequenceAllocationEnd),
+      )
+    }
+    this.sequence += 1
+    return this.sequence
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -184,13 +224,32 @@ export class EventRoom extends DurableObject<AppEnv> {
     return json({ error: 'Not found' }, { status: 404 })
   }
 
-  async webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void> {
+  webSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    const previous = this.socketMessageQueues.get(socket) ?? Promise.resolve()
+    const queued = previous
+      .catch(() => undefined)
+      .then(() => this.processWebSocketMessage(socket, message))
+    this.socketMessageQueues.set(socket, queued)
+    return queued.finally(() => {
+      if (this.socketMessageQueues.get(socket) === queued) {
+        this.socketMessageQueues.delete(socket)
+      }
+    })
+  }
+
+  private async processWebSocketMessage(socket: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (typeof message !== 'string' || message.length > 16_384) {
       socket.send(JSON.stringify({ type: 'error', code: 'INVALID_FRAME' }))
       return
     }
 
     let parsed: unknown
+    let persistPositionSnapshot = false
+    let positionPersistenceReservation: {
+      committeeBoatId: string
+      current: PositionPersistenceSchedule
+      previous?: PositionPersistenceSchedule
+    } | undefined
     try {
       parsed = JSON.parse(message)
     } catch {
@@ -309,11 +368,38 @@ export class EventRoom extends DurableObject<AppEnv> {
         if (parsed.type === 'position') {
           const payload = parsed.payload as { committeeBoatId?: unknown }
           if (typeof payload?.committeeBoatId === 'string') {
-            const current = [...this.ctx.storage.sql.exec<{ last_sampled_at: string | null }>(
-              'SELECT last_sampled_at FROM current_positions WHERE committee_boat_id = ? LIMIT 1',
+            const current = [...this.ctx.storage.sql.exec<{ last_sampled_at: string | null; server_time: string }>(
+              'SELECT last_sampled_at, server_time FROM current_positions WHERE committee_boat_id = ? LIMIT 1',
               payload.committeeBoatId,
             )][0]
-            samplePosition = !current?.last_sampled_at || Date.now() - Date.parse(current.last_sampled_at) >= 60_000
+            const now = Date.now()
+            const scheduled = this.positionPersistenceSchedule.get(payload.committeeBoatId)
+            const storedSampledAt = Date.parse(current?.last_sampled_at ?? '')
+            const storedSnapshotAt = Date.parse(current?.server_time ?? '')
+            const lastSampledAt = Math.max(
+              Number.isFinite(storedSampledAt) ? storedSampledAt : 0,
+              scheduled?.sampledAt ?? 0,
+            )
+            const lastSnapshotAt = Math.max(
+              Number.isFinite(storedSnapshotAt) ? storedSnapshotAt : 0,
+              scheduled?.snapshottedAt ?? 0,
+            )
+            samplePosition = now - lastSampledAt >= 60_000
+            persistPositionSnapshot = samplePosition || now - lastSnapshotAt >= DURABLE_OBJECT_POSITION_SNAPSHOT_MS
+            if (samplePosition || persistPositionSnapshot) {
+              const reservation = {
+                sampledAt: samplePosition ? now : lastSampledAt,
+                snapshottedAt: persistPositionSnapshot ? now : lastSnapshotAt,
+              }
+              positionPersistenceReservation = {
+                committeeBoatId: payload.committeeBoatId,
+                current: reservation,
+                previous: scheduled,
+              }
+              // Reserve synchronously before the first await below. Durable Object handlers may
+              // interleave at awaits, so later live frames must observe this reservation.
+              this.positionPersistenceSchedule.set(payload.committeeBoatId, reservation)
+            }
             const authorizationKey = `${access.memberId}:${payload.committeeBoatId}`
             const authorizationExpiresAt = this.positionAuthorization.get(authorizationKey) ?? 0
             if (authorizationExpiresAt <= Date.now()) {
@@ -339,6 +425,19 @@ export class EventRoom extends DurableObject<AppEnv> {
         }
       }
     } catch (error) {
+      if (
+        positionPersistenceReservation &&
+        this.positionPersistenceSchedule.get(positionPersistenceReservation.committeeBoatId) === positionPersistenceReservation.current
+      ) {
+        if (positionPersistenceReservation.previous) {
+          this.positionPersistenceSchedule.set(
+            positionPersistenceReservation.committeeBoatId,
+            positionPersistenceReservation.previous,
+          )
+        } else {
+          this.positionPersistenceSchedule.delete(positionPersistenceReservation.committeeBoatId)
+        }
+      }
       socket.send(JSON.stringify({
         type: 'error',
         code: error instanceof Response ? `HTTP_${error.status}` : 'PERSISTENCE_FAILED',
@@ -351,11 +450,11 @@ export class EventRoom extends DurableObject<AppEnv> {
     const sequenced: SequencedMessage = {
       ...parsed,
       memberId: attachment.memberId,
-      sequence: ++this.sequence,
+      sequence: this.nextSequence(),
       serverTime: new Date().toISOString(),
     }
 
-    if (sequenced.type === 'position') {
+    if (sequenced.type === 'position' && persistPositionSnapshot) {
       const payload = sequenced.payload as { committeeBoatId?: string; lastSampledAt?: string | null }
       if (payload.committeeBoatId) {
         this.ctx.storage.sql.exec(
@@ -380,7 +479,7 @@ export class EventRoom extends DurableObject<AppEnv> {
           payload.lastSampledAt ?? null,
         )
       }
-    } else {
+    } else if (sequenced.type !== 'position') {
       this.ctx.storage.sql.exec(
         `INSERT INTO room_events
          (sequence, event_id, type, race_id, member_id, payload_json, client_time, server_time)
@@ -674,11 +773,17 @@ export default {
       const url = new URL(request.url)
 
       if (url.pathname === '/api/health') {
+        const freeTierDesignEstimate = estimateRegattaFreeTierUsage(STANDARD_REGATTA_LOAD)
         return json({
           service: 'Sailing Race Supporter',
           version: '0.3.0',
           status: 'ok',
           serverTime: new Date().toISOString(),
+          freeTierDesignEstimate: {
+            maxPercent: Math.round(freeTierDesignEstimate.maxPercent * 10) / 10,
+            stage: freeTierDesignEstimate.stage,
+            limitingMetric: freeTierDesignEstimate.limitingMetric.key,
+          },
         })
       }
 

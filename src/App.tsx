@@ -59,6 +59,7 @@ import { adoptPassageObservation, mergePassageObservation, passageVisitKey } fro
 import { adoptFinishObservation, finishRecordKey, mergeFinishObservation } from './finishes'
 import { isRaceSignalHeld, makeRaceSignalEvent } from './signals'
 import { raceFinalizationPhrase } from '../shared/finalization'
+import { estimateRegattaFreeTierUsage, STANDARD_REGATTA_LOAD } from '../shared/freeTierBudget'
 
 const DETAIL_KEY = 'srs-board-detail'
 const SCALE_KEY = 'srs-board-scale'
@@ -452,6 +453,7 @@ export default function App() {
     }))
   }, [activeRace, races])
   const recommendation = recommendedCourseLength(selectedClass, windSpeed)
+  const freeTierBudget = useMemo(() => estimateRegattaFreeTierUsage(STANDARD_REGATTA_LOAD), [])
   const activeTasks = useMemo(
     () => tasks.filter((task) => !task.raceId || task.raceId === activeRace.id),
     [activeRace.id, tasks],
@@ -1177,6 +1179,7 @@ export default function App() {
           messages={messages}
           wind={{ ...windDetails, directionDegrees: windDirection, speedKnots: windSpeed }}
           current={seaCurrent}
+          freeTierBudget={freeTierBudget}
           scale={boardScale}
           detail={boardDetail}
           postponed={postponed}
