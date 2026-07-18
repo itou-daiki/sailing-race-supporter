@@ -2,10 +2,10 @@ import {
   AlertTriangle,
   BellRing,
   Check,
-  ChevronRight,
   CircleDot,
   Clock3,
   LockKeyhole,
+  MapPin,
   Maximize2,
   MessageSquareText,
   Minus,
@@ -61,6 +61,7 @@ interface OperationsBoardProps {
   onSelectMark: (markId: string) => void
   onAcknowledgeMessage: (messageId: string) => void
   onOpenMessages: () => void
+  onOpenTaskMessage: (task: OperationalTask) => void
   onTaskStatusChange: (taskId: string) => void
   onRecordFinish: (sailNumber?: string, note?: string) => void
   onAdoptFinish: (observationId: string) => void
@@ -104,6 +105,7 @@ export function OperationsBoard({
   onSelectMark,
   onAcknowledgeMessage,
   onOpenMessages,
+  onOpenTaskMessage,
   onTaskStatusChange,
   onRecordFinish,
   onAdoptFinish,
@@ -234,27 +236,37 @@ export function OperationsBoard({
           <div className="progress-track"><span style={{ width: `${completion}%` }} /></div>
           <div className="task-list">
             {tasks.map((task) => (
-              <button
-                type="button"
+              <div
                 className={`task-row task-row--${task.status}`}
-                onClick={() => {
-                  if (locked) return
-                  onTaskStatusChange(task.id)
-                  if (task.markId) onSelectMark(task.markId)
-                }}
-                disabled={locked}
                 key={task.id}
               >
-                <span className="task-status-icon">
-                  {task.status === 'done' ? <Check size={15} /> : task.status === 'blocked' ? <AlertTriangle size={15} /> : <Clock3 size={15} />}
+                <button
+                  type="button"
+                  className="task-row__status-button"
+                  onClick={() => onTaskStatusChange(task.id)}
+                  disabled={locked}
+                  aria-label={`${task.title}の状態を変更・現在${taskStatusLabel[task.status]}`}
+                >
+                  <span className="task-status-icon">
+                    {task.status === 'done' ? <Check size={15} /> : task.status === 'blocked' ? <AlertTriangle size={15} /> : <Clock3 size={15} />}
+                  </span>
+                  <span className="task-body">
+                    <strong>{task.title}</strong>
+                    <small>{task.owner}・{task.dueLabel}</small>
+                  </span>
+                  <span className={`task-state state-${task.status}`}>{taskStatusLabel[task.status]}</span>
+                </button>
+                <span className="task-row__actions">
+                  {task.markId && (
+                    <button type="button" onClick={() => onSelectMark(task.markId as string)} aria-label={`${task.title}の対象マークを地図で開く`} title="対象マークを地図で開く">
+                      <MapPin size={15} />
+                    </button>
+                  )}
+                  <button type="button" onClick={() => onOpenTaskMessage(task)} aria-label={`${task.title}について担当者へ連絡`} title="担当者へ連絡">
+                    <MessageSquareText size={15} />
+                  </button>
                 </span>
-                <span className="task-body">
-                  <strong>{task.title}</strong>
-                  <small>{task.owner}・{task.dueLabel}</small>
-                </span>
-                <span className={`task-state state-${task.status}`}>{taskStatusLabel[task.status]}</span>
-                {task.markId && <ChevronRight size={15} />}
-              </button>
+              </div>
             ))}
           </div>
         </article>

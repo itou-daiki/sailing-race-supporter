@@ -705,6 +705,13 @@ export default function App() {
     void sendRealtimeOperation('task', { taskId, status: nextStatus }, task.raceId ?? activeRace.id)
   }
 
+  const openTaskMessage = (task: OperationalTask) => {
+    setMessageDraft(`[${activeRace.number}・${task.title}] `)
+    setMessagePriority(task.status === 'blocked' ? 'confirm' : 'normal')
+    setMessageTarget('race')
+    setMessagesOpen(true)
+  }
+
   const recordMarkDrop = (markId: string) => {
     if (locked) return
     const selfBoat = boats.find((boat) => boat.isSelf)
@@ -1277,6 +1284,7 @@ export default function App() {
           onSelectMark={setSelectedMarkId}
           onAcknowledgeMessage={acknowledgeMessage}
           onOpenMessages={() => setMessagesOpen(true)}
+          onOpenTaskMessage={openTaskMessage}
           onTaskStatusChange={advanceTask}
           onRecordFinish={recordFirstFinish}
           onAdoptFinish={adoptFirstFinish}

@@ -1784,15 +1784,62 @@ select:focus-visible {
   min-width: 0;
   min-height: calc(39px * var(--board-scale));
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: calc(7px * var(--board-scale));
-  padding: calc(5px * var(--board-scale)) calc(7px * var(--board-scale));
+  gap: 3px;
+  padding: 3px;
   text-align: left;
   background: #f8fbfd;
   border: 1px solid #e3edf3;
   border-radius: 8px;
+}
+
+.task-row__status-button {
+  min-width: 0;
+  min-height: calc(33px * var(--board-scale));
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: calc(7px * var(--board-scale));
+  padding: calc(3px * var(--board-scale)) calc(4px * var(--board-scale));
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
   cursor: pointer;
+}
+
+.task-row__status-button:hover {
+  background: rgb(30 144 255 / 7%);
+}
+
+.task-row__status-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.task-row__actions {
+  display: flex;
+  gap: 3px;
+}
+
+.task-row__actions button {
+  width: calc(31px * var(--board-scale));
+  height: calc(31px * var(--board-scale));
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: #315b77;
+  background: #eaf4fa;
+  border: 1px solid #d1e3ed;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.task-row__actions button:hover {
+  color: #fff;
+  background: var(--dodger-strong);
+  border-color: var(--dodger-strong);
 }
 
 .task-row--blocked {
@@ -5418,7 +5465,7 @@ select:focus-visible {
   }
 
   .task-row {
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .drawer-backdrop--map-visible {
