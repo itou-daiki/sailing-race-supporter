@@ -1,0 +1,2 @@
+# npm run backup-key:generate がGit管理外の.dev.varsへ安全な値を作成します。
+BACKUP_SIGNING_PRIVATE_KEY="base64url-encoded-ed25519-pkcs8-private-key"

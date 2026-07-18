@@ -4,6 +4,9 @@
   "main": "worker/index.ts",
   "compatibility_date": "2026-07-17",
   "compatibility_flags": ["nodejs_compat"],
+  "secrets": {
+    "required": ["BACKUP_SIGNING_PRIVATE_KEY"]
+  },
   "assets": {
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",

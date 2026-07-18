@@ -3,10 +3,11 @@ import { appendAuditEvent, canonical } from './audit.js'
 import { json, readJson } from './http.js'
 import type { AppEnv } from './index.js'
 import { assertSameOrigin, hasRecentAuthentication, requireSession, sha256Base64Url } from './security.js'
+import { signBackup, verifyBackupSignature, type BackupSignature } from '../shared/backupSignature.js'
 
 interface ServerBackup {
   format: 'srs-server-backup'
-  schemaVersion: 1
+  schemaVersion: 1 | 2
   createdAt: string
   createdBy: string
   scope: 'records'
@@ -16,6 +17,7 @@ interface ServerBackup {
     eventSequence: number
     eventHashRoot: string | null
     counts: Record<string, number>
+    signature?: BackupSignature
   }
   data: Record<string, unknown[]>
 }
@@ -142,7 +144,7 @@ async function createBackup(request: Request, env: AppEnv, eventReference: strin
   const createdAt = new Date().toISOString()
   const backup: ServerBackup = {
     format: 'srs-server-backup',
-    schemaVersion: 1,
+    schemaVersion: 2,
     createdAt,
     createdBy: 'Sailing Race Supporter / Created by Dit-Lab.（Daiki ITO）',
     scope: 'records',
@@ -155,18 +157,27 @@ async function createBackup(request: Request, env: AppEnv, eventReference: strin
     },
     data,
   }
+  backup.manifest.signature = await signBackup(backup, env.BACKUP_SIGNING_PRIVATE_KEY)
+  if (!await verifyBackupSignature(backup)) {
+    return json({ error: 'バックアップ署名鍵と公開鍵設定が一致しません' }, { status: 503 })
+  }
   const recordId = crypto.randomUUID()
   await env.DB.prepare(
     `INSERT INTO backup_records
      (id, regatta_id, format_version, scope, data_hash, event_sequence, created_by, created_at)
-     VALUES (?, ?, 1, 'records', ?, ?, ?, ?)`,
+     VALUES (?, ?, 2, 'records', ?, ?, ?, ?)`,
   ).bind(recordId, access.eventId, dataHash, backup.manifest.eventSequence, access.userId, createdAt).run()
   await appendAuditEvent(env, {
     access,
     action: 'backup.create',
     entityType: 'backup',
     entityId: recordId,
-    after: { dataHash, eventSequence: backup.manifest.eventSequence, counts: backup.manifest.counts },
+    after: {
+      dataHash,
+      eventSequence: backup.manifest.eventSequence,
+      counts: backup.manifest.counts,
+      signatureKeyId: backup.manifest.signature.keyId,
+    },
   })
   return json({ backup })
 }
@@ -189,7 +200,7 @@ async function restoreBackup(request: Request, env: AppEnv, eventReference: stri
   const body = await readJson<{ backup?: ServerBackup; reason?: string }>(request, 5 * 1_024 * 1_024)
   const backup = body.backup
   const reason = body.reason?.trim()
-  if (!backup || backup.format !== 'srs-server-backup' || backup.schemaVersion !== 1) {
+  if (!backup || backup.format !== 'srs-server-backup' || ![1, 2].includes(backup.schemaVersion)) {
     return json({ error: '対応していないバックアップ形式です' }, { status: 400 })
   }
   if (backup.event.id !== access.eventId) {
@@ -201,6 +212,9 @@ async function restoreBackup(request: Request, env: AppEnv, eventReference: stri
   const calculatedHash = await sha256Base64Url(JSON.stringify(canonical(backup.data)))
   if (calculatedHash !== backup.manifest.dataHash) {
     return json({ error: 'バックアップのデータハッシュが一致しません' }, { status: 400 })
+  }
+  if (backup.schemaVersion !== 2 || !await verifyBackupSignature(backup)) {
+    return json({ error: '有効なEd25519サーバー署名を確認できないため復元できません' }, { status: 400 })
   }
 
   const backupRevisions = records<Record<string, unknown>>(backup, 'courseRevisions')

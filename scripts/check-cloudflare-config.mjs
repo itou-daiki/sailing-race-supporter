@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 
 const configuration = await readFile(new URL('../wrangler.jsonc', import.meta.url), 'utf8')
 const match = configuration.match(/"database_id"\s*:\s*"([^"]+)"/u)
+const signingKeys = JSON.parse(await readFile(new URL('../config/backup-signing-keys.json', import.meta.url), 'utf8'))
 
 if (!match || match[1] === '00000000-0000-0000-0000-000000000000') {
   console.error([
@@ -15,4 +16,15 @@ if (!match || match[1] === '00000000-0000-0000-0000-000000000000') {
   process.exit(1)
 }
 
-console.log(`Cloudflare設定確認: D1 ${match[1]}`)
+const activePublicKey = signingKeys.publicKeys?.[signingKeys.activeKeyId]
+if (!signingKeys.activeKeyId || typeof activePublicKey !== 'string' || Buffer.from(activePublicKey, 'base64url').length !== 32) {
+  console.error([
+    'バックアップ用Ed25519公開鍵が未設定です。',
+    '1. npm run backup-key:generate',
+    '2. config/backup-signing-keys.jsonをコミット',
+    '3. npm run cf:secret:backup-signing',
+  ].join('\n'))
+  process.exit(1)
+}
+
+console.log(`Cloudflare設定確認: D1 ${match[1]} / 署名鍵 ${signingKeys.activeKeyId}`)

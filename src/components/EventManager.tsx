@@ -489,6 +489,7 @@ export function EventManager({
                           ['sectionCounts', 'セクション別レコード件数'],
                           ['auditChain', '監査ログの連番・ハッシュチェーン'],
                           ['auditRoot', `監査最終ルート（連番 ${backupVerification.auditSequence}）`],
+                          ['serverSignature', 'Ed25519 サーバー署名'],
                         ].map(([key, label]) => {
                           const valid = backupVerification.checks[key as keyof BackupVerificationReport['checks']]
                           return <span className={valid ? 'is-valid' : 'is-invalid'} key={key}>{valid ? <Check size={13} /> : <X size={13} />}{label}</span>

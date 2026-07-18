@@ -1,6 +1,8 @@
+import { verifyBackupSignature, type BackupSignature } from '../shared/backupSignature'
+
 export interface ServerBackup {
   format: 'srs-server-backup'
-  schemaVersion: 1
+  schemaVersion: 1 | 2
   createdAt: string
   createdBy: string
   scope: 'records'
@@ -10,6 +12,7 @@ export interface ServerBackup {
     eventSequence: number
     eventHashRoot: string | null
     counts: Record<string, number>
+    signature?: BackupSignature
   }
   data: Record<string, unknown[]>
 }
@@ -51,6 +54,7 @@ export interface BackupVerificationReport {
     sectionCounts: boolean
     auditChain: boolean
     auditRoot: boolean
+    serverSignature: boolean
   }
   issues: string[]
 }
@@ -125,7 +129,10 @@ async function auditHash(row: Record<string, unknown>): Promise<string> {
   })))
 }
 
-export async function verifyServerBackup(backup: ServerBackup): Promise<BackupVerificationReport> {
+export async function verifyServerBackup(
+  backup: ServerBackup,
+  trustedPublicKeys?: Readonly<Record<string, string>>,
+): Promise<BackupVerificationReport> {
   const issues: string[] = []
   const sectionEntries = Object.entries(backup.data)
   const actualCounts = Object.fromEntries(sectionEntries.map(([name, values]) => [name, Array.isArray(values) ? values.length : -1]))
@@ -175,6 +182,10 @@ export async function verifyServerBackup(backup: ServerBackup): Promise<BackupVe
   if (!auditChain) issues.push('監査ログの連番・直前ハッシュ・自己ハッシュの連鎖が一致しません')
   const auditRoot = previousSequence === backup.manifest.eventSequence && previousHash === backup.manifest.eventHashRoot
   if (!auditRoot) issues.push('監査ログの最終連番またはハッシュルートがマニフェストと一致しません')
+  const serverSignature = backup.schemaVersion === 2 && await verifyBackupSignature(backup, trustedPublicKeys)
+  if (!serverSignature) issues.push(backup.schemaVersion === 1
+    ? '旧形式にはサーバー署名がないため、大会へ復元できません'
+    : 'Ed25519サーバー署名が不正か、信頼済み公開鍵を確認できません')
 
   return {
     valid: issues.length === 0,
@@ -185,7 +196,7 @@ export async function verifyServerBackup(backup: ServerBackup): Promise<BackupVe
     sectionCount: sectionEntries.length,
     auditEventCount: auditRows.length,
     auditSequence: previousSequence,
-    checks: { eventIdentity, dataHash, sectionCounts, auditChain, auditRoot },
+    checks: { eventIdentity, dataHash, sectionCounts, auditChain, auditRoot, serverSignature },
     issues,
   }
 }
@@ -270,7 +281,7 @@ export async function decryptBackup(encrypted: EncryptedBackup, passphrase: stri
     !isRecord(payload) ||
     !isRecord(payload.server) ||
     payload.server.format !== 'srs-server-backup' ||
-    payload.server.schemaVersion !== 1 ||
+    ![1, 2].includes(payload.server.schemaVersion) ||
     payload.server.scope !== 'records' ||
     typeof payload.server.createdAt !== 'string' ||
     Number.isNaN(Date.parse(payload.server.createdAt)) ||
@@ -283,6 +294,7 @@ export async function decryptBackup(encrypted: EncryptedBackup, passphrase: stri
     !Number.isInteger(payload.server.manifest.eventSequence) ||
     payload.server.manifest.eventSequence < 0 ||
     !(payload.server.manifest.eventHashRoot === null || typeof payload.server.manifest.eventHashRoot === 'string') ||
+    !(payload.server.manifest.signature === undefined || isRecord(payload.server.manifest.signature)) ||
     !isRecord(payload.server.manifest.counts) ||
     !isRecord(payload.server.data)
   ) {

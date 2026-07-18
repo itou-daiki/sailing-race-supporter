@@ -19,6 +19,7 @@ export interface AppEnv {
   ASSETS: Fetcher
   DB: D1Database
   EVENT_ROOMS: DurableObjectNamespace<EventRoom>
+  BACKUP_SIGNING_PRIVATE_KEY: string
 }
 
 interface ClientAttachment {

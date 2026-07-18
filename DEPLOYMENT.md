@@ -31,7 +31,25 @@ npx wrangler d1 create sailing-race-supporter
 
 出力された `database_id` を [wrangler.jsonc](./wrangler.jsonc) の `database_id` に設定します。初期値のゼロUUIDのままでは、デプロイ前検査が停止します。
 
-## 4. マイグレーションとWorker公開
+## 4. バックアップ署名鍵を登録
+
+大会バックアップはEd25519で署名します。初回だけ、ローカルで鍵ペアを作成します。
+
+```bash
+npm run backup-key:generate
+```
+
+- 公開鍵と鍵IDは `config/backup-signing-keys.json` に追加され、ブラウザとWorkerが検証に使用します。このファイルはコミットします。
+- 秘密鍵はGit管理外の `.dev.vars` だけに保存されます。内容をチャット、Issue、ログへ貼り付けないでください。
+- Cloudflareへ秘密鍵を安全に登録するには、ログイン済みの対話ターミナルで次を実行します。スクリプトは秘密値を画面へ表示しません。
+
+```bash
+npm run cf:secret:backup-signing
+```
+
+鍵をローテーションするときも `npm run backup-key:generate` を使います。過去バックアップを検証できるよう、既存公開鍵は設定から削除しません。新しい公開鍵のコミットと新しい秘密鍵の登録を同じ公開作業で行います。
+
+## 5. マイグレーションとWorker公開
 
 ```bash
 npm run cf:check
@@ -41,7 +59,9 @@ npm run deploy:worker
 
 初期リリースでは添付ファイル機能を公開していないため、R2バケットは必須にしていません。写真・音声を有効化する段階でR2を追加します。
 
-## 5. 公開後の確認
+`wrangler.jsonc` は `BACKUP_SIGNING_PRIVATE_KEY` を必須Secretとして宣言しているため、未登録ならWorker公開は停止します。Pagesの画面確認ビルドには秘密鍵を設定しません。
+
+## 6. 公開後の確認
 
 Wranglerが表示した `https://sailing-race-supporter.<subdomain>.workers.dev` を使います。
 
@@ -51,8 +71,10 @@ curl https://sailing-race-supporter.<subdomain>.workers.dev/api/health
 
 JSONの `status` が `ok`、`version` が `0.3.0` であることを確認します。そのURLをブラウザーで開き、パスキー登録後に最初の大会URLを発行します。
 
+大会管理画面から暗号化バックアップを一度保存し、同じファイルを再選択してください。「大会データ全体 SHA-256」「監査ログの連番・ハッシュチェーン」「監査最終ルート」「Ed25519 サーバー署名」がすべて成功し、復元操作が有効になることを確認します。
+
 無料枠向けの日次保持処理は毎日04:17（日本時間）に1回だけ実行します。位置情報はDurable Objectsでライブ配信し、D1には原則60秒間隔で保存します。
 
-## 6. 独自ドメイン（任意）
+## 7. 独自ドメイン（任意）
 
 WorkersのSettings > Domains & Routesから独自ドメインを追加します。運用開始後はWebAuthnのRP IDとオリジンが変わるため、公開URLを途中で変更しない運用を推奨します。
