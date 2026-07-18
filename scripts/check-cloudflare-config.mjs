@@ -31,7 +31,7 @@ if (!signingKeys.activeKeyId || typeof activePublicKey !== 'string' || Buffer.fr
     'バックアップ用Ed25519公開鍵が未設定です。',
     '1. npm run backup-key:generate',
     '2. config/backup-signing-keys.jsonをコミット',
-    '3. npm run cf:secret:backup-signing',
+    '3. npm run deploy:worker（コードと秘密鍵を同じWorker版へ登録）',
   ].join('\n'))
   process.exit(1)
 }

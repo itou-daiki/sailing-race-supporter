@@ -33,6 +33,8 @@ CIから公開する場合だけ、必要最小権限の `CLOUDFLARE_API_TOKEN` 
 
 ## 3. D1とR2を作成
 
+R2を初めて使うアカウントでは、先にCloudflare Dashboardの `Storage & databases → R2 → Overview` でR2サブスクリプションのチェックアウトを完了します。無料利用量を超えた分は従量課金になるため、Standardストレージを使用し、アプリ内の世代数・容量上限を変更する場合は事前に費用を確認してください。Infrequent AccessとR2 Data Catalogは本アプリには不要です。
+
 ```bash
 npx wrangler d1 create sailing-race-supporter
 npx wrangler r2 bucket create sailing-race-supporter-backups
@@ -42,7 +44,7 @@ npx wrangler r2 bucket create sailing-race-supporter-backups
 
 R2には端末でAES-GCM暗号化済みの大会バックアップだけを保管します。平文とパスフレーズは送信しません。バケット名を変更する場合は `wrangler.worker.jsonc` の `BACKUP_ARCHIVES` バインディングも同時に変更してください。
 
-## 4. バックアップ署名鍵を登録
+## 4. バックアップ署名鍵を準備
 
 大会バックアップはEd25519で署名します。初回だけ、ローカルで鍵ペアを作成します。
 
@@ -52,25 +54,25 @@ npm run backup-key:generate
 
 - 公開鍵と鍵IDは `config/backup-signing-keys.json` に追加され、ブラウザとWorkerが検証に使用します。このファイルはコミットします。
 - 秘密鍵はGit管理外の `.dev.vars` だけに保存されます。内容をチャット、Issue、ログへ貼り付けないでください。
-- Cloudflareへ秘密鍵を安全に登録するには、ログイン済みの対話ターミナルで次を実行します。スクリプトは秘密値を画面へ表示しません。
+- `npm run deploy:worker` は、Git管理外の秘密鍵だけを権限0600の一時ファイルへ取り出し、`wrangler deploy --secrets-file` でコードと同じWorker版へ登録します。一時ファイルは成功・失敗にかかわらず削除し、秘密値を画面へ表示しません。
+- `wrangler secret put` はSecret更新と同時にWorkerを直ちに本番配信するため、本プロジェクトの初回公開と鍵ローテーションには使用しません。
 
-```bash
-npm run cf:secret:backup-signing
-```
-
-鍵をローテーションするときも `npm run backup-key:generate` を使います。過去バックアップを検証できるよう、既存公開鍵は設定から削除しません。新しい公開鍵のコミットと新しい秘密鍵の登録を同じ公開作業で行います。
+鍵をローテーションするときも `npm run backup-key:generate` を使い、公開鍵をコミットしてから `npm run deploy:worker` を実行します。過去バックアップを検証できるよう、既存公開鍵は設定から削除しません。
 
 ## 5. マイグレーションとWorker公開
 
 ```bash
 npm run cf:check
 npm run db:migrate:remote
+npm run cf:preflight
 npm run deploy:worker
 ```
 
+`npm run cf:preflight` はCloudflare上のD1とR2を読み取り、R2未有効、バケット欠落、D1未適用マイグレーション、ローカル署名鍵の欠落を本番公開前に停止します。`npm run deploy:worker` も同じ検査を再実行してからビルド・公開します。
+
 R2バケットは暗号化大会バックアップに使用するため必須です。1大会20世代、1世代25MiB、合計500MiBをアプリ側で上限とし、初期保存期間は大会終了後365日です。
 
-`wrangler.worker.jsonc` は `BACKUP_SIGNING_PRIVATE_KEY` を必須Secretとして宣言しているため、未登録ならWorker公開は停止します。Pagesの画面確認ビルドには秘密鍵を設定しません。Workers設定を専用ファイルへ分離しているため、PagesのGitビルドがD1・R2・Durable Objects設定をPages設定として誤検出することもありません。
+`wrangler.worker.jsonc` は `BACKUP_SIGNING_PRIVATE_KEY` を必須Secretとして宣言し、デプロイスクリプトはその値をコードと同じアップロードへ渡します。値が欠けていればWorker公開前に停止します。Pagesの画面確認ビルドには秘密鍵を設定しません。Workers設定を専用ファイルへ分離しているため、PagesのGitビルドがD1・R2・Durable Objects設定をPages設定として誤検出することもありません。
 
 ## 6. 公開後の確認
 

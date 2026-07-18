@@ -39,4 +39,4 @@ await writeFile(devVarsUrl, updatedDevVars, { mode: 0o600 })
 
 console.log(`Ed25519署名鍵 ${uniqueKeyId} を作成しました。`)
 console.log('公開鍵はconfig/backup-signing-keys.json、秘密鍵はGit管理外の.dev.varsに保存しました。')
-console.log('Cloudflareログイン後に npm run cf:secret:backup-signing を実行してください。')
+console.log('R2有効化後、npm run deploy:worker でコードと秘密鍵を同じWorker版へ安全に登録してください。')

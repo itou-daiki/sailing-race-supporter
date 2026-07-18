@@ -18,13 +18,13 @@
     "test:watch": "vitest",
     "preview": "npm run build:cloudflare && vite preview",
     "deploy": "npm run deploy:worker",
-    "deploy:worker": "npm run build:cloudflare && node scripts/check-cloudflare-config.mjs && wrangler deploy --config wrangler.worker.jsonc",
+    "deploy:worker": "node scripts/deploy-worker.mjs",
+    "cf:preflight": "node scripts/deploy-worker.mjs --check",
     "cf-typegen": "wrangler types --config wrangler.worker.jsonc",
     "db:migrate:local": "wrangler d1 migrations apply sailing-race-supporter --local --config wrangler.worker.jsonc",
     "db:migrate:remote": "node scripts/check-cloudflare-config.mjs && wrangler d1 migrations apply sailing-race-supporter --remote --config wrangler.worker.jsonc",
     "cf:check": "node scripts/check-cloudflare-config.mjs && wrangler whoami",
-    "backup-key:generate": "node scripts/generate-backup-signing-key.mjs",
-    "cf:secret:backup-signing": "node scripts/upload-backup-signing-secret.mjs"
+    "backup-key:generate": "node scripts/generate-backup-signing-key.mjs"
   },
   "dependencies": {
     "@simplewebauthn/browser": "^13.3.0",
