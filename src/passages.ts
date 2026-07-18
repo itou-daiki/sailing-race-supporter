@@ -1,4 +1,13 @@
-import type { LeadingPassageObservation, LeadingPassageVisit } from './domain'
+import type { CourseMark, LeadingPassageObservation, LeadingPassageVisit } from './domain'
+
+export interface LatestPassageSummary {
+  markId: string
+  markLabel: string
+  lapNumber: number
+  passedAt: string
+  adopted: boolean
+  hasConflict: boolean
+}
 
 export function passageVisitKey(raceId: string, markId: string, lapNumber = 1): string {
   return `${raceId}:${markId}:${lapNumber}`
@@ -41,4 +50,31 @@ export function adoptPassageObservation(
   adoptedAt: string,
 ): LeadingPassageVisit {
   return { ...current, adoptedObservationId: observationId, adoptedAt }
+}
+
+export function latestPassageSummary(
+  visits: Readonly<Record<string, LeadingPassageVisit>>,
+  marks: readonly CourseMark[],
+  raceId: string,
+): LatestPassageSummary | undefined {
+  const summaries = Object.values(visits).flatMap((visit) => {
+    if (visit.raceId !== raceId) return []
+    const active = visit.observations.filter((observation) => observation.status === 'active')
+    const adopted = active.find((observation) => observation.id === visit.adoptedObservationId)
+    const observation = adopted ?? active.reduce<LeadingPassageObservation | undefined>((latest, candidate) => (
+      !latest || Date.parse(candidate.passedAt) > Date.parse(latest.passedAt) ? candidate : latest
+    ), undefined)
+    if (!observation || !Number.isFinite(Date.parse(observation.passedAt))) return []
+    return [{
+      markId: visit.markId,
+      markLabel: marks.find((mark) => mark.id === visit.markId)?.shortLabel ?? 'マーク',
+      lapNumber: visit.lapNumber,
+      passedAt: observation.passedAt,
+      adopted: Boolean(adopted),
+      hasConflict: visit.hasConflict,
+    }]
+  })
+  return summaries.reduce<LatestPassageSummary | undefined>((latest, candidate) => (
+    !latest || Date.parse(candidate.passedAt) > Date.parse(latest.passedAt) ? candidate : latest
+  ), undefined)
 }

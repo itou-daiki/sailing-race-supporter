@@ -1591,6 +1591,27 @@ select:focus-visible {
   background: #fff3f0;
 }
 
+.metric-card--action {
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.metric-card--action:hover {
+  border-color: #8ecaf1;
+  background: #f2faff;
+}
+
+.metric-card--warning,
+.metric-card--urgent {
+  border-color: #e7a091;
+  background: #fff3f0;
+}
+
+.metric-card--urgent > span svg {
+  color: var(--danger);
+}
+
 .first-finish-card {
   margin-bottom: calc(8px * var(--board-scale));
   padding: calc(10px * var(--board-scale));

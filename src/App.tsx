@@ -57,7 +57,7 @@ import type { EventAccessSummary, EventResources } from './eventClient'
 import { loadEventSnapshot, saveEventSnapshot } from './offlineStore'
 import { RealtimeOperationError, useEventRoom, type SequencedOperation } from './realtime'
 import { useOfficialAudioDevice } from './audioDeviceClient'
-import { adoptPassageObservation, mergePassageObservation, passageVisitKey } from './passages'
+import { adoptPassageObservation, latestPassageSummary, mergePassageObservation, passageVisitKey } from './passages'
 import { adoptFinishObservation, finishRecordKey, mergeFinishObservation } from './finishes'
 import { isRaceSignalHeld, makeRaceSignalEvent } from './signals'
 import { raceFinalizationPhrase } from '../shared/finalization'
@@ -547,6 +547,10 @@ export default function App() {
   const finalizePhrase = raceFinalizationPhrase(activeRace.number)
   const recentAuthentication = hasRecentPasskeyAuthentication(session) && !finalizeNeedsReauth
   const firstFinish = finishes[finishRecordKey(activeRace.id, 1)]
+  const latestPassage = useMemo(
+    () => latestPassageSummary(leadingPassages, marks, activeRace.id),
+    [activeRace.id, leadingPassages, marks],
+  )
   const messageRoles = useMemo(
     () => [...new Set(eventResources.members.map((member) => member.role))].sort((left, right) => left.localeCompare(right, 'ja')),
     [eventResources.members],
@@ -1303,6 +1307,7 @@ export default function App() {
           memberCount={memberCount}
           latestSignal={activeRace.latestSignal}
           firstFinish={firstFinish}
+          latestPassage={latestPassage}
           canRecordFinish={canRecordFinish}
           canAdoptFinish={canAdoptFinish}
           onScaleChange={setBoardScale}

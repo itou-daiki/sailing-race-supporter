@@ -35,6 +35,7 @@ import type {
 import { signalDefinition } from '../signals'
 import { FirstFinishPanel } from './FirstFinishPanel'
 import type { FreeTierBudgetEstimate } from '../../shared/freeTierBudget'
+import type { LatestPassageSummary } from '../passages'
 
 interface OperationsBoardProps {
   race: RaceDefinition
@@ -54,6 +55,7 @@ interface OperationsBoardProps {
   memberCount: number
   latestSignal?: RaceSignalEvent
   firstFinish?: FinishRecord
+  latestPassage?: LatestPassageSummary
   canRecordFinish: boolean
   canAdoptFinish: boolean
   onScaleChange: (scale: number) => void
@@ -98,6 +100,7 @@ export function OperationsBoard({
   memberCount,
   latestSignal,
   firstFinish,
+  latestPassage,
   canRecordFinish,
   canAdoptFinish,
   onScaleChange,
@@ -117,6 +120,10 @@ export function OperationsBoard({
     ? Math.round((tasks.filter((task) => task.status === 'done').length / tasks.length) * 100)
     : 0
   const controlSignal = latestSignal && signalDefinition(latestSignal.action).group !== 'sequence' ? latestSignal : undefined
+  const raceMessages = messages.filter((message) => !message.raceId || message.raceId === race.id)
+  const unresolvedUrgent = raceMessages.filter((message) => (
+    message.priority === 'urgent' && (message.ownReceipt === 'unread' || message.acknowledgement === 'pending')
+  )).length
 
   const setScale = (next: number) => onScaleChange(Math.min(200, Math.max(75, next)))
 
@@ -210,6 +217,16 @@ export function OperationsBoard({
             <strong>{Math.ceil(freeTierBudget.maxPercent)}<small>%</small></strong>
             <small>最大：{freeTierBudget.limitingMetric.label}・実測はCloudflareで確認</small>
           </article>
+          <article className={`metric-card ${latestPassage?.hasConflict ? 'metric-card--warning' : ''}`}>
+            <span><Clock3 size={16} /> 最新先頭通過</span>
+            <strong>{latestPassage ? new Intl.DateTimeFormat('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(latestPassage.passedAt)) : '未記録'}</strong>
+            <small>{latestPassage ? `${latestPassage.markLabel}・${latestPassage.lapNumber}周目・${latestPassage.adopted ? '採用済' : '観測候補'}${latestPassage.hasConflict ? '・時刻差あり' : ''}` : 'マーク通過時に記録'}</small>
+          </article>
+          <button type="button" className={`metric-card metric-card--action ${unresolvedUrgent ? 'metric-card--urgent' : ''}`} onClick={onOpenMessages}>
+            <span><ShieldAlert size={16} /> 緊急連絡</span>
+            <strong>{unresolvedUrgent}<small> 件未確認</small></strong>
+            <small>{unresolvedUrgent ? 'タップして確認・応答' : '未確認なし'}</small>
+          </button>
         </div>
 
         {(race.status === 'racing' || race.status === 'provisional' || race.status === 'finalized' || firstFinish) && (
