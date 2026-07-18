@@ -286,8 +286,8 @@ async function persistMark(env: AppEnv, access: EventAccess, operation: Realtime
   const race = await env.DB.prepare(
     'SELECT status FROM races WHERE id = ? AND regatta_id = ? LIMIT 1',
   ).bind(raceId, access.eventId).first<{ status: string }>()
-  if (race?.status === 'finalized' && !access.isOwner) {
-    throw new Response('Finalized race marks can only be edited by the event owner', { status: 409 })
+  if (race?.status === 'finalized') {
+    throw new Response('Finalized race marks require a post-finalization revision', { status: 409 })
   }
   const payload = objectPayload(operation.payload)
   const markId = stringValue(payload.markId, 'markId')

@@ -59,6 +59,8 @@ export interface RaceDefinition {
   status: 'planning' | 'setup' | 'start-sequence' | 'racing' | 'provisional' | 'finalized'
   warningAt: string
   targetMinutes: number
+  finalizedRevision?: number
+  finalizedAt?: string
   marks: CourseMark[]
   latestSignal?: RaceSignalEvent
 }

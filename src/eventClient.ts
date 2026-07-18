@@ -49,6 +49,7 @@ export interface EventBootstrap {
   resources: EventResources
   wind?: WindObservation
   current?: CurrentObservation
+  revisionDrafts: PostFinalizationRevisionDraft[]
 }
 
 export interface EventResources {
@@ -79,6 +80,42 @@ export interface CourseRevisionSummary {
   createdBy?: string
   createdAt: string
   nodeCount: number
+}
+
+export interface PostFinalizationMarkPositionCorrection {
+  eventId?: string
+  markId: string
+  label?: string
+  actual: readonly [number, number]
+  status?: 'confirmed'
+  recordedAt: string
+  committeeBoatId?: string
+  accuracyMetres?: number
+  positionSource: 'device-geolocation' | 'handheld-gps-manual'
+  coordinateEntryMode?: 'dmm-tail-4' | 'decimal-tail-4' | 'decimal-full'
+  coordinateDatum: 'WGS84'
+  note?: string
+  targetDifferenceMetres?: number
+}
+
+export interface PostFinalizationCorrections {
+  courseCode?: string
+  targetMinutes?: number
+  warningAt?: string
+  note?: string
+  markPosition?: PostFinalizationMarkPositionCorrection
+}
+
+export interface PostFinalizationRevisionDraft {
+  id: string
+  raceId: string
+  baseRevision: number
+  reason: string
+  corrections: PostFinalizationCorrections
+  selectedItems: string[]
+  status: 'draft'
+  createdAt: string
+  updatedAt: string
 }
 
 export interface CreateEventInput {
@@ -153,6 +190,7 @@ interface BootstrapResponse {
   races: Array<{
     id: string; race_area_id: string; race_number: string; class_name: SailingClass; course_code: string
     status: RaceDefinition['status']; warning_at: string; target_minutes: number
+    finalized_revision: number | null; finalized_at: string | null
   }>
   signalEvents: Array<{
     id: string; race_id: string; signal_type: RaceSignalAction; executed_at: string; scheduled_at: string | null
@@ -167,7 +205,7 @@ interface BootstrapResponse {
   }>
   markEvents: Array<{
     race_id: string; mark_id: string; event_type: string; lng: number | null; lat: number | null
-    accuracy_metres: number | null; committee_boat_id: string | null; sequence: number
+    accuracy_metres: number | null; committee_boat_id: string | null; sequence: number; payload_json: string
   }>
   boats: Array<{
     id: string; name: string; role: string; call_sign: string | null; status: string
@@ -208,6 +246,17 @@ interface BootstrapResponse {
   memberCount: number
   raceCorrections: Array<{
     race_id: string; revision: number; patch_json: string; reason: string; state_hash: string; created_at: string
+  }>
+  activeRevisionDrafts?: Array<{
+    id: string
+    race_id: string
+    base_revision: number
+    reason: string
+    corrections_json: string
+    selected_items_json: string
+    status: 'draft'
+    created_at: string
+    updated_at: string
   }>
   availableMarks: Array<{ id: string; label: string; mark_type: string; race_area_id: string }>
   availableMembers: Array<{
@@ -267,7 +316,15 @@ function bootstrapMarks(response: BootstrapResponse, raceId: string): CourseMark
     .map((node) => {
       const event = latest.get(node.mark_id as string)
       const hasActual = event?.lng != null && event.lat != null
-      const status: CourseMark['status'] = event?.event_type === 'confirmed'
+      const isPublishedRevision = (() => {
+        try {
+          const payload = JSON.parse(event?.payload_json ?? '{}') as { postFinalizationRevisionId?: unknown }
+          return typeof payload.postFinalizationRevisionId === 'string'
+        } catch {
+          return false
+        }
+      })()
+      const status: CourseMark['status'] = event?.event_type === 'confirmed' || isPublishedRevision
         ? 'confirmed'
         : hasActual ? 'deployed' : 'planned'
       return {
@@ -438,6 +495,8 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
         status: race.status,
         warningAt: corrections.warningAt ?? race.warning_at,
         targetMinutes: corrections.targetMinutes ?? race.target_minutes,
+        finalizedRevision: race.finalized_revision ?? undefined,
+        finalizedAt: race.finalized_at ?? undefined,
         marks: bootstrapMarks(response, race.id),
         latestSignal,
       }
@@ -554,6 +613,23 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
         ? [response.current.lng, response.current.lat]
         : undefined,
     } : undefined,
+    revisionDrafts: (response.activeRevisionDrafts ?? []).flatMap((draft) => {
+      try {
+        return [{
+          id: draft.id,
+          raceId: draft.race_id,
+          baseRevision: draft.base_revision,
+          reason: draft.reason,
+          corrections: JSON.parse(draft.corrections_json) as PostFinalizationCorrections,
+          selectedItems: JSON.parse(draft.selected_items_json) as string[],
+          status: draft.status,
+          createdAt: draft.created_at,
+          updatedAt: draft.updated_at,
+        }]
+      } catch {
+        return []
+      }
+    }),
   }
 }
 
@@ -579,16 +655,39 @@ export async function confirmOwnerRecoveryKit(
   )
 }
 
-export async function createPostFinalizationRevision(
+export async function createPostFinalizationRevisionDraft(
   eventSlug: string,
   raceId: string,
   reason: string,
-  corrections: { courseCode?: string; targetMinutes?: number; warningAt?: string; note?: string },
-): Promise<{ revision: number; createdAt: string; stateHash: string; corrections: typeof corrections; reason: string }> {
-  return apiJson(`/api/events/${encodeURIComponent(eventSlug)}/races/${encodeURIComponent(raceId)}/post-finalization-revisions`, {
+  corrections: PostFinalizationCorrections,
+): Promise<{ draft: PostFinalizationRevisionDraft }> {
+  return apiJson(`/api/events/${encodeURIComponent(eventSlug)}/races/${encodeURIComponent(raceId)}/post-finalization-revisions/drafts`, {
     method: 'POST',
     body: JSON.stringify({ reason, corrections }),
   })
+}
+
+export async function publishPostFinalizationRevisionDraft(
+  eventSlug: string,
+  raceId: string,
+  draftId: string,
+  confirmationPhrase: string,
+): Promise<{ revision: number; createdAt: string; stateHash: string; corrections: PostFinalizationCorrections; reason: string; draftId: string }> {
+  return apiJson(
+    `/api/events/${encodeURIComponent(eventSlug)}/races/${encodeURIComponent(raceId)}/post-finalization-revisions/drafts/${encodeURIComponent(draftId)}/publish`,
+    { method: 'POST', body: JSON.stringify({ confirmationPhrase }) },
+  )
+}
+
+export async function discardPostFinalizationRevisionDraft(
+  eventSlug: string,
+  raceId: string,
+  draftId: string,
+): Promise<{ id: string; status: 'discarded'; discardedAt: string }> {
+  return apiJson(
+    `/api/events/${encodeURIComponent(eventSlug)}/races/${encodeURIComponent(raceId)}/post-finalization-revisions/drafts/${encodeURIComponent(draftId)}`,
+    { method: 'DELETE' },
+  )
 }
 
 export async function saveCourseRevision(

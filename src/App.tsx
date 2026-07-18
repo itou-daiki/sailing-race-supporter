@@ -53,14 +53,16 @@ import {
   type SessionState,
 } from './authClient'
 import {
-  createPostFinalizationRevision,
+  createPostFinalizationRevisionDraft,
+  discardPostFinalizationRevisionDraft,
   EventApiError,
   loadCourseRevisions,
   loadEventBootstrap,
+  publishPostFinalizationRevisionDraft,
   rollbackCourseRevision,
   saveCourseRevision,
 } from './eventClient'
-import type { CourseRevisionSummary, EventAccessSummary, EventResources } from './eventClient'
+import type { CourseRevisionSummary, EventAccessSummary, EventResources, PostFinalizationRevisionDraft } from './eventClient'
 import { loadEventSnapshot, saveEventSnapshot } from './offlineStore'
 import { RealtimeOperationError, useEventRoom, type SequencedOperation } from './realtime'
 import { useOfficialAudioDevice } from './audioDeviceClient'
@@ -75,6 +77,18 @@ import type { CoordinateEntryMode } from './coordinateEntry'
 const DETAIL_KEY = 'srs-board-detail'
 const SCALE_KEY = 'srs-board-scale'
 const SPLIT_KEY = 'srs-map-split'
+
+interface PendingMarkCorrection {
+  markId: string
+  label: string
+  actual: LngLat
+  recordedAt: string
+  source: 'device-geolocation' | 'handheld-gps-manual'
+  entryMode?: CoordinateEntryMode
+  accuracyMetres?: number
+  note?: string
+  committeeBoatId?: string
+}
 
 const operationLabels: Record<string, string> = {
   position: '運営ボート位置', wind: '風向風速', current: '潮流', mark: 'マーク操作',
@@ -255,6 +269,9 @@ export default function App() {
   const [revisionTargetMinutes, setRevisionTargetMinutes] = useState(50)
   const [revisionReason, setRevisionReason] = useState('確定後に判明した運営記録の訂正')
   const [revisionNote, setRevisionNote] = useState('')
+  const [revisionConfirmation, setRevisionConfirmation] = useState('')
+  const [pendingMarkCorrection, setPendingMarkCorrection] = useState<PendingMarkCorrection>()
+  const [revisionDrafts, setRevisionDrafts] = useState<Record<string, PostFinalizationRevisionDraft>>({})
   const [revisionWorking, setRevisionWorking] = useState(false)
   const [revisionError, setRevisionError] = useState<string>()
   const [boardScale, setBoardScale] = useState(() => storedNumber(SCALE_KEY, 100))
@@ -574,6 +591,7 @@ export default function App() {
   const sendRealtimeOperation = realtime.send
 
   const activeRace = races.find((race) => race.id === activeRaceId) ?? races[0]
+  const revisionDraft = revisionDrafts[activeRace.id]
   const postponed = isRaceSignalHeld(activeRace.latestSignal)
   const marks = useMemo(() => {
     if (activeRace.marks.length) return activeRace.marks
@@ -584,6 +602,18 @@ export default function App() {
       status: 'planned' as const,
     }))
   }, [activeRace, races])
+  const draftMarkCorrection = revisionDraft?.corrections.markPosition
+  const revisionMarkCorrection: PendingMarkCorrection | undefined = pendingMarkCorrection ?? (draftMarkCorrection ? {
+    markId: draftMarkCorrection.markId,
+    label: draftMarkCorrection.label ?? marks.find((mark) => mark.id === draftMarkCorrection.markId)?.label ?? 'マーク',
+    actual: draftMarkCorrection.actual,
+    recordedAt: draftMarkCorrection.recordedAt,
+    source: draftMarkCorrection.positionSource,
+    entryMode: draftMarkCorrection.coordinateEntryMode,
+    accuracyMetres: draftMarkCorrection.accuracyMetres,
+    note: draftMarkCorrection.note,
+    committeeBoatId: draftMarkCorrection.committeeBoatId,
+  } : undefined)
   const recommendation = recommendedCourseLength(selectedClass, windSpeed)
   const freeTierBudget = useMemo(() => estimateRegattaFreeTierUsage(STANDARD_REGATTA_LOAD), [])
   const activeTasks = useMemo(
@@ -682,11 +712,15 @@ export default function App() {
         setEventName(bootstrap.event.name)
         setEventAccess(bootstrap.access)
         setEventResources(bootstrap.resources)
+        setRevisionDrafts(Object.fromEntries(bootstrap.revisionDrafts.map((draft) => [draft.raceId, draft])))
         setMemberId(bootstrap.access.memberId)
         if (bootstrap.races.length) {
           setRaces(bootstrap.races)
-          setActiveRaceId(bootstrap.races[0].id)
-          setSelectedClass(bootstrap.races[0].className)
+          setActiveRaceId((current) => (
+            bootstrap.races.some((race) => race.id === current)
+              ? current
+              : bootstrap.races[0].id
+          ))
         }
         setBoats(bootstrap.boats)
         setMessages(bootstrap.messages)
@@ -807,8 +841,33 @@ export default function App() {
       committeeBoatId?: string
     },
   ) => {
-    if (locked && !eventAccess?.isOwner) return
     const existingMark = marks.find((mark) => mark.id === markId)
+    if (!existingMark) return
+    if (locked) {
+      if (!eventAccess?.isOwner) return
+      if (revisionDraft) {
+        setRevisionError('先に進行中の管理者修正版を再確定または破棄してください')
+        setRevisionOpen(true)
+        return
+      }
+      setPendingMarkCorrection({
+        markId,
+        label: existingMark.label,
+        actual,
+        recordedAt: new Date().toISOString(),
+        source: metadata.source,
+        entryMode: metadata.entryMode,
+        accuracyMetres: metadata.accuracyMetres,
+        note: metadata.note,
+        committeeBoatId: metadata.committeeBoatId,
+      })
+      setRevisionReason(`${existingMark.label}の確定後位置をGPS記録に基づいて訂正`)
+      setRevisionNote(metadata.note ?? '')
+      setRevisionConfirmation('')
+      setRevisionError(undefined)
+      setRevisionOpen(true)
+      return
+    }
     setRaces((current) => current.map((race) => {
       if (race.id !== activeRace.id) return race
       const sourceMarks = race.marks.length ? race.marks : marks
@@ -1264,12 +1323,31 @@ export default function App() {
   }
 
   const openAdminRevision = () => {
+    if (revisionDraft) {
+      setPendingMarkCorrection(undefined)
+      setRevisionReason(revisionDraft.reason)
+      setRevisionCourseCode(revisionDraft.corrections.courseCode ?? activeRace.courseCode)
+      setRevisionTargetMinutes(revisionDraft.corrections.targetMinutes ?? activeRace.targetMinutes)
+      setRevisionNote(revisionDraft.corrections.markPosition?.note ?? revisionDraft.corrections.note ?? '')
+      setRevisionConfirmation('')
+      setRevisionError(undefined)
+      setRevisionOpen(true)
+      return
+    }
+    setPendingMarkCorrection(undefined)
     setRevisionCourseCode(activeRace.courseCode)
     setRevisionTargetMinutes(activeRace.targetMinutes)
     setRevisionReason('確定後に判明した運営記録の訂正')
     setRevisionNote('')
+    setRevisionConfirmation('')
     setRevisionError(undefined)
     setRevisionOpen(true)
+  }
+
+  const closeAdminRevision = () => {
+    setRevisionOpen(false)
+    setRevisionConfirmation('')
+    if (!revisionDraft) setPendingMarkCorrection(undefined)
   }
 
   const submitAdminRevision = async (event: React.FormEvent) => {
@@ -1277,22 +1355,107 @@ export default function App() {
     setRevisionWorking(true)
     setRevisionError(undefined)
     try {
-      await createPostFinalizationRevision(eventId, activeRace.id, revisionReason, {
-        courseCode: revisionCourseCode,
-        targetMinutes: revisionTargetMinutes,
-        note: revisionNote,
+      if (!revisionDraft) {
+        const created = await createPostFinalizationRevisionDraft(
+          eventId,
+          activeRace.id,
+          revisionReason,
+          pendingMarkCorrection ? {
+            markPosition: {
+              markId: pendingMarkCorrection.markId,
+              actual: pendingMarkCorrection.actual,
+              recordedAt: pendingMarkCorrection.recordedAt,
+              committeeBoatId: pendingMarkCorrection.committeeBoatId,
+              accuracyMetres: pendingMarkCorrection.accuracyMetres,
+              positionSource: pendingMarkCorrection.source,
+              coordinateEntryMode: pendingMarkCorrection.entryMode,
+              coordinateDatum: 'WGS84',
+              note: revisionNote.trim() || pendingMarkCorrection.note,
+            },
+          } : {
+            courseCode: revisionCourseCode,
+            targetMinutes: revisionTargetMinutes,
+            note: revisionNote,
+          },
+        )
+        setRevisionDrafts((current) => ({ ...current, [activeRace.id]: created.draft }))
+        setPendingMarkCorrection(undefined)
+        setRevisionReason(created.draft.reason)
+        setRevisionNote(created.draft.corrections.markPosition?.note ?? created.draft.corrections.note ?? '')
+        setRevisionConfirmation('')
+        return
+      }
+      const saved = await publishPostFinalizationRevisionDraft(
+        eventId,
+        activeRace.id,
+        revisionDraft.id,
+        revisionConfirmation,
+      )
+      setRaces((current) => current.map((race) => {
+        if (race.id !== activeRace.id) return race
+        if (saved.corrections.markPosition) {
+          return {
+            ...race,
+            finalizedRevision: saved.revision,
+            finalizedAt: saved.createdAt,
+            marks: race.marks.map((mark) => mark.id === saved.corrections.markPosition?.markId ? {
+              ...mark,
+              actual: saved.corrections.markPosition?.actual,
+              status: 'confirmed' as const,
+            } : mark),
+          }
+        }
+        return {
+          ...race,
+          courseCode: saved.corrections.courseCode ?? race.courseCode,
+          targetMinutes: saved.corrections.targetMinutes ?? race.targetMinutes,
+          warningAt: saved.corrections.warningAt ?? race.warningAt,
+          finalizedRevision: saved.revision,
+          finalizedAt: saved.createdAt,
+        }
+      }))
+      setEventRefreshKey((current) => current + 1)
+      void sendRealtimeOperation('course', { action: 'refresh', finalizedRevision: saved.revision }, activeRace.id)
+      setRevisionDrafts((current) => {
+        const next = { ...current }
+        delete next[activeRace.id]
+        return next
       })
-      setRaces((current) => current.map((race) => race.id === activeRace.id ? {
-        ...race,
-        courseCode: revisionCourseCode,
-        targetMinutes: revisionTargetMinutes,
-      } : race))
+      setPendingMarkCorrection(undefined)
+      setRevisionConfirmation('')
       setRevisionOpen(false)
     } catch (reason) {
       if (reason instanceof EventApiError && reason.code === 'RECENT_AUTHENTICATION_REQUIRED') {
         setFinalizeNeedsReauth(true)
       }
-      setRevisionError(reason instanceof Error ? reason.message : '管理者修正版を作成できません')
+      setRevisionError(reason instanceof Error ? reason.message : '管理者修正版を処理できません')
+    } finally {
+      setRevisionWorking(false)
+    }
+  }
+
+  const discardAdminRevision = async () => {
+    if (!revisionDraft) {
+      closeAdminRevision()
+      return
+    }
+    setRevisionWorking(true)
+    setRevisionError(undefined)
+    try {
+      await discardPostFinalizationRevisionDraft(eventId, activeRace.id, revisionDraft.id)
+      setRevisionDrafts((current) => {
+        const next = { ...current }
+        delete next[activeRace.id]
+        return next
+      })
+      setPendingMarkCorrection(undefined)
+      setRevisionConfirmation('')
+      setRevisionOpen(false)
+    } catch (reason) {
+      if (reason instanceof EventApiError && reason.code === 'RECENT_AUTHENTICATION_REQUIRED') {
+        setFinalizeNeedsReauth(true)
+      }
+      setRevisionError(reason instanceof Error ? reason.message : '管理者修正版を破棄できません')
     } finally {
       setRevisionWorking(false)
     }
@@ -1319,6 +1482,7 @@ export default function App() {
           activeRaceId={activeRace.id}
           serverOffsetMs={realtime.serverOffsetMs}
           messages={messages}
+          revisionDraftRaceIds={Object.keys(revisionDrafts)}
           onSelectRace={(raceId) => {
             setActiveRaceId(raceId)
             setSelectedMarkId(undefined)
@@ -1483,7 +1647,7 @@ export default function App() {
         )}
         {locked && eventAccess?.isOwner && (
           <button type="button" className="revision-button" onClick={openAdminRevision}>
-            <FilePenLine size={17} /> 管理者修正版を作成
+            <FilePenLine size={17} /> {revisionDraft ? '管理者修正中を再開' : '管理者修正版を作成'}
           </button>
         )}
       </div>
@@ -1687,11 +1851,17 @@ export default function App() {
       {revisionOpen && (
         <div className="modal-backdrop revision-backdrop" role="presentation">
           <form className="revision-modal" role="dialog" aria-modal="true" aria-labelledby="revision-title" onSubmit={(event) => void submitAdminRevision(event)}>
-            <button type="button" className="revision-close" onClick={() => setRevisionOpen(false)}><X size={19} /></button>
+            <button type="button" className="revision-close" onClick={closeAdminRevision}><X size={19} /></button>
             <div className="confirm-icon"><FilePenLine size={24} /></div>
             <span className="eyebrow">大会作成者のみ・旧確定版を保持</span>
-            <h2 id="revision-title">{activeRace.number} 管理者修正版</h2>
-            <p>元の確定版は変更しません。以下の訂正を新しい確定版として追記し、差分・理由・時刻・ハッシュを監査ログへ残します。</p>
+            <h2 id="revision-title">{activeRace.number} {revisionMarkCorrection ? 'マーク位置を訂正' : '管理者修正版'}</h2>
+            <p>元の確定版は変更しません。まず未公開の下書きを保存し、内容確認後に再確定すると全運営へ反映されます。</p>
+            {revisionDraft && (
+              <div className="revision-draft-status" role="status">
+                <strong>管理者修正中・未公開</strong>
+                <small>一般メンバーには最後の確定版を表示中・基準は確定版v{revisionDraft.baseRevision}</small>
+              </div>
+            )}
             {!recentAuthentication && session.mode === 'authenticated' && (
               <div className="finalize-reauth">
                 <strong>管理者修正版の作成前に本人確認が必要です</strong>
@@ -1703,14 +1873,27 @@ export default function App() {
                 >{finalizeReauthWorking ? '本人確認中…' : 'パスキーで本人確認'}</button>
               </div>
             )}
-            <div className="revision-grid">
-              <label><span>コース記号</span><input value={revisionCourseCode} onChange={(event) => setRevisionCourseCode(event.target.value)} maxLength={80} required /></label>
-              <label><span>目標時間（分）</span><input type="number" min="5" max="360" value={revisionTargetMinutes} onChange={(event) => setRevisionTargetMinutes(Number(event.target.value))} required /></label>
-            </div>
-            <label><span>修正理由（必須）</span><textarea value={revisionReason} onChange={(event) => setRevisionReason(event.target.value)} minLength={5} maxLength={500} required /></label>
-            <label><span>修正メモ</span><textarea value={revisionNote} onChange={(event) => setRevisionNote(event.target.value)} maxLength={2_000} placeholder="元記録との差異、確認者、根拠など" /></label>
+            {revisionMarkCorrection ? (
+              <div className="revision-mark-summary">
+                <span><strong>{revisionMarkCorrection.label}</strong><small>訂正対象</small></span>
+                <span><strong>{revisionMarkCorrection.actual[1].toFixed(6)}, {revisionMarkCorrection.actual[0].toFixed(6)}</strong><small>WGS 84・緯度, 経度</small></span>
+                <span><strong>{revisionMarkCorrection.source === 'handheld-gps-manual' ? 'ハンディGPS' : 'スマホ現在地'}</strong><small>{revisionMarkCorrection.accuracyMetres == null ? '精度未入力' : `表示精度 ${revisionMarkCorrection.accuracyMetres}m`}</small></span>
+              </div>
+            ) : (
+              <div className="revision-grid">
+                <label><span>コース記号</span><input value={revisionCourseCode} onChange={(event) => setRevisionCourseCode(event.target.value)} maxLength={80} required disabled={Boolean(revisionDraft)} /></label>
+                <label><span>目標時間（分）</span><input type="number" min="5" max="360" value={revisionTargetMinutes} onChange={(event) => setRevisionTargetMinutes(Number(event.target.value))} required disabled={Boolean(revisionDraft)} /></label>
+              </div>
+            )}
+            <label><span>修正理由（必須）</span><textarea value={revisionReason} onChange={(event) => setRevisionReason(event.target.value)} minLength={5} maxLength={500} required disabled={Boolean(revisionDraft)} /></label>
+            <label><span>修正メモ</span><textarea value={revisionNote} onChange={(event) => setRevisionNote(event.target.value)} maxLength={revisionMarkCorrection ? 120 : 2_000} placeholder="元記録との差異、確認者、根拠など" disabled={Boolean(revisionDraft)} /></label>
+            {revisionDraft && <label><span>再確定の確認（「{finalizePhrase}」と入力）</span><input value={revisionConfirmation} onChange={(event) => setRevisionConfirmation(event.target.value)} autoComplete="off" required /></label>}
             {revisionError && <div className="auth-error" role="alert">{revisionError}</div>}
-            <div className="revision-actions"><button type="button" onClick={() => setRevisionOpen(false)}>キャンセル</button><button type="submit" disabled={revisionWorking || finalizeReauthWorking || !recentAuthentication || revisionReason.trim().length < 5}>{revisionWorking ? '作成中…' : '新しい確定版を追記'}</button></div>
+            <div className="revision-actions">
+              <button type="button" onClick={closeAdminRevision} disabled={revisionWorking}>{revisionDraft ? '閉じる' : 'キャンセル'}</button>
+              {revisionDraft && <button type="button" className="revision-discard" onClick={() => void discardAdminRevision()} disabled={revisionWorking}>下書きを破棄</button>}
+              <button type="submit" disabled={revisionWorking || finalizeReauthWorking || !recentAuthentication || revisionReason.trim().length < 5 || Boolean(revisionDraft && revisionConfirmation !== finalizePhrase)}>{revisionWorking ? (revisionDraft ? '再確定中…' : '保存中…') : (revisionDraft ? '訂正して再確定' : '未公開の下書きを保存')}</button>
+            </div>
           </form>
         </div>
       )}

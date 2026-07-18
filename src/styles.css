@@ -212,6 +212,11 @@ select:focus-visible {
   color: #48705f;
 }
 
+.race-tabs button.is-correction-draft em {
+  color: #8a5700;
+  background: #fff3ce;
+}
+
 .race-tabs .race-tab__urgent {
   color: var(--danger);
   right: 3px;
@@ -5643,6 +5648,54 @@ select:focus-visible {
   gap: 9px;
 }
 
+.revision-mark-summary {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 12px;
+  padding: 11px;
+  background: #edf8ff;
+  border: 1px solid #b9ddf7;
+  border-radius: 10px;
+}
+
+.revision-mark-summary span {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.revision-mark-summary strong {
+  color: var(--navy);
+  font-size: 11px;
+}
+
+.revision-mark-summary small {
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.revision-draft-status {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0 0 12px;
+  padding: 10px 11px;
+  color: #704500;
+  background: #fff6dc;
+  border: 1px solid #f0cf73;
+  border-radius: 10px;
+}
+
+.revision-draft-status strong {
+  font-size: 11px;
+}
+
+.revision-draft-status small {
+  font-size: 8px;
+  line-height: 1.5;
+}
+
 .revision-actions {
   display: flex;
   gap: 8px;
@@ -5663,6 +5716,11 @@ select:focus-visible {
 .revision-actions button[type='submit'] {
   color: #fff;
   background: #9a620d;
+}
+
+.revision-actions .revision-discard {
+  color: #8a351f;
+  background: #fff0eb;
 }
 
 .revision-actions button:disabled {

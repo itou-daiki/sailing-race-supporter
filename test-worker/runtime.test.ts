@@ -72,8 +72,8 @@ describe('Cloudflare Workers runtime integration', () => {
       "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
     ).first<{ count: number }>()
 
-    expect(migrations.results).toHaveLength(25)
-    expect(tableCount?.count).toBeGreaterThanOrEqual(49)
+    expect(migrations.results).toHaveLength(26)
+    expect(tableCount?.count).toBeGreaterThanOrEqual(50)
   })
 
   it('persists an event room snapshot across Durable Object eviction', async () => {
@@ -109,9 +109,9 @@ describe('Cloudflare Workers runtime integration', () => {
     ])
   })
 
-  it('rejects a member but appends an owner mark correction after race finalization', async () => {
-    const now = '2026-07-18T09:00:00.000Z'
-    const expiresAt = '2027-07-18T09:00:00.000Z'
+  it('requires the owner revision workflow for mark corrections after race finalization', async () => {
+    const now = new Date().toISOString()
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1_000).toISOString()
     const eventId = 'runtime-finalized-event'
     const raceId = 'runtime-finalized-race'
     const markId = 'runtime-finalized-mark'
@@ -167,6 +167,19 @@ describe('Cloudflare Workers runtime integration', () => {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'finalized', 1, ?, ?, ?, ?)`,
       ).bind(raceId, eventId, 'runtime-finalized-area', '1R', 1, '470', 'L2', 50, now, 'runtime-finalized-owner', now, now),
       env.DB.prepare(
+        `INSERT INTO race_finalizations
+         (id, race_id, revision, state_hash, reason, finalized_by, finalized_at, snapshot_json)
+         VALUES (?, ?, 1, ?, ?, ?, ?, ?)`,
+      ).bind(
+        'runtime-finalized-v1',
+        raceId,
+        'runtime-finalized-state-v1',
+        '初回確定',
+        'runtime-finalized-owner',
+        now,
+        JSON.stringify({ schemaVersion: 1, raceId, revision: 1 }),
+      ),
+      env.DB.prepare(
         `INSERT INTO marks (id, regatta_id, race_area_id, label, mark_type, created_at)
          VALUES (?, ?, ?, ?, ?, ?)`,
       ).bind(markId, eventId, 'runtime-finalized-area', '1マーク', 'windward', now),
@@ -212,10 +225,10 @@ describe('Cloudflare Workers runtime integration', () => {
     })
 
     const ownerSocket = await connectEventRoom(eventId, ownerToken)
-    const correctionId = 'runtime-owner-finalized-mark'
+    const directOwnerOperationId = 'runtime-owner-direct-finalized-mark'
     const ownerReply = nextWebSocketMessage(ownerSocket)
     ownerSocket.send(JSON.stringify({
-      id: correctionId,
+      id: directOwnerOperationId,
       type: 'mark',
       raceId,
       payload: {
@@ -231,15 +244,150 @@ describe('Cloudflare Workers runtime integration', () => {
       },
     }))
     await expect(ownerReply).resolves.toMatchObject({
-      type: 'event',
-      event: {
-        id: correctionId,
-        type: 'mark',
-        raceId,
-        payload: {
+      type: 'error',
+      code: 'RACE_FINALIZED',
+      id: directOwnerOperationId,
+    })
+
+    const revisionInput = {
+      reason: 'ハンディGPSの原記録と照合したため',
+      corrections: {
+        markPosition: {
           markId,
           actual: [139.762345, 35.252345],
-          status: 'deployed',
+          recordedAt: now,
+          accuracyMetres: 3,
+          positionSource: 'handheld-gps-manual',
+          coordinateEntryMode: 'dmm-tail-4',
+          coordinateDatum: 'WGS84',
+          note: 'ハンディGPS値に訂正',
+        },
+      },
+    }
+    const memberRevisionResponse = await exports.default.fetch(
+      `https://example.test/api/events/${eventId}/races/${raceId}/post-finalization-revisions/drafts`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          Cookie: `srs_session=${memberToken}`,
+          Origin: 'https://example.test',
+        },
+        body: JSON.stringify(revisionInput),
+      },
+    )
+    expect(memberRevisionResponse.status).toBe(403)
+
+    const draftResponse = await exports.default.fetch(
+      `https://example.test/api/events/${eventId}/races/${raceId}/post-finalization-revisions/drafts`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          Cookie: `srs_session=${ownerToken}`,
+          Origin: 'https://example.test',
+        },
+        body: JSON.stringify(revisionInput),
+      },
+    )
+    expect(draftResponse.status).toBe(201)
+    const createdDraft = await draftResponse.json<{
+      draft: { id: string; baseRevision: number; status: string; corrections: { markPosition: { markId: string } } }
+    }>()
+    expect(createdDraft.draft).toMatchObject({
+      baseRevision: 1,
+      status: 'draft',
+      corrections: { markPosition: { markId } },
+    })
+
+    const prePublishEvents = await env.DB.prepare(
+      'SELECT COUNT(*) AS count FROM mark_events WHERE race_id = ?',
+    ).bind(raceId).first<{ count: number }>()
+    const prePublishFinalization = await env.DB.prepare(
+      'SELECT MAX(revision) AS revision FROM race_finalizations WHERE race_id = ?',
+    ).bind(raceId).first<{ revision: number }>()
+    expect(prePublishEvents?.count).toBe(0)
+    expect(prePublishFinalization?.revision).toBe(1)
+
+    const memberBootstrap = await exports.default.fetch(
+      `https://example.test/api/events/${eventId}/bootstrap`,
+      { headers: { Cookie: `srs_session=${memberToken}` } },
+    )
+    const memberStateBeforePublish = await memberBootstrap.json<{
+      markEvents: unknown[]
+      races: Array<{ finalized_revision: number }>
+      activeRevisionDrafts: unknown[]
+    }>()
+    expect(memberStateBeforePublish.markEvents).toEqual([])
+    expect(memberStateBeforePublish.races[0]?.finalized_revision).toBe(1)
+    expect(memberStateBeforePublish.activeRevisionDrafts).toEqual([])
+
+    const ownerBootstrap = await exports.default.fetch(
+      `https://example.test/api/events/${eventId}/bootstrap`,
+      { headers: { Cookie: `srs_session=${ownerToken}` } },
+    )
+    const ownerStateBeforePublish = await ownerBootstrap.json<{
+      activeRevisionDrafts: Array<{ id: string; race_id: string; base_revision: number; status: string }>
+    }>()
+    expect(ownerStateBeforePublish.activeRevisionDrafts).toEqual([
+      expect.objectContaining({
+        id: createdDraft.draft.id,
+        race_id: raceId,
+        base_revision: 1,
+        status: 'draft',
+      }),
+    ])
+
+    const wrongPhraseResponse = await exports.default.fetch(
+      `https://example.test/api/events/${eventId}/races/${raceId}/post-finalization-revisions/drafts/${createdDraft.draft.id}/publish`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          Cookie: `srs_session=${ownerToken}`,
+          Origin: 'https://example.test',
+        },
+        body: JSON.stringify({ confirmationPhrase: '1R' }),
+      },
+    )
+    expect(wrongPhraseResponse.status).toBe(400)
+    await expect(wrongPhraseResponse.json()).resolves.toMatchObject({ code: 'FINALIZATION_PHRASE_MISMATCH' })
+
+    const revisionResponse = await exports.default.fetch(
+      `https://example.test/api/events/${eventId}/races/${raceId}/post-finalization-revisions/drafts/${createdDraft.draft.id}/publish`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          Cookie: `srs_session=${ownerToken}`,
+          Origin: 'https://example.test',
+        },
+        body: JSON.stringify({ confirmationPhrase: '1Rを確定' }),
+      },
+    )
+    expect(revisionResponse.status).toBe(200)
+    const revision = await revisionResponse.json<{
+      revision: number
+      stateHash: string
+      corrections: {
+        markPosition: {
+          eventId: string
+          markId: string
+          actual: [number, number]
+          status: string
+          positionSource: string
+          coordinateEntryMode: string
+          coordinateDatum: string
+        }
+      }
+    }>()
+    expect(revision).toMatchObject({
+      revision: 2,
+      corrections: {
+        markPosition: {
+          markId,
+          actual: [139.762345, 35.252345],
+          status: 'confirmed',
           positionSource: 'handheld-gps-manual',
           coordinateEntryMode: 'dmm-tail-4',
           coordinateDatum: 'WGS84',
@@ -247,10 +395,40 @@ describe('Cloudflare Workers runtime integration', () => {
       },
     })
 
+    const publishedDraft = await env.DB.prepare(
+      `SELECT status, published_finalization_id, published_at
+       FROM post_finalization_revision_drafts WHERE id = ? LIMIT 1`,
+    ).bind(createdDraft.draft.id).first<{
+      status: string
+      published_finalization_id: string
+      published_at: string
+    }>()
+    expect(publishedDraft).toMatchObject({ status: 'published' })
+    expect(publishedDraft?.published_finalization_id).toBeTruthy()
+    expect(publishedDraft?.published_at).toBeTruthy()
+
+    const ownerBootstrapAfterPublish = await exports.default.fetch(
+      `https://example.test/api/events/${eventId}/bootstrap`,
+      { headers: { Cookie: `srs_session=${ownerToken}` } },
+    )
+    const ownerStateAfterPublish = await ownerBootstrapAfterPublish.json<{
+      markEvents: Array<{ mark_id: string; lng: number; lat: number; payload_json: string }>
+      races: Array<{ finalized_revision: number }>
+      activeRevisionDrafts: unknown[]
+    }>()
+    expect(ownerStateAfterPublish.activeRevisionDrafts).toEqual([])
+    expect(ownerStateAfterPublish.races[0]?.finalized_revision).toBe(2)
+    expect(ownerStateAfterPublish.markEvents).toContainEqual(expect.objectContaining({
+      mark_id: markId,
+      lng: 139.762345,
+      lat: 35.252345,
+      payload_json: expect.stringContaining('postFinalizationRevisionId'),
+    }))
+
     const markEvent = await env.DB.prepare(
       `SELECT event_type, lng, lat, member_id, payload_json
        FROM mark_events WHERE id = ? LIMIT 1`,
-    ).bind(correctionId).first<{
+    ).bind(revision.corrections.markPosition.eventId).first<{
       event_type: string
       lng: number
       lat: number
@@ -268,11 +446,64 @@ describe('Cloudflare Workers runtime integration', () => {
       coordinateEntryMode: 'dmm-tail-4',
       coordinateDatum: 'WGS84',
       note: 'ハンディGPS値に訂正',
+      baseFinalizationId: 'runtime-finalized-v1',
+    })
+
+    const finalized = await env.DB.prepare(
+      `SELECT revision, state_hash, previous_finalization_id, snapshot_json
+       FROM race_finalizations WHERE race_id = ? ORDER BY revision DESC LIMIT 1`,
+    ).bind(raceId).first<{
+      revision: number
+      state_hash: string
+      previous_finalization_id: string
+      snapshot_json: string
+    }>()
+    expect(finalized).toMatchObject({
+      revision: 2,
+      state_hash: revision.stateHash,
+      previous_finalization_id: 'runtime-finalized-v1',
+    })
+    expect(JSON.parse(finalized!.snapshot_json)).toMatchObject({
+      schemaVersion: 2,
+      type: 'post-finalization-revision',
+      baseFinalization: {
+        id: 'runtime-finalized-v1',
+        revision: 1,
+        stateHash: 'runtime-finalized-state-v1',
+      },
+      corrections: {
+        markPosition: {
+          eventId: revision.corrections.markPosition.eventId,
+          markId,
+        },
+      },
+    })
+
+    const correction = await env.DB.prepare(
+      `SELECT id, revision, reason, state_hash, previous_finalization_id, patch_json
+       FROM post_finalization_revisions WHERE race_id = ? ORDER BY revision DESC LIMIT 1`,
+    ).bind(raceId).first<{
+      id: string
+      revision: number
+      reason: string
+      state_hash: string
+      previous_finalization_id: string
+      patch_json: string
+    }>()
+    expect(correction).toMatchObject({
+      revision: 2,
+      reason: revisionInput.reason,
+      state_hash: revision.stateHash,
+      previous_finalization_id: 'runtime-finalized-v1',
+    })
+    expect(JSON.parse(correction!.patch_json)).toMatchObject({
+      markPosition: { eventId: revision.corrections.markPosition.eventId, markId },
     })
 
     const audit = await env.DB.prepare(
       `SELECT action, entity_type, entity_id, actor_user_id
-       FROM audit_events WHERE regatta_id = ? ORDER BY sequence DESC LIMIT 1`,
+       FROM audit_events WHERE regatta_id = ? AND action = 'race.post-finalization-revision'
+       ORDER BY sequence DESC LIMIT 1`,
     ).bind(eventId).first<{
       action: string
       entity_type: string
@@ -280,16 +511,67 @@ describe('Cloudflare Workers runtime integration', () => {
       actor_user_id: string
     }>()
     expect(audit).toEqual({
-      action: 'realtime.mark',
-      entity_type: 'mark',
-      entity_id: correctionId,
+      action: 'race.post-finalization-revision',
+      entity_type: 'race',
+      entity_id: raceId,
       actor_user_id: 'runtime-finalized-owner',
+    })
+
+    const notificationId = 'runtime-finalized-revision-refresh'
+    const notificationReply = nextWebSocketMessage(ownerSocket)
+    ownerSocket.send(JSON.stringify({
+      id: notificationId,
+      type: 'course',
+      raceId,
+      payload: { action: 'refresh', finalizedRevision: revision.revision },
+    }))
+    await expect(notificationReply).resolves.toMatchObject({
+      type: 'event',
+      event: { id: notificationId, type: 'course', raceId },
     })
 
     const roomSnapshot = await env.EVENT_ROOMS.getByName(eventId)
       .fetch(`https://example.test/snapshot?race=${raceId}`)
     const roomState = await roomSnapshot.json<{ events: Array<{ event_id: string; type: string }> }>()
-    expect(roomState.events).toContainEqual(expect.objectContaining({ event_id: correctionId, type: 'mark' }))
+    expect(roomState.events).toContainEqual(expect.objectContaining({ event_id: notificationId, type: 'course' }))
+    expect(roomState.events).not.toContainEqual(expect.objectContaining({ type: 'mark' }))
+
+    const disposableDraftResponse = await exports.default.fetch(
+      `https://example.test/api/events/${eventId}/races/${raceId}/post-finalization-revisions/drafts`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          Cookie: `srs_session=${ownerToken}`,
+          Origin: 'https://example.test',
+        },
+        body: JSON.stringify({
+          reason: '破棄操作の確認用下書き',
+          corrections: { courseCode: 'L3' },
+        }),
+      },
+    )
+    expect(disposableDraftResponse.status).toBe(201)
+    const disposableDraft = await disposableDraftResponse.json<{ draft: { id: string } }>()
+    const discardResponse = await exports.default.fetch(
+      `https://example.test/api/events/${eventId}/races/${raceId}/post-finalization-revisions/drafts/${disposableDraft.draft.id}`,
+      {
+        method: 'DELETE',
+        headers: {
+          Cookie: `srs_session=${ownerToken}`,
+          Origin: 'https://example.test',
+        },
+      },
+    )
+    expect(discardResponse.status).toBe(200)
+    await expect(discardResponse.json()).resolves.toMatchObject({
+      id: disposableDraft.draft.id,
+      status: 'discarded',
+    })
+    const discardedDraft = await env.DB.prepare(
+      'SELECT status FROM post_finalization_revision_drafts WHERE id = ? LIMIT 1',
+    ).bind(disposableDraft.draft.id).first<{ status: string }>()
+    expect(discardedDraft?.status).toBe('discarded')
 
     memberSocket.close(1000, 'test complete')
     ownerSocket.close(1000, 'test complete')

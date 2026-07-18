@@ -90,4 +90,31 @@ describe('mark drop persistence', () => {
       payload: { markId: 'mark-1', actual: [139.4661, 35.2948], status: 'moved' },
     })).rejects.toMatchObject({ status: 409 })
   })
+
+  it('requires the dedicated revision workflow even for the event owner after finalization', async () => {
+    const database = {
+      prepare(sql: string) {
+        const statement = {
+          bind() { return statement },
+          async first() {
+            if (sql.includes('SELECT id FROM races')) return { id: 'race-1' }
+            if (sql.includes('SELECT status FROM races')) return { status: 'finalized' }
+            throw new Error(`Unexpected first query: ${sql}`)
+          },
+        }
+        return statement
+      },
+    }
+    const env = { DB: database } as unknown as AppEnv
+    const access: EventAccess = {
+      eventId: 'event-1', eventSlug: 'summer', eventName: 'Summer Regatta',
+      userId: 'owner-1', memberId: 'member-1', displayName: '大会管理者',
+      role: 'owner', assignment: '大会管理者', isOwner: true,
+    }
+
+    await expect(persistRealtimeOperation(env, access, {
+      id: 'owner-move-after-finalization', type: 'mark', raceId: 'race-1',
+      payload: { markId: 'mark-1', actual: [139.4661, 35.2948], status: 'moved' },
+    })).rejects.toMatchObject({ status: 409 })
+  })
 })

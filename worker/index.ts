@@ -393,7 +393,9 @@ export class EventRoom extends DurableObject<AppEnv> {
         : ''
       const messageReceiptOnly = parsed.type === 'message' && ['read', 'acknowledge'].includes(messageAction)
       const finalizedMutation = mutatesFinalizedState.has(parsed.type) || parsed.type === 'message' && !messageReceiptOnly
-      const ownerAppendOnlyCorrection = access.isOwner && ['mark', 'leading-passage', 'finish', 'message', 'course'].includes(parsed.type)
+      // Finalized mark corrections must use the dedicated revision API, which
+      // verifies recent passkey authentication, a reason and explicit re-finalization.
+      const ownerAppendOnlyCorrection = access.isOwner && ['leading-passage', 'finish', 'message', 'course'].includes(parsed.type)
       if (race.status === 'finalized' && finalizedMutation && !ownerAppendOnlyCorrection) {
         socket.send(JSON.stringify({ type: 'error', code: 'RACE_FINALIZED', id: parsed.id }))
         return
@@ -722,7 +724,9 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
     if (!regatta) return json({ error: 'Event not found' }, { status: 404 })
 
     const races = await env.DB.prepare(
-      'SELECT id, race_area_id, race_number, class_name, course_code, status, warning_at, target_minutes FROM races WHERE regatta_id = ? ORDER BY race_order',
+      `SELECT id, race_area_id, race_number, class_name, course_code, status, warning_at,
+              target_minutes, finalized_revision, finalized_at
+       FROM races WHERE regatta_id = ? ORDER BY race_order`,
     ).bind(regatta.id).all()
 
     const signalEvents = await env.DB.prepare(
@@ -761,7 +765,8 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
 
     const markEvents = await env.DB.prepare(
       `SELECT me.race_id, me.mark_id, me.event_type, me.lng, me.lat,
-              me.accuracy_metres, me.committee_boat_id, me.client_time, me.server_time, me.sequence
+              me.accuracy_metres, me.committee_boat_id, me.client_time, me.server_time,
+              me.sequence, me.payload_json
        FROM mark_events me
        JOIN races race ON race.id = me.race_id
        WHERE race.regatta_id = ?
@@ -901,6 +906,18 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
          )`,
     ).bind(regatta.id).all()
 
+    const activeRevisionDrafts = access.isOwner
+      ? await env.DB.prepare(
+          `SELECT draft.id, draft.race_id, draft.base_revision, draft.reason,
+                  draft.corrections_json, draft.selected_items_json, draft.status,
+                  draft.created_at, draft.updated_at
+           FROM post_finalization_revision_drafts draft
+           JOIN races race ON race.id = draft.race_id
+           WHERE race.regatta_id = ? AND draft.status = 'draft'
+           ORDER BY draft.updated_at DESC`,
+        ).bind(regatta.id).all()
+      : { results: [] }
+
     return json({
       access: {
         memberId: access.memberId,
@@ -926,6 +943,7 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
       availableMarks: availableMarks.results,
       availableMembers: availableMembers.results,
       raceCorrections: raceCorrections.results,
+      activeRevisionDrafts: activeRevisionDrafts.results,
     })
   } catch (error) {
     return json({
