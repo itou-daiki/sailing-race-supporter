@@ -36,7 +36,7 @@ interface ClientAttachment {
 
 interface RoomMessage {
   id: string
-  type: 'presence' | 'position' | 'wind' | 'mark' | 'leading-passage' | 'task' | 'message' | 'signal' | 'finalize'
+  type: 'presence' | 'position' | 'wind' | 'mark' | 'leading-passage' | 'task' | 'message' | 'signal' | 'signal-audio' | 'finalize'
   raceId?: string
   memberId?: string
   payload: unknown
@@ -57,6 +57,7 @@ const ROOM_MESSAGE_TYPES = new Set<RoomMessage['type']>([
   'task',
   'message',
   'signal',
+  'signal-audio',
   'finalize',
 ])
 
@@ -126,6 +127,7 @@ export class EventRoom extends DurableObject<AppEnv> {
       const pair = new WebSocketPair()
       const [client, server] = Object.values(pair)
       const encodedDisplayName = request.headers.get('x-srs-display-name') ?? ''
+      const encodedAssignment = request.headers.get('x-srs-assignment') ?? ''
       const attachment: ClientAttachment = {
         eventId,
         eventSlug,
@@ -133,7 +135,7 @@ export class EventRoom extends DurableObject<AppEnv> {
         memberId,
         displayName: decodeURIComponent(encodedDisplayName),
         role,
-        assignment: request.headers.get('x-srs-assignment') ?? '',
+        assignment: decodeURIComponent(encodedAssignment),
         isOwner: request.headers.get('x-srs-owner') === '1',
         joinedAt: new Date().toISOString(),
       }
@@ -201,7 +203,7 @@ export class EventRoom extends DurableObject<AppEnv> {
       return
     }
     const access = this.accessFromAttachment(attachment)
-    const permission = parsed.type === 'presence' ? 'view' : parsed.type
+    const permission = parsed.type === 'presence' ? 'view' : parsed.type === 'signal-audio' ? 'signal' : parsed.type
     if (!can(access, permission)) {
       socket.send(JSON.stringify({ type: 'error', code: 'FORBIDDEN', operation: parsed.type }))
       return
@@ -415,7 +417,9 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
 
     const signalEvents = await env.DB.prepare(
       `SELECT signal.id, signal.race_id, signal.signal_type, signal.scheduled_at,
-              signal.executed_at, signal.payload_json, member.display_name AS actor
+              signal.executed_at, signal.visual_executed_at, signal.sound_executed_at,
+              signal.sound_status, signal.official_device_id, signal.payload_json,
+              member.display_name AS actor
        FROM signal_events signal
        LEFT JOIN event_members member ON member.id = signal.member_id
        WHERE signal.race_id IN (SELECT id FROM races WHERE regatta_id = ?)
@@ -645,7 +649,7 @@ export default {
         headers.set('x-srs-member-id', access.memberId)
         headers.set('x-srs-display-name', encodeURIComponent(access.displayName))
         headers.set('x-srs-role', access.role)
-        headers.set('x-srs-assignment', access.assignment)
+        headers.set('x-srs-assignment', encodeURIComponent(access.assignment))
         headers.set('x-srs-owner', access.isOwner ? '1' : '0')
         headers.set('x-srs-event-id', access.eventId)
         headers.set('x-srs-event-slug', access.eventSlug)

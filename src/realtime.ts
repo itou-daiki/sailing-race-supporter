@@ -18,6 +18,7 @@ export type OperationType =
   | 'task'
   | 'message'
   | 'signal'
+  | 'signal-audio'
   | 'finalize'
 
 export interface SequencedOperation {

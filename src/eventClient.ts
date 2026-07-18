@@ -6,6 +6,7 @@ import type {
   OperationalTask,
   RaceDefinition,
   RaceSignalAction,
+  RaceSignalEvent,
   SailingClass,
 } from './domain'
 import { makeRaceSignalEvent } from './signals'
@@ -123,6 +124,8 @@ interface BootstrapResponse {
   }>
   signalEvents: Array<{
     id: string; race_id: string; signal_type: RaceSignalAction; executed_at: string; scheduled_at: string | null
+    visual_executed_at: string | null; sound_executed_at: string | null
+    sound_status: RaceSignalEvent['soundStatus']; official_device_id: string | null
     payload_json: string; actor: string | null
   }>
   raceAreas: Array<{ id: string; name: string; center_lng: number | null; center_lat: number | null }>
@@ -307,7 +310,12 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
           flag: typeof signalPayload.flag === 'string' ? signalPayload.flag : undefined,
           sound: typeof signalPayload.sound === 'string' ? signalPayload.sound : undefined,
           soundCount: typeof signalPayload.soundCount === 'number' ? signalPayload.soundCount : undefined,
-          warningAt: typeof signalPayload.warningAt === 'string' ? signalPayload.warningAt : signalRow.scheduled_at ?? undefined,
+          scheduledAt: typeof signalPayload.scheduledAt === 'string' ? signalPayload.scheduledAt : signalRow.scheduled_at ?? undefined,
+          visualExecutedAt: typeof signalPayload.visualExecutedAt === 'string' ? signalPayload.visualExecutedAt : signalRow.visual_executed_at ?? signalRow.executed_at,
+          soundExecutedAt: typeof signalPayload.soundExecutedAt === 'string' ? signalPayload.soundExecutedAt : signalRow.sound_executed_at ?? undefined,
+          soundStatus: typeof signalPayload.soundStatus === 'string' ? signalPayload.soundStatus as RaceSignalEvent['soundStatus'] : signalRow.sound_status ?? 'legacy',
+          officialAudioDeviceId: typeof signalPayload.officialAudioDeviceId === 'string' ? signalPayload.officialAudioDeviceId : signalRow.official_device_id ?? undefined,
+          warningAt: typeof signalPayload.warningAt === 'string' ? signalPayload.warningAt : undefined,
           reason: typeof signalPayload.reason === 'string' ? signalPayload.reason : undefined,
           targetSailNumbers: typeof signalPayload.targetSailNumbers === 'string' ? signalPayload.targetSailNumbers : undefined,
           finishAt: typeof signalPayload.finishAt === 'string' ? signalPayload.finishAt : undefined,

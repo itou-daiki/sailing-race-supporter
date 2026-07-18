@@ -2,11 +2,12 @@ import { eventAccess, requirePermission } from './authorization.js'
 import { appendAuditEvent } from './audit.js'
 import { json, readJson } from './http.js'
 import type { AppEnv } from './index.js'
-import { assertSameOrigin, requireSession } from './security.js'
+import { assertSameOrigin, randomToken, requireSession, sha256Base64Url } from './security.js'
 
 interface AudioDeviceBody {
   action?: 'claim' | 'heartbeat' | 'release'
   deviceId?: string
+  deviceSecret?: string
   deviceLabel?: string
   force?: boolean
   readiness?: {
@@ -28,6 +29,7 @@ interface AudioDeviceRow {
   ready_at: string
   last_seen_at: string
   released_at: string | null
+  device_secret_hash: string | null
 }
 
 function requiredText(value: unknown, field: string, maxLength: number): string {
@@ -44,6 +46,40 @@ async function currentDevice(env: AppEnv, raceId: string): Promise<AudioDeviceRo
      JOIN event_members member ON member.id = device.member_id
      WHERE device.race_id = ? AND device.released_at IS NULL LIMIT 1`,
   ).bind(raceId).first<AudioDeviceRow>()
+}
+
+export async function verifyOfficialAudioDeviceExecution(
+  env: AppEnv,
+  raceId: string,
+  memberId: string,
+  deviceId: string,
+  deviceSecret: string,
+  executedAt: string,
+): Promise<boolean> {
+  const event = await env.DB.prepare(
+    `SELECT device_id, member_id, action, device_secret_hash
+     FROM official_audio_device_events
+     WHERE race_id = ? AND created_at <= ?
+     ORDER BY created_at DESC, rowid DESC LIMIT 1`,
+  ).bind(raceId, executedAt).first<{
+    device_id: string
+    member_id: string
+    action: string
+    device_secret_hash: string | null
+  }>()
+  const providedHash = await sha256Base64Url(deviceSecret)
+  return Boolean(
+    event &&
+    event.device_id === deviceId &&
+    event.member_id === memberId &&
+    ['claim', 'takeover'].includes(event.action) &&
+    event.device_secret_hash === providedHash
+  )
+}
+
+async function currentSecretMatches(row: AudioDeviceRow | null, secret: string | undefined): Promise<boolean> {
+  if (!row?.device_secret_hash || !secret) return false
+  return row.device_secret_hash === await sha256Base64Url(secret)
 }
 
 function responseDevice(row: AudioDeviceRow | null) {
@@ -89,7 +125,12 @@ export async function handleAudioDeviceRequest(request: Request, env: AppEnv): P
   const current = await currentDevice(env, raceId)
 
   if (action === 'heartbeat') {
-    if (!current || current.device_id !== deviceId || current.member_id !== access.memberId) {
+    if (
+      !current ||
+      current.device_id !== deviceId ||
+      current.member_id !== access.memberId ||
+      !await currentSecretMatches(current, body.deviceSecret)
+    ) {
       return json({ error: 'この端末は公式音響端末ではありません', device: responseDevice(current) }, { status: 409 })
     }
     await env.DB.prepare(
@@ -100,17 +141,21 @@ export async function handleAudioDeviceRequest(request: Request, env: AppEnv): P
 
   if (action === 'release') {
     if (!current) return json({ device: null })
-    if (current.device_id !== deviceId && !access.isOwner) {
-      return json({ error: '公式音響端末または大会管理者だけが解除できます' }, { status: 403 })
+    if (current.device_id !== deviceId || !await currentSecretMatches(current, body.deviceSecret)) {
+      return json({ error: '公式音響端末の確認情報が一致しません' }, { status: 403 })
     }
     await env.DB.batch([
       env.DB.prepare('UPDATE official_audio_devices SET released_at = ?, last_seen_at = ? WHERE race_id = ? AND released_at IS NULL')
         .bind(now, now, raceId),
       env.DB.prepare(
-        `INSERT INTO official_audio_device_events
-         (id, race_id, device_id, device_label, member_id, action, readiness_json, created_at)
-         VALUES (?, ?, ?, ?, ?, 'release', ?, ?)`,
-      ).bind(crypto.randomUUID(), raceId, current.device_id, current.device_label, access.memberId, current.readiness_json, now),
+       `INSERT INTO official_audio_device_events
+         (id, race_id, device_id, device_label, member_id, action, readiness_json,
+          created_at, device_secret_hash)
+         VALUES (?, ?, ?, ?, ?, 'release', ?, ?, ?)`,
+      ).bind(
+        crypto.randomUUID(), raceId, current.device_id, current.device_label,
+        access.memberId, current.readiness_json, now, current.device_secret_hash,
+      ),
     ])
     await appendAuditEvent(env, {
       access, raceId, action: 'audio-device.release', entityType: 'official_audio_device',
@@ -128,27 +173,41 @@ export async function handleAudioDeviceRequest(request: Request, env: AppEnv): P
   if (typeof readiness.clockOffsetMs !== 'number' || !Number.isFinite(readiness.clockOffsetMs) || Math.abs(readiness.clockOffsetMs) > 60_000) {
     return json({ error: '端末時刻差を確認できません' }, { status: 400 })
   }
-  const takeover = Boolean(current && current.device_id !== deviceId)
+  const sameAuthenticatedDevice = Boolean(
+    current &&
+    current.device_id === deviceId &&
+    current.member_id === access.memberId &&
+    await currentSecretMatches(current, body.deviceSecret)
+  )
+  const takeover = Boolean(current && !sameAuthenticatedDevice)
   if (takeover && !(body.force && access.isOwner)) {
     return json({ error: `${current?.device_label} が公式音響端末です`, device: responseDevice(current) }, { status: 409 })
   }
   const readinessJson = JSON.stringify(readiness)
+  const deviceSecret = randomToken(32)
+  const deviceSecretHash = await sha256Base64Url(deviceSecret)
   await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO official_audio_devices
-       (race_id, device_id, device_label, member_id, readiness_json, claimed_at, ready_at, last_seen_at, released_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+       (race_id, device_id, device_label, member_id, readiness_json, claimed_at,
+        ready_at, last_seen_at, released_at, device_secret_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
        ON CONFLICT(race_id) DO UPDATE SET
          device_id = excluded.device_id, device_label = excluded.device_label,
          member_id = excluded.member_id, readiness_json = excluded.readiness_json,
          claimed_at = excluded.claimed_at, ready_at = excluded.ready_at,
-         last_seen_at = excluded.last_seen_at, released_at = NULL`,
-    ).bind(raceId, deviceId, deviceLabel, access.memberId, readinessJson, now, now, now),
+         last_seen_at = excluded.last_seen_at, released_at = NULL,
+         device_secret_hash = excluded.device_secret_hash`,
+    ).bind(raceId, deviceId, deviceLabel, access.memberId, readinessJson, now, now, now, deviceSecretHash),
     env.DB.prepare(
       `INSERT INTO official_audio_device_events
-       (id, race_id, device_id, device_label, member_id, action, readiness_json, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(crypto.randomUUID(), raceId, deviceId, deviceLabel, access.memberId, takeover ? 'takeover' : 'claim', readinessJson, now),
+       (id, race_id, device_id, device_label, member_id, action, readiness_json,
+        created_at, device_secret_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      crypto.randomUUID(), raceId, deviceId, deviceLabel, access.memberId,
+      takeover ? 'takeover' : 'claim', readinessJson, now, deviceSecretHash,
+    ),
   ])
   const claimed = await currentDevice(env, raceId)
   await appendAuditEvent(env, {
@@ -156,5 +215,5 @@ export async function handleAudioDeviceRequest(request: Request, env: AppEnv): P
     entityType: 'official_audio_device', entityId: deviceId,
     before: responseDevice(current), after: responseDevice(claimed),
   })
-  return json({ device: responseDevice(claimed) })
+  return json({ device: responseDevice(claimed), deviceSecret })
 }

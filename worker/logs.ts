@@ -66,7 +66,13 @@ function signalDetail(row: Row): string {
     typeof payload.reason === 'string' ? `理由 ${payload.reason}` : null,
     typeof payload.targetSailNumbers === 'string' ? `対象艇 ${payload.targetSailNumbers}` : null,
     typeof payload.finishAt === 'string' ? `短縮フィニッシュ ${payload.finishAt}` : null,
-    row.scheduled_at ? `次の予告 ${text(row.scheduled_at)}` : null,
+    row.scheduled_at ? `予定 ${text(row.scheduled_at)}` : null,
+    row.visual_executed_at ? `視覚 ${text(row.visual_executed_at)}` : `視覚 ${text(row.occurred_at)}`,
+    row.sound_status === 'played' && row.sound_executed_at ? `音響 ${text(row.sound_executed_at)}` : null,
+    row.sound_status === 'pending' ? '音響 公式端末待ち' : null,
+    row.sound_status === 'not-required' ? '音響 なし' : null,
+    row.sound_status === 'legacy' ? '音響 旧記録・不明' : null,
+    typeof payload.warningAt === 'string' ? `次の予告 ${payload.warningAt}` : null,
   ].filter(Boolean).join('・') || '実行記録'
 }
 
@@ -127,7 +133,9 @@ async function collectLogs(env: AppEnv, access: EventAccess, raceId: string | nu
                WHERE observation.regatta_id = ? AND (? IS NULL OR observation.race_id = ?)
                ORDER BY observation.observed_at DESC LIMIT ?`, values),
     rows(env, `SELECT event.id, event.race_id, race.race_number, event.signal_type,
-                      event.executed_at AS occurred_at, event.scheduled_at, event.payload_json,
+                      event.executed_at AS occurred_at, event.scheduled_at,
+                      event.visual_executed_at, event.sound_executed_at, event.sound_status,
+                      event.payload_json,
                       COALESCE(member.display_name, '不明') AS actor
                FROM signal_events event
                JOIN races race ON race.id = event.race_id

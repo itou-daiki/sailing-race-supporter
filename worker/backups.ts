@@ -118,8 +118,15 @@ async function createBackup(request: Request, env: AppEnv, eventReference: strin
     all(env, 'SELECT adoption.* FROM leading_passage_adoptions adoption JOIN races race ON race.id = adoption.race_id WHERE race.regatta_id = ?', access.eventId),
     all(env, 'SELECT task.* FROM operational_tasks task JOIN races race ON race.id = task.race_id WHERE race.regatta_id = ?', access.eventId),
     all(env, 'SELECT event.* FROM operational_task_events event JOIN races race ON race.id = event.race_id WHERE race.regatta_id = ?', access.eventId),
-    all(env, 'SELECT device.* FROM official_audio_devices device JOIN races race ON race.id = device.race_id WHERE race.regatta_id = ?', access.eventId),
-    all(env, 'SELECT event.* FROM official_audio_device_events event JOIN races race ON race.id = event.race_id WHERE race.regatta_id = ?', access.eventId),
+    all(env, `SELECT device.race_id, device.device_id, device.device_label, device.member_id,
+                    device.readiness_json, device.claimed_at, device.ready_at,
+                    device.last_seen_at, device.released_at
+             FROM official_audio_devices device
+             JOIN races race ON race.id = device.race_id WHERE race.regatta_id = ?`, access.eventId),
+    all(env, `SELECT event.id, event.race_id, event.device_id, event.device_label,
+                    event.member_id, event.action, event.readiness_json, event.created_at
+             FROM official_audio_device_events event
+             JOIN races race ON race.id = event.race_id WHERE race.regatta_id = ?`, access.eventId),
     all(env, 'SELECT * FROM messages WHERE regatta_id = ?', access.eventId),
     all(env, 'SELECT target.* FROM message_targets target JOIN messages message ON message.id = target.message_id WHERE message.regatta_id = ?', access.eventId),
     all(env, 'SELECT receipt.* FROM message_receipts receipt JOIN messages message ON message.id = receipt.message_id WHERE message.regatta_id = ?', access.eventId),

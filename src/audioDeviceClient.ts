@@ -19,6 +19,7 @@ interface OfficialAudioDevice {
 
 interface AudioDeviceResponse {
   device: OfficialAudioDevice | null
+  deviceSecret?: string
   error?: string
 }
 
@@ -31,6 +32,7 @@ export interface OfficialAudioState {
 }
 
 const DEVICE_ID_KEY = 'srs-official-audio-device-id'
+const DEVICE_SECRET_KEY_PREFIX = 'srs-official-audio-device-secret'
 
 function localDeviceId(): string {
   const stored = window.localStorage.getItem(DEVICE_ID_KEY)
@@ -44,6 +46,14 @@ function localDeviceLabel(deviceId: string): string {
   const agent = navigator.userAgent
   const kind = /iPad/u.test(agent) ? 'iPad' : /iPhone/u.test(agent) ? 'iPhone' : /Android/u.test(agent) ? 'Android' : /Mac/u.test(agent) ? 'Mac' : 'Web端末'
   return `${kind} ${deviceId.slice(0, 4).toUpperCase()}`
+}
+
+function secretKey(raceId: string, deviceId: string): string {
+  return `${DEVICE_SECRET_KEY_PREFIX}:${raceId}:${deviceId}`
+}
+
+function localDeviceSecret(raceId: string, deviceId: string): string | undefined {
+  return window.localStorage.getItem(secretKey(raceId, deviceId)) ?? undefined
 }
 
 async function request(
@@ -77,11 +87,17 @@ export function useOfficialAudioDevice(options: {
     status: 'loading',
     networkAvailable: navigator.onLine,
   })
+  const [deviceSecret, setDeviceSecret] = useState(() => localDeviceSecret(options.raceId, deviceId))
+
+  useEffect(() => {
+    setDeviceSecret(localDeviceSecret(options.raceId, deviceId))
+  }, [deviceId, options.raceId])
 
   const apply = useCallback((raceId: string, device: OfficialAudioDevice | null) => {
+    const hasDeviceSecret = Boolean(localDeviceSecret(raceId, deviceId))
     setState({
       raceId,
-      status: !device ? 'available' : device.deviceId === deviceId ? 'mine' : 'other',
+      status: !device ? 'available' : device.deviceId === deviceId && hasDeviceSecret ? 'mine' : 'other',
       device: device ?? undefined,
       networkAvailable: true,
     })
@@ -94,9 +110,15 @@ export function useOfficialAudioDevice(options: {
       try {
         const current = await request(options.eventSlug, options.raceId)
         if (!active) return
-        if (current.device?.deviceId === deviceId) {
+        const storedSecret = localDeviceSecret(options.raceId, deviceId)
+        if (current.device?.deviceId === deviceId && storedSecret) {
           const heartbeat = await request(options.eventSlug, options.raceId, {
-            method: 'POST', body: JSON.stringify({ action: 'heartbeat', deviceId }),
+            method: 'POST',
+            body: JSON.stringify({
+              action: 'heartbeat',
+              deviceId,
+              deviceSecret: storedSecret,
+            }),
           })
           if (active) apply(options.raceId, heartbeat.device)
         } else {
@@ -121,7 +143,11 @@ export function useOfficialAudioDevice(options: {
     const result = await request(options.eventSlug, options.raceId, {
       method: 'POST',
       body: JSON.stringify({
-        action: 'claim', deviceId, deviceLabel, force,
+        action: 'claim',
+        deviceId,
+        deviceLabel,
+        deviceSecret: localDeviceSecret(options.raceId, deviceId),
+        force,
         readiness: {
           audioTested: true,
           volumeConfirmed: true,
@@ -130,18 +156,28 @@ export function useOfficialAudioDevice(options: {
         },
       }),
     })
+    if (!result.deviceSecret) throw new Error('公式音響端末の確認情報を受信できません')
+    window.localStorage.setItem(secretKey(options.raceId, deviceId), result.deviceSecret)
+    setDeviceSecret(result.deviceSecret)
     apply(options.raceId, result.device)
   }, [apply, deviceId, deviceLabel, options.eventSlug, options.raceId, options.serverOffsetMs])
 
   const release = useCallback(async () => {
     const result = await request(options.eventSlug, options.raceId, {
-      method: 'POST', body: JSON.stringify({ action: 'release', deviceId }),
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'release',
+        deviceId,
+        deviceSecret: localDeviceSecret(options.raceId, deviceId),
+      }),
     })
+    window.localStorage.removeItem(secretKey(options.raceId, deviceId))
+    setDeviceSecret(undefined)
     apply(options.raceId, result.device)
   }, [apply, deviceId, options.eventSlug, options.raceId])
 
   const visibleState: OfficialAudioState = state.raceId === options.raceId
     ? state
     : { raceId: options.raceId, status: 'loading', networkAvailable: navigator.onLine }
-  return { state: visibleState, claim, release }
+  return { state: visibleState, claim, release, deviceId, deviceSecret }
 }

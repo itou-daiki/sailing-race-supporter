@@ -38,4 +38,19 @@ describe('race signal rules', () => {
     expect(clearActionFor(recall)).toBe('general-recall-clear')
     expect(clearActionFor(abandon)).toBe('abandon-clear')
   })
+
+  it('keeps planned, visual and official sound execution times separate', () => {
+    const signal = makeRaceSignalEvent('event-start', 'start', '2026-07-18T00:05:00.120Z', {
+      scheduledAt: '2026-07-18T00:05:00.000Z',
+      visualExecutedAt: '2026-07-18T00:05:00.120Z',
+      soundExecutedAt: '2026-07-18T00:05:00.180Z',
+      soundStatus: 'played',
+      officialAudioDeviceId: 'device-signal-boat',
+    })
+    expect(signal.scheduledAt).toBe('2026-07-18T00:05:00.000Z')
+    expect(signal.visualExecutedAt).toBe('2026-07-18T00:05:00.120Z')
+    expect(signal.soundExecutedAt).toBe('2026-07-18T00:05:00.180Z')
+    expect(signal.soundStatus).toBe('played')
+    expect(signal.officialAudioDeviceId).toBe('device-signal-boat')
+  })
 })

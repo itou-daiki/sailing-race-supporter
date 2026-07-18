@@ -75,6 +75,11 @@ export interface RaceSignalEvent {
   sound: string
   soundCount: number
   executedAt: string
+  scheduledAt?: string
+  visualExecutedAt: string
+  soundExecutedAt?: string
+  soundStatus: 'played' | 'pending' | 'not-required' | 'failed' | 'cancelled' | 'legacy'
+  officialAudioDeviceId?: string
   warningAt?: string
   reason?: string
   targetSailNumbers?: string

@@ -1,12 +1,13 @@
 import type { EventAccess } from './authorization.js'
 import type { AppEnv } from './index.js'
 import { appendAuditEvent } from './audit.js'
+import { verifyOfficialAudioDeviceExecution } from './audioDevices.js'
 import { signalDefinition } from '../src/signals.js'
 import type { RaceSignalAction } from '../src/domain.js'
 
 export interface RealtimeOperation {
   id: string
-  type: 'presence' | 'position' | 'wind' | 'mark' | 'leading-passage' | 'task' | 'message' | 'signal' | 'finalize'
+  type: 'presence' | 'position' | 'wind' | 'mark' | 'leading-passage' | 'task' | 'message' | 'signal' | 'signal-audio' | 'finalize'
   raceId?: string
   payload: unknown
   clientTime?: string
@@ -588,7 +589,9 @@ async function persistSignal(env: AppEnv, access: EventAccess, operation: Realti
   if (!allowedActions.has(actionValue as RaceSignalAction)) throw new Response('Invalid signal action', { status: 400 })
   const action = actionValue as RaceSignalAction
   const definition = signalDefinition(action)
-  const executedAt = isoTime(payload.executedAt ?? operation.clientTime, new Date().toISOString())
+  const visualExecutedAt = isoTime(payload.visualExecutedAt ?? payload.executedAt ?? operation.clientTime, new Date().toISOString())
+  const executedAt = visualExecutedAt
+  const scheduledAt = typeof payload.scheduledAt === 'string' ? isoTime(payload.scheduledAt, visualExecutedAt) : null
   const warningAt = typeof payload.warningAt === 'string' ? isoTime(payload.warningAt, executedAt) : null
   if (['resume', 'general-recall-clear', 'abandon-clear'].includes(action) && !warningAt) {
     throw new Response('Next warning time required', { status: 400 })
@@ -597,8 +600,25 @@ async function persistSignal(env: AppEnv, access: EventAccess, operation: Realti
   const targetSailNumbers = optionalString(payload.targetSailNumbers, 200)
   const finishAt = optionalString(payload.finishAt, 200)
   if (action === 'shorten' && !finishAt) throw new Response('Shortened finish location required', { status: 400 })
+  const requestedSoundAt = typeof payload.soundExecutedAt === 'string'
+    ? isoTime(payload.soundExecutedAt, visualExecutedAt)
+    : null
+  const requestedDeviceId = optionalString(payload.officialAudioDeviceId, 120)
+  const requestedDeviceSecret = optionalString(payload.officialAudioDeviceSecret, 200)
+  const soundExecutionCloseToVisual = requestedSoundAt
+    ? Math.abs(Date.parse(requestedSoundAt) - Date.parse(visualExecutedAt)) <= 90_000
+    : false
+  const validOfficialAudio = definition.soundCount > 0 && requestedSoundAt && requestedDeviceId && requestedDeviceSecret && soundExecutionCloseToVisual
+    ? await verifyOfficialAudioDeviceExecution(
+        env, raceId, access.memberId, requestedDeviceId, requestedDeviceSecret, requestedSoundAt,
+      )
+    : false
+  const soundExecutedAt = validOfficialAudio ? requestedSoundAt : null
+  const soundStatus = definition.soundCount === 0 ? 'not-required' : validOfficialAudio ? 'played' : 'pending'
+  const publicPayload = { ...payload }
+  delete publicPayload.officialAudioDeviceSecret
   const normalizedPayload = {
-    ...payload,
+    ...publicPayload,
     action,
     label: typeof payload.label === 'string' && payload.label.trim() ? payload.label.trim().slice(0, 120) : definition.label,
     flag: action === 'preparatory' && typeof payload.flag === 'string' && payload.flag.trim()
@@ -607,6 +627,11 @@ async function persistSignal(env: AppEnv, access: EventAccess, operation: Realti
     sound: definition.sound,
     soundCount: definition.soundCount,
     executedAt,
+    scheduledAt: scheduledAt ?? undefined,
+    visualExecutedAt,
+    soundExecutedAt: soundExecutedAt ?? undefined,
+    soundStatus,
+    officialAudioDeviceId: validOfficialAudio ? requestedDeviceId : undefined,
     warningAt: warningAt ?? undefined,
     reason: reason ?? undefined,
     targetSailNumbers: targetSailNumbers ?? undefined,
@@ -616,16 +641,21 @@ async function persistSignal(env: AppEnv, access: EventAccess, operation: Realti
   const memberId = await requireMemberId(env, access)
   await env.DB.prepare(
     `INSERT INTO signal_events
-     (id, race_id, signal_type, scheduled_at, executed_at, member_id, payload_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+     (id, race_id, signal_type, scheduled_at, executed_at, official_device_id,
+      member_id, payload_json, visual_executed_at, sound_executed_at, sound_status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(
     operation.id,
     raceId,
     action,
-    warningAt,
+    scheduledAt,
     executedAt,
+    validOfficialAudio ? requestedDeviceId : null,
     memberId,
     JSON.stringify(normalizedPayload),
+    visualExecutedAt,
+    soundExecutedAt,
+    soundStatus,
   ).run()
   if (['resume', 'general-recall-clear', 'abandon-clear'].includes(action) && warningAt) {
     await env.DB.prepare(
@@ -659,6 +689,60 @@ async function persistSignal(env: AppEnv, access: EventAccess, operation: Realti
     clientTime: operation.clientTime,
   })
   return normalizedPayload
+}
+
+async function persistSignalAudio(env: AppEnv, access: EventAccess, operation: RealtimeOperation): Promise<Record<string, unknown>> {
+  const raceId = await requireRace(env, access, operation.raceId)
+  const payload = objectPayload(operation.payload)
+  const signalId = stringValue(payload.signalId, 'signalId')
+  const deviceId = stringValue(payload.deviceId, 'deviceId')
+  const deviceSecret = stringValue(payload.deviceSecret, 'deviceSecret', 200)
+  const soundExecutedAt = isoTime(payload.soundExecutedAt ?? operation.clientTime, new Date().toISOString())
+  const signal = await env.DB.prepare(
+    `SELECT id, executed_at, sound_executed_at, sound_status, payload_json
+     FROM signal_events WHERE id = ? AND race_id = ? LIMIT 1`,
+  ).bind(signalId, raceId).first<{
+    id: string
+    executed_at: string
+    sound_executed_at: string | null
+    sound_status: string
+    payload_json: string
+  }>()
+  if (!signal) throw new Response('Signal event not found', { status: 404 })
+  let signalPayload: Record<string, unknown>
+  try {
+    signalPayload = JSON.parse(signal.payload_json) as Record<string, unknown>
+  } catch {
+    throw new Response('Signal payload is invalid', { status: 409 })
+  }
+  if (Number(signalPayload.soundCount ?? 0) < 1) throw new Response('Signal has no sound execution', { status: 409 })
+  if (Math.abs(Date.parse(soundExecutedAt) - Date.parse(signal.executed_at)) > 90_000) {
+    throw new Response('Sound execution time is outside the signal window', { status: 409 })
+  }
+  if (!await verifyOfficialAudioDeviceExecution(env, raceId, access.memberId, deviceId, deviceSecret, soundExecutedAt)) {
+    throw new Response('Official audio device required', { status: 403 })
+  }
+  if (signal.sound_executed_at) {
+    return {
+      signalId,
+      soundExecutedAt: signal.sound_executed_at,
+      soundStatus: signal.sound_status,
+      officialAudioDeviceId: signalPayload.officialAudioDeviceId ?? null,
+      duplicate: true,
+    }
+  }
+  const normalizedPayload = {
+    ...signalPayload,
+    soundExecutedAt,
+    soundStatus: 'played',
+    officialAudioDeviceId: deviceId,
+  }
+  await env.DB.prepare(
+    `UPDATE signal_events
+     SET sound_executed_at = ?, sound_status = 'played', official_device_id = ?, payload_json = ?
+     WHERE id = ? AND race_id = ? AND sound_executed_at IS NULL`,
+  ).bind(soundExecutedAt, deviceId, JSON.stringify(normalizedPayload), signalId, raceId).run()
+  return { signalId, soundExecutedAt, soundStatus: 'played', officialAudioDeviceId: deviceId, duplicate: false }
 }
 
 async function persistTask(env: AppEnv, access: EventAccess, operation: RealtimeOperation): Promise<Record<string, unknown>> {
@@ -710,6 +794,7 @@ export async function persistRealtimeOperation(
     case 'leading-passage': return persistLeadingPassage(env, access, operation)
     case 'message': return persistMessage(env, access, operation)
     case 'signal': return persistSignal(env, access, operation)
+    case 'signal-audio': return persistSignalAudio(env, access, operation)
     case 'task': return persistTask(env, access, operation)
     case 'finalize': throw new Response('Finalize uses the finalization workflow', { status: 400 })
   }

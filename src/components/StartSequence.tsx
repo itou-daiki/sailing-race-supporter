@@ -22,7 +22,7 @@ import {
   signalDefinition,
 } from '../signals'
 
-type SignalExecution = Omit<RaceSignalEvent, 'id'>
+type SignalExecution = Omit<RaceSignalEvent, 'id'> & { officialAudioDeviceSecret?: string }
 
 interface StartSequenceProps {
   warningAt: string
@@ -32,10 +32,13 @@ interface StartSequenceProps {
   canControlSignals: boolean
   preparatoryFlag: string
   officialAudio: OfficialAudioState
+  officialAudioDeviceId: string
+  officialAudioDeviceSecret?: string
   canForceAudioTakeover: boolean
   onClaimOfficialAudio: (force?: boolean) => Promise<void>
   onReleaseOfficialAudio: () => Promise<void>
   onSignalExecuted: (signal: SignalExecution) => void
+  onAudioExecuted: (execution: { raceId: string; signalId: string; soundExecutedAt: string; deviceId: string; deviceSecret: string }) => void
 }
 
 interface SignalStage {
@@ -119,10 +122,13 @@ export function StartSequence({
   canControlSignals,
   preparatoryFlag,
   officialAudio,
+  officialAudioDeviceId,
+  officialAudioDeviceSecret,
   canForceAudioTakeover,
   onClaimOfficialAudio,
   onReleaseOfficialAudio,
   onSignalExecuted,
+  onAudioExecuted,
 }: StartSequenceProps) {
   const [now, setNow] = useState(() => new Date(warningAt).getTime())
   const [armedRaceId, setArmedRaceId] = useState<string>()
@@ -135,7 +141,7 @@ export function StartSequence({
   const [finishAt, setFinishAt] = useState('')
   const playedStagesRef = useRef(new Set<number>())
   const playedSignalsRef = useRef(new Set<string>())
-  const audioArmed = armedRaceId === officialAudio.raceId && officialAudio.status === 'mine'
+  const audioArmed = armedRaceId === officialAudio.raceId && officialAudio.status === 'mine' && Boolean(officialAudioDeviceSecret)
   const held = isRaceSignalHeld(latestSignal)
   const terminal = isTerminalRaceSignal(latestSignal)
 
@@ -161,6 +167,7 @@ export function StartSequence({
     if (!stage || playedStagesRef.current.has(stage.offsetSeconds)) return
     playedStagesRef.current.add(stage.offsetSeconds)
     const executedAt = new Date(Date.now() + serverOffsetMs).toISOString()
+    const scheduledAt = new Date(startAt - stage.offsetSeconds * 1_000).toISOString()
     playedSignalsRef.current.add(`${stage.action}:${executedAt}`)
     playSignalPattern(1, stage.sound === '長音1回')
     onSignalExecuted({
@@ -170,18 +177,31 @@ export function StartSequence({
       sound: stage.sound,
       soundCount: 1,
       executedAt,
+      scheduledAt,
+      visualExecutedAt: executedAt,
+      soundExecutedAt: executedAt,
+      soundStatus: 'played',
+      officialAudioDeviceId,
+      officialAudioDeviceSecret,
     })
-  }, [audioArmed, held, onSignalExecuted, preparatoryFlag, remainingSeconds, serverOffsetMs])
+  }, [audioArmed, held, officialAudioDeviceId, officialAudioDeviceSecret, onSignalExecuted, preparatoryFlag, remainingSeconds, serverOffsetMs, startAt])
 
   useEffect(() => {
-    if (!latestSignal || !audioArmed || latestSignal.soundCount < 1) return
+    if (!latestSignal || !audioArmed || !officialAudioDeviceSecret || latestSignal.soundCount < 1 || latestSignal.soundStatus !== 'pending') return
     const key = signalKey(latestSignal)
     if (playedSignalsRef.current.has(key)) return
     const age = Date.now() + serverOffsetMs - Date.parse(latestSignal.executedAt)
     if (!Number.isFinite(age) || age < -2_000 || age > 8_000) return
     playedSignalsRef.current.add(key)
     playSignalPattern(latestSignal.soundCount, latestSignal.sound.includes('長音'))
-  }, [audioArmed, latestSignal, serverOffsetMs])
+    onAudioExecuted({
+      raceId: officialAudio.raceId,
+      signalId: latestSignal.id,
+      soundExecutedAt: new Date(Date.now() + serverOffsetMs).toISOString(),
+      deviceId: officialAudioDeviceId,
+      deviceSecret: officialAudioDeviceSecret,
+    })
+  }, [audioArmed, latestSignal, officialAudio.raceId, officialAudioDeviceId, officialAudioDeviceSecret, onAudioExecuted, serverOffsetMs])
 
   const toggleAudio = async () => {
     if (!canControlSignals || audioWorking) return
@@ -256,6 +276,11 @@ export function StartSequence({
       sound: definition.sound,
       soundCount: definition.soundCount,
       executedAt,
+      visualExecutedAt: executedAt,
+      soundExecutedAt: audioArmed && definition.soundCount > 0 ? executedAt : undefined,
+      soundStatus: definition.soundCount === 0 ? 'not-required' : audioArmed ? 'played' : 'pending',
+      officialAudioDeviceId: audioArmed && definition.soundCount > 0 ? officialAudioDeviceId : undefined,
+      officialAudioDeviceSecret: audioArmed && definition.soundCount > 0 ? officialAudioDeviceSecret : undefined,
       warningAt: clearsHold ? nextWarningAfterFlagRemoval(executedAt) : undefined,
       reason: reason.trim(),
       targetSailNumbers: dialogAction === 'individual-recall' ? targetSailNumbers.trim() || undefined : undefined,
@@ -290,7 +315,7 @@ export function StartSequence({
     ? latestControlSignal?.flag ?? '運営判断待ち'
     : latestControlSignal?.flag ?? (activeStage.action === 'preparatory' ? preparatoryFlag : activeStage.flag)
   const displayDetail = latestControlSignal
-    ? `${latestControlSignal.sound}・${formatTime(latestControlSignal.executedAt)}${latestControlSignal.reason ? `・${latestControlSignal.reason}` : ''}`
+    ? `${latestControlSignal.sound}・視覚 ${formatTime(latestControlSignal.visualExecutedAt)}・音響 ${latestControlSignal.soundStatus === 'played' && latestControlSignal.soundExecutedAt ? formatTime(latestControlSignal.soundExecutedAt) : latestControlSignal.soundStatus === 'not-required' ? 'なし' : latestControlSignal.soundStatus === 'pending' ? '公式端末待ち' : '記録不明'}${latestControlSignal.reason ? `・${latestControlSignal.reason}` : ''}`
     : `${activeStage.sound}・${audioStatus}`
   const clearDefinition = useMemo(() => latestSignal && canClearRaceSignal(latestSignal)
     ? signalDefinition(clearActionFor(latestSignal))

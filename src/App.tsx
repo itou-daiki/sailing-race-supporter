@@ -330,6 +330,29 @@ export default function App() {
         status: startsSequence ? 'start-sequence' : startsRace ? 'racing' : returnsToSetup ? 'setup' : race.status,
       } : race))
     }
+
+    if (event.type === 'signal-audio') {
+      const payload = event.payload as {
+        signalId?: string
+        soundExecutedAt?: string
+        soundStatus?: RaceSignalEvent['soundStatus']
+        officialAudioDeviceId?: string
+      }
+      if (!event.raceId || !payload.signalId || !payload.soundExecutedAt) return
+      setRaces((current) => current.map((race) => {
+        const latestSignal = race.latestSignal
+        if (race.id !== event.raceId || !latestSignal || latestSignal.id !== payload.signalId) return race
+        return {
+          ...race,
+          latestSignal: {
+            ...latestSignal,
+            soundExecutedAt: payload.soundExecutedAt,
+            soundStatus: payload.soundStatus ?? 'played',
+            officialAudioDeviceId: payload.officialAudioDeviceId,
+          },
+        }
+      }))
+    }
   }, [])
 
   const realtime = useEventRoom({
@@ -592,7 +615,7 @@ export default function App() {
     setConfirmFinalize(false)
   }
 
-  const recordSignal = useCallback((signal: Omit<RaceSignalEvent, 'id'>) => {
+  const recordSignal = useCallback((signal: Omit<RaceSignalEvent, 'id'> & { officialAudioDeviceSecret?: string }) => {
     void sendRealtimeOperation('signal', signal, activeRace.id).then((id) => {
       const recorded = makeRaceSignalEvent(id, signal.action, signal.executedAt, signal)
       const startsSequence = ['warning', 'preparatory', 'one-minute', 'resume', 'general-recall-clear', 'abandon-clear'].includes(recorded.action)
@@ -606,6 +629,11 @@ export default function App() {
       } : race))
     })
   }, [activeRace.id, sendRealtimeOperation])
+
+  const recordSignalAudio = useCallback((execution: { raceId: string; signalId: string; soundExecutedAt: string; deviceId: string; deviceSecret: string }) => {
+    const { raceId, ...payload } = execution
+    void sendRealtimeOperation('signal-audio', payload, raceId)
+  }, [sendRealtimeOperation])
 
   const shareWind = () => {
     void sendRealtimeOperation('wind', {
@@ -827,10 +855,13 @@ export default function App() {
         canControlSignals={canControlSignals}
         preparatoryFlag={preparatoryFlag}
         officialAudio={officialAudio.state}
+        officialAudioDeviceId={officialAudio.deviceId}
+        officialAudioDeviceSecret={officialAudio.deviceSecret}
         canForceAudioTakeover={eventAccess?.isOwner ?? false}
         onClaimOfficialAudio={officialAudio.claim}
         onReleaseOfficialAudio={officialAudio.release}
         onSignalExecuted={recordSignal}
+        onAudioExecuted={recordSignalAudio}
       />
 
       <main
