@@ -7,7 +7,7 @@ import type { RaceSignalAction } from '../src/domain.js'
 
 export interface RealtimeOperation {
   id: string
-  type: 'presence' | 'position' | 'wind' | 'mark' | 'leading-passage' | 'task' | 'message' | 'signal' | 'signal-audio' | 'finalize'
+  type: 'presence' | 'position' | 'wind' | 'mark' | 'leading-passage' | 'finish' | 'task' | 'message' | 'signal' | 'signal-audio' | 'finalize'
   raceId?: string
   payload: unknown
   clientTime?: string
@@ -364,6 +364,122 @@ async function persistLeadingPassage(env: AppEnv, access: EventAccess, operation
       wasOffline: payload.wasOffline === true,
       sailNumber: optionalString(payload.sailNumber, 80),
       note: optionalString(payload.note),
+      status: 'active',
+    },
+  }
+}
+
+async function persistFinish(env: AppEnv, access: EventAccess, operation: RealtimeOperation): Promise<Record<string, unknown>> {
+  const raceId = await requireRace(env, access, operation.raceId)
+  const payload = objectPayload(operation.payload)
+  const memberId = await requireMemberId(env, access)
+  const action = payload.action === 'adopt' ? 'adopt' : 'observe'
+  const race = await env.DB.prepare(
+    'SELECT status FROM races WHERE id = ? AND regatta_id = ? LIMIT 1',
+  ).bind(raceId, access.eventId).first<{ status: string }>()
+  const editableRace = race?.status === 'racing' || race?.status === 'provisional'
+  if (!editableRace && !(access.isOwner && race?.status === 'finalized')) {
+    throw new Response('Finish observations require a race in progress', { status: 409 })
+  }
+
+  if (action === 'adopt') {
+    if (!access.isOwner && !['pro', 'ro', 'timekeeper', 'record-keeper', 'signal-boat'].includes(access.role)) {
+      throw new Response('Finish adoption requires a record-keeper role', { status: 403 })
+    }
+    const observationId = stringValue(payload.observationId, 'observationId')
+    const observation = await env.DB.prepare(
+      `SELECT observation.id, observation.finish_position, observation.finished_at
+       FROM finish_observations observation
+       JOIN races race ON race.id = observation.race_id
+       WHERE observation.id = ? AND observation.race_id = ?
+         AND race.regatta_id = ? AND observation.status = 'active'
+       LIMIT 1`,
+    ).bind(observationId, raceId, access.eventId).first<{
+      id: string; finish_position: number; finished_at: string
+    }>()
+    if (!observation) throw new Response('Finish observation not found', { status: 404 })
+    const latest = await env.DB.prepare(
+      `SELECT id, revision FROM finish_adoptions
+       WHERE race_id = ? AND finish_position = ?
+       ORDER BY revision DESC LIMIT 1`,
+    ).bind(raceId, observation.finish_position).first<{ id: string; revision: number }>()
+    const adoptedAt = new Date().toISOString()
+    const reason = optionalString(payload.reason, 500) ?? (latest ? '採用記録の追記訂正' : '記録担当者による採用')
+    await env.DB.prepare(
+      `INSERT INTO finish_adoptions
+       (id, race_id, finish_position, observation_id, adopted_by,
+        adopted_at, revision, reason, supersedes_adoption_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      operation.id,
+      raceId,
+      observation.finish_position,
+      observation.id,
+      memberId,
+      adoptedAt,
+      (latest?.revision ?? 0) + 1,
+      reason,
+      latest?.id ?? null,
+      adoptedAt,
+    ).run()
+    return {
+      action: 'adopt',
+      adoptionId: operation.id,
+      observationId,
+      finishPosition: observation.finish_position,
+      finishedAt: observation.finished_at,
+      adoptedAt,
+      adoptedBy: access.displayName,
+      revision: (latest?.revision ?? 0) + 1,
+      reason,
+    }
+  }
+
+  const finishPosition = finiteNumber(payload.finishPosition ?? 1, 'finishPosition', 1, 1_000)
+  if (!Number.isInteger(finishPosition)) throw new Response('Finish position must be an integer', { status: 400 })
+  const finishedAt = isoTime(payload.finishedAt ?? operation.clientTime, new Date().toISOString())
+  const committeeBoatId = typeof payload.committeeBoatId === 'string' ? payload.committeeBoatId : null
+  if (committeeBoatId) await authorizeCommitteeBoat(env, access, committeeBoatId)
+  const receivedAt = new Date().toISOString()
+  const syncQuality = ['good', 'fair', 'poor', 'offline'].includes(String(payload.syncQuality))
+    ? String(payload.syncQuality)
+    : 'unknown'
+  const sailNumber = optionalString(payload.sailNumber, 80)
+  const note = optionalString(payload.note, 500)
+  await env.DB.prepare(
+    `INSERT INTO finish_observations
+     (id, race_id, finish_position, finished_at, recorded_by, committee_boat_id,
+      device_id, received_at, clock_offset_ms, sync_quality, was_offline,
+      sail_number, note, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
+  ).bind(
+    operation.id,
+    raceId,
+    finishPosition,
+    finishedAt,
+    memberId,
+    committeeBoatId,
+    optionalString(payload.deviceId, 160),
+    receivedAt,
+    optionalNumber(payload.clockOffsetMs, 'clockOffsetMs', -86_400_000, 86_400_000),
+    syncQuality,
+    payload.wasOffline === true ? 1 : 0,
+    sailNumber,
+    note,
+    receivedAt,
+  ).run()
+  return {
+    action: 'observe',
+    finishPosition,
+    observation: {
+      id: operation.id,
+      finishPosition,
+      finishedAt,
+      recordedBy: access.displayName,
+      syncQuality,
+      wasOffline: payload.wasOffline === true,
+      sailNumber: sailNumber ?? undefined,
+      note: note ?? undefined,
       status: 'active',
     },
   }
@@ -861,6 +977,7 @@ export async function persistRealtimeOperation(
     case 'wind': return persistWind(env, access, operation)
     case 'mark': return persistMark(env, access, operation)
     case 'leading-passage': return persistLeadingPassage(env, access, operation)
+    case 'finish': return persistFinish(env, access, operation)
     case 'message': return persistMessage(env, access, operation)
     case 'signal': return persistSignal(env, access, operation)
     case 'signal-audio': return persistSignalAudio(env, access, operation)

@@ -15,6 +15,7 @@ export type OperationType =
   | 'wind'
   | 'mark'
   | 'leading-passage'
+  | 'finish'
   | 'task'
   | 'message'
   | 'signal'

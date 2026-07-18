@@ -29,6 +29,14 @@ describe('authorization', () => {
     expect(can(markBoat, 'message')).toBe(true)
     expect(can(markBoat, 'signal')).toBe(false)
     expect(can(markBoat, 'finalize')).toBe(false)
+    expect(can(markBoat, 'finish')).toBe(false)
+  })
+
+  it('allows finish timing only for race committee recording roles', () => {
+    expect(can(access('timekeeper'), 'finish')).toBe(true)
+    expect(can(access('record-keeper'), 'finish')).toBe(true)
+    expect(can(access('signal-boat'), 'finish')).toBe(true)
+    expect(can(access('viewer'), 'finish')).toBe(false)
   })
 
   it('keeps viewers read-only', () => {

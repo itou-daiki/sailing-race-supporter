@@ -23,6 +23,7 @@ import type {
   BoardDetail,
   CommitteeBoat,
   CourseMark,
+  FinishRecord,
   OperationalMessage,
   OperationalTask,
   RaceDefinition,
@@ -30,6 +31,7 @@ import type {
   WindObservation,
 } from '../domain'
 import { signalDefinition } from '../signals'
+import { FirstFinishPanel } from './FirstFinishPanel'
 
 interface OperationsBoardProps {
   race: RaceDefinition
@@ -46,12 +48,17 @@ interface OperationsBoardProps {
   pendingCount: number
   memberCount: number
   latestSignal?: RaceSignalEvent
+  firstFinish?: FinishRecord
+  canRecordFinish: boolean
+  canAdoptFinish: boolean
   onScaleChange: (scale: number) => void
   onDetailChange: (detail: BoardDetail) => void
   onSelectMark: (markId: string) => void
   onAcknowledgeMessage: (messageId: string) => void
   onOpenMessages: () => void
   onTaskStatusChange: (taskId: string) => void
+  onRecordFinish: (sailNumber?: string, note?: string) => void
+  onAdoptFinish: (observationId: string) => void
 }
 
 const taskStatusLabel: Record<OperationalTask['status'], string> = {
@@ -82,12 +89,17 @@ export function OperationsBoard({
   pendingCount,
   memberCount,
   latestSignal,
+  firstFinish,
+  canRecordFinish,
+  canAdoptFinish,
   onScaleChange,
   onDetailChange,
   onSelectMark,
   onAcknowledgeMessage,
   onOpenMessages,
   onTaskStatusChange,
+  onRecordFinish,
+  onAdoptFinish,
 }: OperationsBoardProps) {
   const confirmedMarks = marks.filter((mark) => mark.status === 'confirmed').length
   const liveBoats = boats.filter((boat) => boat.status !== 'offline').length
@@ -180,6 +192,17 @@ export function OperationsBoard({
             <small>ガスト {wind.gustKnots.toFixed(1)}kt・安定</small>
           </article>
         </div>
+
+        {(race.status === 'racing' || race.status === 'provisional' || race.status === 'finalized' || firstFinish) && (
+          <FirstFinishPanel
+            race={race}
+            record={firstFinish}
+            canRecord={canRecordFinish}
+            canAdopt={canAdoptFinish}
+            onRecord={onRecordFinish}
+            onAdopt={onAdoptFinish}
+          />
+        )}
 
         <article className="readiness-card">
           <header>

@@ -168,6 +168,28 @@ export interface LeadingPassageVisit {
   hasConflict: boolean
 }
 
+export interface FinishObservation {
+  id: string
+  finishPosition: number
+  finishedAt: string
+  recordedBy: string
+  syncQuality: 'good' | 'fair' | 'poor' | 'offline' | 'unknown'
+  wasOffline: boolean
+  sailNumber?: string
+  note?: string
+  status: 'active' | 'cancelled' | 'corrected'
+}
+
+export interface FinishRecord {
+  raceId: string
+  finishPosition: number
+  observations: FinishObservation[]
+  adoptedObservationId?: string
+  adoptedAt?: string
+  spreadMilliseconds: number
+  hasConflict: boolean
+}
+
 export interface ClassPerformanceProfile {
   className: SailingClass
   targetMinutes: number

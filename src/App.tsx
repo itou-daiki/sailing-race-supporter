@@ -26,6 +26,8 @@ import {
   INITIAL_WIND,
   type BoardDetail,
   type CommitteeBoat,
+  type FinishObservation,
+  type FinishRecord,
   type LeadingPassageObservation,
   type LeadingPassageVisit,
   type LngLat,
@@ -44,6 +46,7 @@ import { loadEventSnapshot, saveEventSnapshot } from './offlineStore'
 import { useEventRoom, type SequencedOperation } from './realtime'
 import { useOfficialAudioDevice } from './audioDeviceClient'
 import { adoptPassageObservation, mergePassageObservation, passageVisitKey } from './passages'
+import { adoptFinishObservation, finishRecordKey, mergeFinishObservation } from './finishes'
 import { isRaceSignalHeld, makeRaceSignalEvent } from './signals'
 
 const DETAIL_KEY = 'srs-board-detail'
@@ -57,6 +60,7 @@ interface CachedAppState {
   messages: readonly OperationalMessage[]
   tasks: readonly OperationalTask[]
   leadingPassages: Record<string, LeadingPassageVisit>
+  finishes: Record<string, FinishRecord>
   memberCount: number
 }
 
@@ -189,6 +193,7 @@ export default function App() {
   const [messagePriority, setMessagePriority] = useState<OperationalMessage['priority']>('normal')
   const [messageTarget, setMessageTarget] = useState('race')
   const [leadingPassages, setLeadingPassages] = useState<Record<string, LeadingPassageVisit>>({})
+  const [finishes, setFinishes] = useState<Record<string, FinishRecord>>({})
   const draggingSplit = useRef(false)
   const memberIdRef = useRef(memberId)
   const messageReadsRequested = useRef(new Set<string>())
@@ -251,6 +256,30 @@ export default function App() {
         setLeadingPassages((current) => current[key] ? ({
           ...current,
           [key]: adoptPassageObservation(current[key], payload.observationId as string, payload.adoptedAt as string),
+        }) : current)
+      }
+    }
+
+    if (event.type === 'finish') {
+      const payload = event.payload as {
+        action?: 'observe' | 'adopt'; finishPosition?: number
+        observation?: FinishObservation; observationId?: string; adoptedAt?: string
+      }
+      if (!event.raceId) return
+      const finishPosition = payload.finishPosition ?? 1
+      const key = finishRecordKey(event.raceId, finishPosition)
+      if (payload.action === 'observe' && payload.observation) {
+        setFinishes((current) => ({
+          ...current,
+          [key]: mergeFinishObservation(
+            current[key], event.raceId as string, finishPosition, payload.observation as FinishObservation,
+          ),
+        }))
+      }
+      if (payload.action === 'adopt' && payload.observationId && payload.adoptedAt) {
+        setFinishes((current) => current[key] ? ({
+          ...current,
+          [key]: adoptFinishObservation(current[key], payload.observationId as string, payload.adoptedAt as string),
         }) : current)
       }
     }
@@ -383,6 +412,11 @@ export default function App() {
   const canControlSignals = !locked && (!eventAccess || eventAccess.isOwner || ['pro', 'ro', 'signal-boat'].includes(eventAccess.role))
   const canChangeCourse = !locked && (!eventAccess || eventAccess.isOwner || ['pro', 'ro'].includes(eventAccess.role))
   const canAdoptLeadingPassage = !eventAccess || eventAccess.isOwner || ['pro', 'ro', 'timekeeper', 'record-keeper', 'signal-boat'].includes(eventAccess.role)
+  const canRecordFinish = (!locked || Boolean(eventAccess?.isOwner)) && (
+    !eventAccess || eventAccess.isOwner || ['pro', 'ro', 'timekeeper', 'record-keeper', 'signal-boat'].includes(eventAccess.role)
+  )
+  const canAdoptFinish = canRecordFinish
+  const firstFinish = finishes[finishRecordKey(activeRace.id, 1)]
   const messageRoles = useMemo(
     () => [...new Set(eventResources.members.map((member) => member.role))].sort((left, right) => left.localeCompare(right, 'ja')),
     [eventResources.members],
@@ -430,6 +464,7 @@ export default function App() {
       setMessages(cached.value.messages)
       setTasks(cached.value.tasks ?? [])
       setLeadingPassages(cached.value.leadingPassages)
+      setFinishes(cached.value.finishes ?? {})
       setMemberCount(cached.value.memberCount ?? 0)
     }
     if (session.mode === 'offline-demo') {
@@ -453,6 +488,7 @@ export default function App() {
         setMessages(bootstrap.messages)
         setTasks(bootstrap.tasks)
         setLeadingPassages(bootstrap.leadingPassages)
+        setFinishes(bootstrap.finishes)
         setMemberCount(bootstrap.memberCount)
         if (bootstrap.wind) {
           setWindSpeed(bootstrap.wind.speedKnots)
@@ -469,11 +505,11 @@ export default function App() {
         eventId,
         sequence: realtime.lastSequence,
         savedAt: new Date().toISOString(),
-        value: { eventName, races, boats, messages, tasks, leadingPassages, memberCount },
+        value: { eventName, races, boats, messages, tasks, leadingPassages, finishes, memberCount },
       })
     }, 250)
     return () => window.clearTimeout(timeout)
-  }, [boats, eventId, eventName, leadingPassages, memberCount, messages, races, realtime.lastSequence, tasks])
+  }, [boats, eventId, eventName, finishes, leadingPassages, memberCount, messages, races, realtime.lastSequence, tasks])
 
   useEffect(() => {
     const move = (event: PointerEvent) => {
@@ -599,6 +635,56 @@ export default function App() {
       [key]: adoptPassageObservation(current[key], observationId, adoptedAt),
     }) : current)
     void sendRealtimeOperation('leading-passage', {
+      action: 'adopt',
+      observationId,
+      reason: locked ? '大会管理者による確定後の追記訂正' : '記録担当者による採用',
+    }, activeRace.id)
+  }
+
+  const recordFirstFinish = (sailNumber?: string, note?: string) => {
+    if (!canRecordFinish) return
+    const finishedAt = new Date(Date.now() + realtime.serverOffsetMs).toISOString()
+    const selfBoat = boats.find((boat) => boat.isSelf)
+    void sendRealtimeOperation('finish', {
+      action: 'observe',
+      finishPosition: 1,
+      finishedAt,
+      committeeBoatId: selfBoat?.id,
+      deviceId: memberId,
+      clockOffsetMs: Math.round(realtime.serverOffsetMs),
+      syncQuality: realtime.status === 'live' ? 'good' : 'offline',
+      wasOffline: realtime.status !== 'live',
+      sailNumber,
+      note,
+    }, activeRace.id).then((observationId) => {
+      const observation: FinishObservation = {
+        id: observationId,
+        finishPosition: 1,
+        finishedAt,
+        recordedBy: eventAccess?.displayName ?? 'この端末',
+        syncQuality: realtime.status === 'live' ? 'good' : 'offline',
+        wasOffline: realtime.status !== 'live',
+        sailNumber,
+        note,
+        status: 'active',
+      }
+      const key = finishRecordKey(activeRace.id, 1)
+      setFinishes((current) => ({
+        ...current,
+        [key]: mergeFinishObservation(current[key], activeRace.id, 1, observation),
+      }))
+    })
+  }
+
+  const adoptFirstFinish = (observationId: string) => {
+    if (!canAdoptFinish) return
+    const adoptedAt = new Date(Date.now() + realtime.serverOffsetMs).toISOString()
+    const key = finishRecordKey(activeRace.id, 1)
+    setFinishes((current) => current[key] ? ({
+      ...current,
+      [key]: adoptFinishObservation(current[key], observationId, adoptedAt),
+    }) : current)
+    void sendRealtimeOperation('finish', {
       action: 'adopt',
       observationId,
       reason: locked ? '大会管理者による確定後の追記訂正' : '記録担当者による採用',
@@ -938,12 +1024,17 @@ export default function App() {
           pendingCount={realtime.pendingCount}
           memberCount={memberCount}
           latestSignal={activeRace.latestSignal}
+          firstFinish={firstFinish}
+          canRecordFinish={canRecordFinish}
+          canAdoptFinish={canAdoptFinish}
           onScaleChange={setBoardScale}
           onDetailChange={setBoardDetail}
           onSelectMark={setSelectedMarkId}
           onAcknowledgeMessage={acknowledgeMessage}
           onOpenMessages={() => setMessagesOpen(true)}
           onTaskStatusChange={advanceTask}
+          onRecordFinish={recordFirstFinish}
+          onAdoptFinish={adoptFirstFinish}
         />
       </main>
 

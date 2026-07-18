@@ -1387,6 +1387,7 @@ select:focus-visible {
 
 .metric-card,
 .readiness-card,
+.first-finish-card,
 .panel-card,
 .timeline-card {
   background: #fff;
@@ -1435,6 +1436,193 @@ select:focus-visible {
   font-size: 0.58em;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.first-finish-card {
+  margin-bottom: calc(8px * var(--board-scale));
+  padding: calc(10px * var(--board-scale));
+  border-color: #a9d4ef;
+  background: linear-gradient(135deg, #fff 0%, #f0f9ff 100%);
+}
+
+.first-finish-card.is-adopted {
+  border-color: #8fd2bd;
+  background: linear-gradient(135deg, #fff 0%, #edfbf6 100%);
+}
+
+.first-finish-card > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.first-finish-card > header > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.first-finish-card > header .eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.first-finish-card > header strong {
+  font-size: 1em;
+  font-variant-numeric: tabular-nums;
+}
+
+.first-finish-card > header small,
+.first-finish-guidance {
+  color: var(--muted);
+  font-size: 0.65em;
+}
+
+.first-finish-card__adopted {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  color: #087659;
+  background: #ddf7ee;
+  border-radius: 999px;
+  font-size: 0.65em;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.first-finish-entry {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.8fr) minmax(160px, 1.2fr) auto;
+  align-items: end;
+  gap: 8px;
+  margin-top: 9px;
+}
+
+.first-finish-entry label {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.first-finish-entry label span {
+  color: var(--muted);
+  font-size: 0.61em;
+  font-weight: 800;
+}
+
+.first-finish-entry input {
+  width: 100%;
+  height: 38px;
+  padding: 0 9px;
+  color: var(--navy);
+  background: #fff;
+  border: 1px solid #bdd3e1;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.72em;
+}
+
+.first-finish-entry > button {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 13px;
+  color: #fff;
+  background: var(--dodger-strong);
+  border: 1px solid #0878cf;
+  border-radius: 8px;
+  font-size: 0.7em;
+  font-weight: 900;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.first-finish-conflict {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 8px 0 0;
+  color: #9a3d22;
+  font-size: 0.68em;
+  font-weight: 800;
+}
+
+.first-finish-observations {
+  display: grid;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.first-finish-observations > div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  background: rgb(255 255 255 / 82%);
+  border: 1px solid #d5e4ed;
+  border-radius: 7px;
+}
+
+.first-finish-observations > div.is-adopted {
+  border-color: #9bd9c6;
+}
+
+.first-finish-observations > div > span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.first-finish-observations strong {
+  font-size: 0.76em;
+  font-variant-numeric: tabular-nums;
+}
+
+.first-finish-observations small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.61em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.first-finish-observations button,
+.first-finish-observations b {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  color: #075d91;
+  background: #e7f5ff;
+  border: 1px solid #b6dff7;
+  border-radius: 6px;
+  font-size: 0.62em;
+  font-weight: 900;
+}
+
+.first-finish-observations button {
+  cursor: pointer;
+}
+
+.first-finish-guidance {
+  margin: 7px 0 0;
+}
+
+@media (max-width: 720px) {
+  .first-finish-entry {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .first-finish-entry > button {
+    grid-column: 1 / -1;
+    min-height: 48px;
+  }
 }
 
 .readiness-card {

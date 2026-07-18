@@ -115,10 +115,13 @@ export async function finalizeRace(
   ).bind(raceId, access.eventId).first<Record<string, unknown>>()
   if (!race) throw new Response('Race not found', { status: 404 })
   if (race.status === 'finalized') {
+    const existing = await env.DB.prepare(
+      'SELECT state_hash FROM race_finalizations WHERE race_id = ? ORDER BY revision DESC LIMIT 1',
+    ).bind(raceId).first<{ state_hash: string }>()
     return {
       revision: Number(race.finalized_revision ?? 1),
       finalizedAt: String(race.finalized_at),
-      stateHash: '',
+      stateHash: existing?.state_hash ?? '',
       alreadyFinalized: true,
     }
   }
@@ -128,7 +131,50 @@ export async function finalizeRace(
   ).bind(raceId).first<{ revision: number }>()
   const revision = (previous?.revision ?? 0) + 1
   const finalizedAt = new Date().toISOString()
-  const stateHash = await sha256Base64Url(JSON.stringify(canonical(race)))
+  const finalRace = { ...race, status: 'finalized', finalized_revision: revision, finalized_at: finalizedAt }
+  const [courseRevisions, courseNodes, markEvents, signalEvents, passageObservations,
+    passageAdoptions, finishObservations, finishAdoptions, windObservations,
+    operationalTasks, operationalTaskEvents, messages, auditHead] = await Promise.all([
+    env.DB.prepare('SELECT * FROM course_revisions WHERE race_id = ? ORDER BY revision').bind(raceId).all(),
+    env.DB.prepare(
+      `SELECT node.* FROM course_nodes node
+       JOIN course_revisions revision ON revision.id = node.course_revision_id
+       WHERE revision.race_id = ? ORDER BY revision.revision, node.node_order`,
+    ).bind(raceId).all(),
+    env.DB.prepare('SELECT * FROM mark_events WHERE race_id = ? ORDER BY sequence').bind(raceId).all(),
+    env.DB.prepare('SELECT * FROM signal_events WHERE race_id = ? ORDER BY executed_at, rowid').bind(raceId).all(),
+    env.DB.prepare('SELECT * FROM leading_passage_observations WHERE race_id = ? ORDER BY passed_at, id').bind(raceId).all(),
+    env.DB.prepare('SELECT * FROM leading_passage_adoptions WHERE race_id = ? ORDER BY lap_number, revision').bind(raceId).all(),
+    env.DB.prepare('SELECT * FROM finish_observations WHERE race_id = ? ORDER BY finish_position, finished_at, id').bind(raceId).all(),
+    env.DB.prepare('SELECT * FROM finish_adoptions WHERE race_id = ? ORDER BY finish_position, revision').bind(raceId).all(),
+    env.DB.prepare('SELECT * FROM wind_observations WHERE race_id = ? ORDER BY observed_at, id').bind(raceId).all(),
+    env.DB.prepare('SELECT * FROM operational_tasks WHERE race_id = ? ORDER BY id').bind(raceId).all(),
+    env.DB.prepare('SELECT * FROM operational_task_events WHERE race_id = ? ORDER BY server_time, id').bind(raceId).all(),
+    env.DB.prepare('SELECT * FROM messages WHERE race_id = ? ORDER BY sent_at, id').bind(raceId).all(),
+    env.DB.prepare(
+      'SELECT sequence, event_hash FROM audit_events WHERE regatta_id = ? ORDER BY sequence DESC LIMIT 1',
+    ).bind(access.eventId).first<{ sequence: number; event_hash: string }>(),
+  ])
+  const snapshot = canonical({
+    schemaVersion: 1,
+    capturedAt: finalizedAt,
+    race: finalRace,
+    courseRevisions: courseRevisions.results,
+    courseNodes: courseNodes.results,
+    markEvents: markEvents.results,
+    signalEvents: signalEvents.results,
+    passageObservations: passageObservations.results,
+    passageAdoptions: passageAdoptions.results,
+    finishObservations: finishObservations.results,
+    finishAdoptions: finishAdoptions.results,
+    windObservations: windObservations.results,
+    operationalTasks: operationalTasks.results,
+    operationalTaskEvents: operationalTaskEvents.results,
+    messages: messages.results,
+    auditHead: auditHead ?? null,
+  })
+  const snapshotJson = JSON.stringify(snapshot)
+  const stateHash = await sha256Base64Url(snapshotJson)
   const finalizationId = crypto.randomUUID()
 
   await env.DB.batch([
@@ -139,9 +185,9 @@ export async function finalizeRace(
     ).bind(revision, finalizedAt, access.userId, finalizedAt, raceId, access.eventId),
     env.DB.prepare(
       `INSERT INTO race_finalizations
-       (id, race_id, revision, state_hash, reason, finalized_by, finalized_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(finalizationId, raceId, revision, stateHash, reason, access.userId, finalizedAt),
+       (id, race_id, revision, state_hash, reason, finalized_by, finalized_at, snapshot_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(finalizationId, raceId, revision, stateHash, reason, access.userId, finalizedAt, snapshotJson),
   ])
 
   await appendAuditEvent(env, {
@@ -151,7 +197,7 @@ export async function finalizeRace(
     entityType: 'race',
     entityId: raceId,
     before: race,
-    after: { ...race, status: 'finalized', finalized_revision: revision, finalized_at: finalizedAt },
+    after: finalRace,
     reason,
   })
   return { revision, finalizedAt, stateHash, alreadyFinalized: false }

@@ -110,8 +110,11 @@ export async function previewRetentionForEvent(
       (SELECT COUNT(*) FROM signal_events signal JOIN races race ON race.id = signal.race_id WHERE race.regatta_id = ?) +
       (SELECT COUNT(*) FROM mark_events event JOIN races race ON race.id = event.race_id WHERE race.regatta_id = ?) +
       (SELECT COUNT(*) FROM leading_passage_observations observation JOIN races race ON race.id = observation.race_id WHERE race.regatta_id = ?) +
+      (SELECT COUNT(*) FROM leading_passage_adoptions adoption JOIN races race ON race.id = adoption.race_id WHERE race.regatta_id = ?) +
+      (SELECT COUNT(*) FROM finish_observations observation JOIN races race ON race.id = observation.race_id WHERE race.regatta_id = ?) +
+      (SELECT COUNT(*) FROM finish_adoptions adoption JOIN races race ON race.id = adoption.race_id WHERE race.regatta_id = ?) +
       (SELECT COUNT(*) FROM race_finalizations finalization JOIN races race ON race.id = finalization.race_id WHERE race.regatta_id = ?)
-    ) AS count`, eventId, eventId, eventId, eventId, eventId),
+    ) AS count`, eventId, eventId, eventId, eventId, eventId, eventId, eventId, eventId),
     count(env, 'SELECT COUNT(*) AS count FROM wind_observations WHERE regatta_id = ?', eventId),
     count(env, 'SELECT COUNT(*) AS count FROM position_samples WHERE regatta_id = ?', eventId),
     count(env, `SELECT COUNT(*) AS count FROM messages
@@ -143,7 +146,7 @@ export async function previewRetentionForEvent(
     operation,
   })
   const items: RetentionPreviewItem[] = [
-    item('finalizedRecordsDays', '確定版・信号・監査記録', finalizedRecords, '自動削除せず、管理者の個別承認対象'),
+    item('finalizedRecordsDays', '確定版・信号・先頭通過・フィニッシュ・監査記録', finalizedRecords, '自動削除せず、管理者の個別承認対象'),
     item('observationsDays', '風・海面観測', observations, '期限到来時に詳細観測を削除'),
     item('sampledPositionsDays', '運営ボート位置サンプル', sampledPositions, '期限到来時に位置点を削除'),
     item('localHighFrequencyTrackDays', '端末内の高頻度航跡', 0, '各端末で期限到来時に削除'),

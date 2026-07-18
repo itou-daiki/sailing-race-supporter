@@ -1,6 +1,7 @@
 import type {
   CommitteeBoat,
   CourseMark,
+  FinishRecord,
   LeadingPassageVisit,
   OperationalMessage,
   OperationalTask,
@@ -39,6 +40,7 @@ export interface EventBootstrap {
   messages: OperationalMessage[]
   tasks: OperationalTask[]
   leadingPassages: Record<string, LeadingPassageVisit>
+  finishes: Record<string, FinishRecord>
   memberCount: number
   resources: EventResources
   wind?: { directionDegrees: number; speedKnots: number; gustKnots: number; observedAt: string; source: string }
@@ -162,6 +164,12 @@ interface BootstrapResponse {
     sail_number: string | null; note: string | null; status: 'active' | 'cancelled' | 'corrected'
     adopted_observation_id: string | null; adopted_at: string | null; adoption_revision: number | null
   }>
+  finishes: Array<{
+    id: string; race_id: string; finish_position: number; finished_at: string; recorded_by: string
+    sync_quality: 'good' | 'fair' | 'poor' | 'offline' | 'unknown'; was_offline: number
+    sail_number: string | null; note: string | null; status: 'active' | 'cancelled' | 'corrected'
+    adopted_observation_id: string | null; adopted_at: string | null; adoption_revision: number | null
+  }>
   memberCount: number
   raceCorrections: Array<{
     race_id: string; revision: number; patch_json: string; reason: string; state_hash: string; created_at: string
@@ -272,6 +280,49 @@ function bootstrapLeadingPassages(rows: BootstrapResponse['leadingPassages']): R
     visit.hasConflict = visit.spreadMilliseconds > 2_000
   }
   return visits
+}
+
+function bootstrapFinishes(rows: BootstrapResponse['finishes']): Record<string, FinishRecord> {
+  const finishes: Record<string, FinishRecord> = {}
+  for (const row of rows ?? []) {
+    const key = `${row.race_id}:${row.finish_position}`
+    const record = finishes[key] ?? {
+      raceId: row.race_id,
+      finishPosition: row.finish_position,
+      observations: [],
+      adoptedObservationId: row.adopted_observation_id ?? undefined,
+      adoptedAt: row.adopted_at ?? undefined,
+      spreadMilliseconds: 0,
+      hasConflict: false,
+    }
+    record.observations.push({
+      id: row.id,
+      finishPosition: row.finish_position,
+      finishedAt: row.finished_at,
+      recordedBy: row.recorded_by,
+      syncQuality: row.sync_quality ?? 'unknown',
+      wasOffline: Boolean(row.was_offline),
+      sailNumber: row.sail_number ?? undefined,
+      note: row.note ?? undefined,
+      status: row.status,
+    })
+    if (row.adopted_observation_id && row.adopted_at && (
+      !record.adoptedAt || Date.parse(row.adopted_at) >= Date.parse(record.adoptedAt)
+    )) {
+      record.adoptedObservationId = row.adopted_observation_id
+      record.adoptedAt = row.adopted_at
+    }
+    finishes[key] = record
+  }
+  for (const record of Object.values(finishes)) {
+    const times = record.observations
+      .filter((observation) => observation.status === 'active')
+      .map((observation) => Date.parse(observation.finishedAt))
+      .filter(Number.isFinite)
+    record.spreadMilliseconds = times.length > 1 ? Math.max(...times) - Math.min(...times) : 0
+    record.hasConflict = record.spreadMilliseconds > 2_000
+  }
+  return finishes
 }
 
 export async function loadEventBootstrap(eventReference: string): Promise<EventBootstrap> {
@@ -403,6 +454,7 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
       priority: task.priority,
     })),
     leadingPassages: bootstrapLeadingPassages(response.leadingPassages ?? []),
+    finishes: bootstrapFinishes(response.finishes ?? []),
     memberCount: response.memberCount ?? 0,
     resources: {
       boats: response.boats.map((boat) => ({

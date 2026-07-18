@@ -36,7 +36,7 @@ interface ClientAttachment {
 
 interface RoomMessage {
   id: string
-  type: 'presence' | 'position' | 'wind' | 'mark' | 'leading-passage' | 'task' | 'message' | 'signal' | 'signal-audio' | 'finalize'
+  type: 'presence' | 'position' | 'wind' | 'mark' | 'leading-passage' | 'finish' | 'task' | 'message' | 'signal' | 'signal-audio' | 'finalize'
   raceId?: string
   memberId?: string
   payload: unknown
@@ -54,6 +54,7 @@ const ROOM_MESSAGE_TYPES = new Set<RoomMessage['type']>([
   'wind',
   'mark',
   'leading-passage',
+  'finish',
   'task',
   'message',
   'signal',
@@ -218,14 +219,14 @@ export class EventRoom extends DurableObject<AppEnv> {
         return
       }
       const mutatesFinalizedState = new Set<RoomMessage['type']>([
-        'wind', 'mark', 'leading-passage', 'task', 'signal',
+        'wind', 'mark', 'leading-passage', 'finish', 'task', 'signal',
       ])
       const messageAction = parsed.type === 'message' && parsed.payload && typeof parsed.payload === 'object'
         ? String((parsed.payload as { action?: unknown }).action ?? 'send')
         : ''
       const messageReceiptOnly = parsed.type === 'message' && ['read', 'acknowledge'].includes(messageAction)
       const finalizedMutation = mutatesFinalizedState.has(parsed.type) || parsed.type === 'message' && !messageReceiptOnly
-      const ownerAppendOnlyRevision = access.isOwner && ['leading-passage', 'message'].includes(parsed.type)
+      const ownerAppendOnlyRevision = access.isOwner && ['leading-passage', 'finish', 'message'].includes(parsed.type)
       if (race.status === 'finalized' && finalizedMutation && !ownerAppendOnlyRevision) {
         socket.send(JSON.stringify({ type: 'error', code: 'RACE_FINALIZED' }))
         return
@@ -530,6 +531,26 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
        ORDER BY observation.passed_at`,
     ).bind(regatta.id).all()
 
+    const finishes = await env.DB.prepare(
+      `SELECT observation.id, observation.race_id, observation.finish_position,
+              observation.finished_at, observation.sync_quality, observation.was_offline,
+              observation.sail_number, observation.note, observation.status,
+              member.display_name AS recorded_by,
+              adoption.observation_id AS adopted_observation_id,
+              adoption.adopted_at, adoption.revision AS adoption_revision
+       FROM finish_observations observation
+       JOIN races race ON race.id = observation.race_id
+       JOIN event_members member ON member.id = observation.recorded_by
+       LEFT JOIN finish_adoptions adoption ON adoption.id = (
+         SELECT latest.id FROM finish_adoptions latest
+         WHERE latest.race_id = observation.race_id
+           AND latest.finish_position = observation.finish_position
+         ORDER BY latest.revision DESC LIMIT 1
+       )
+       WHERE race.regatta_id = ?
+       ORDER BY observation.finished_at`,
+    ).bind(regatta.id).all()
+
     const memberCount = await env.DB.prepare(
       `SELECT COUNT(*) AS count FROM event_members
        WHERE regatta_id = ? AND status = 'active'`,
@@ -575,6 +596,7 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
       messages: messages.results,
       tasks: tasks.results,
       leadingPassages: leadingPassages.results,
+      finishes: finishes.results,
       memberCount: memberCount?.count ?? 0,
       availableMarks: availableMarks.results,
       availableMembers: availableMembers.results,

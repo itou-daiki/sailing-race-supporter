@@ -12,8 +12,8 @@ interface LogDrawerProps {
 }
 
 const categoryLabels: Record<EventLogCategory, string> = {
-  audit: '監査', mark: 'マーク', wind: '風', signal: '信号', passage: '先頭艇',
-  task: 'タスク', message: '連絡', position: '運営ボート位置',
+  audit: '監査', mark: 'マーク', wind: '風', signal: '信号', passage: '先頭通過',
+  finish: 'フィニッシュ', task: 'タスク', message: '連絡', position: '運営ボート位置',
 }
 
 function displayTime(iso: string): string {

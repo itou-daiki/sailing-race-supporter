@@ -1,4 +1,4 @@
-export type EventLogCategory = 'audit' | 'mark' | 'wind' | 'signal' | 'passage' | 'task' | 'message' | 'position'
+export type EventLogCategory = 'audit' | 'mark' | 'wind' | 'signal' | 'passage' | 'finish' | 'task' | 'message' | 'position'
 
 export interface EventLogEntry {
   id: string

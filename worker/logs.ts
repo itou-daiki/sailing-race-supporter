@@ -3,7 +3,7 @@ import { json } from './http.js'
 import type { AppEnv } from './index.js'
 import { requireSession } from './security.js'
 
-export type LogCategory = 'audit' | 'mark' | 'wind' | 'signal' | 'passage' | 'task' | 'message' | 'position'
+export type LogCategory = 'audit' | 'mark' | 'wind' | 'signal' | 'passage' | 'finish' | 'task' | 'message' | 'position'
 
 export interface EventLogEntry {
   id: string
@@ -115,7 +115,7 @@ async function collectLogs(env: AppEnv, access: EventAccess, raceId: string | nu
   const regattaId = access.eventId
   const values = [regattaId, raceId, raceId, limit]
   const messageValues = [access.memberId, regattaId, raceId, raceId, access.memberId, access.isOwner ? 1 : 0, limit]
-  const [audit, marks, wind, signals, passages, tasks, messages, positions] = await Promise.all([
+  const [audit, marks, wind, signals, passages, finishes, tasks, messages, positions] = await Promise.all([
     rows(env, `SELECT audit.id, audit.race_id, race.race_number, audit.sequence, audit.action,
                       audit.entity_type, audit.reason, audit.server_time AS occurred_at,
                       COALESCE(member.display_name, user.display_name, 'システム') AS actor,
@@ -171,6 +171,22 @@ async function collectLogs(env: AppEnv, access: EventAccess, raceId: string | nu
                )
                WHERE race.regatta_id = ? AND (? IS NULL OR observation.race_id = ?)
                ORDER BY observation.passed_at DESC LIMIT ?`, values),
+    rows(env, `SELECT observation.id, observation.race_id, race.race_number,
+                      observation.finished_at AS occurred_at, observation.finish_position,
+                      observation.sail_number, observation.sync_quality, observation.was_offline,
+                      member.display_name AS actor,
+                      CASE WHEN adoption.observation_id = observation.id THEN 1 ELSE 0 END AS adopted
+               FROM finish_observations observation
+               JOIN races race ON race.id = observation.race_id
+               JOIN event_members member ON member.id = observation.recorded_by
+               LEFT JOIN finish_adoptions adoption ON adoption.id = (
+                 SELECT latest.id FROM finish_adoptions latest
+                 WHERE latest.race_id = observation.race_id
+                   AND latest.finish_position = observation.finish_position
+                 ORDER BY latest.revision DESC LIMIT 1
+               )
+               WHERE race.regatta_id = ? AND (? IS NULL OR observation.race_id = ?)
+               ORDER BY observation.finished_at DESC LIMIT ?`, values),
     rows(env, `SELECT event.id, event.race_id, race.race_number, event.status,
                       event.revision, event.server_time AS occurred_at,
                       task.title, member.display_name AS actor
@@ -236,8 +252,16 @@ async function collectLogs(env: AppEnv, access: EventAccess, raceId: string | nu
     ...passages.map((row) => ({
       id: text(row.id), raceId: nullableText(row.race_id), raceNumber: nullableText(row.race_number),
       sequence: null, occurredAt: text(row.occurred_at), category: 'passage' as const,
-      title: `先頭艇 ${text(row.label, 'マーク')}通過`, actor: text(row.actor, '不明'),
+      title: `先頭競技ヨット ${text(row.label, 'マーク')}通過`, actor: text(row.actor, '不明'),
       detail: `${row.lap_number}周目・${row.adopted ? '採用済' : '観測候補'}・同期 ${text(row.sync_quality)}${row.was_offline ? '・オフライン' : ''}`, eventHash: null,
+    })),
+    ...finishes.map((row) => ({
+      id: text(row.id), raceId: nullableText(row.race_id), raceNumber: nullableText(row.race_number),
+      sequence: null, occurredAt: text(row.occurred_at), category: 'finish' as const,
+      title: row.finish_position === 1 ? '先頭競技ヨット フィニッシュ' : `${row.finish_position}位 フィニッシュ`,
+      actor: text(row.actor, '不明'),
+      detail: `${row.adopted ? '採用済' : '観測候補'}${row.sail_number ? `・セール番号 ${text(row.sail_number)}` : ''}・同期 ${text(row.sync_quality)}${row.was_offline ? '・オフライン' : ''}`,
+      eventHash: null,
     })),
     ...tasks.map((row) => ({
       id: text(row.id), raceId: nullableText(row.race_id), raceNumber: nullableText(row.race_number),
