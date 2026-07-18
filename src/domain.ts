@@ -1,6 +1,6 @@
 export type LngLat = readonly [longitude: number, latitude: number]
 
-export type MarkStatus = 'planned' | 'en-route' | 'deployed' | 'confirmed'
+export type MarkStatus = 'planned' | 'en-route' | 'deployed' | 'confirmed' | 'recovered'
 
 export interface CourseMark {
   id: string
@@ -8,6 +8,8 @@ export interface CourseMark {
   shortLabel: string
   target: LngLat
   actual?: LngLat
+  verificationPosition?: LngLat
+  recoveryPosition?: LngLat
   status: MarkStatus
   assignedBoatId?: string
   isGate?: boolean

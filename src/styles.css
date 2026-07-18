@@ -974,8 +974,15 @@ select:focus-visible {
   display: flex;
   align-items: center;
   gap: 10px;
+  max-width: calc(100% - 108px);
+  overflow-x: auto;
   padding: 7px 10px;
   border-radius: 9px;
+  scrollbar-width: none;
+}
+
+.map-legend::-webkit-scrollbar {
+  display: none;
 }
 
 .map-legend span {
@@ -985,10 +992,13 @@ select:focus-visible {
   color: #36566c;
   font-size: 9px;
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .legend-target,
-.legend-actual {
+.legend-actual,
+.legend-verification,
+.legend-recovery {
   width: 10px;
   height: 10px;
   display: inline-block;
@@ -1004,6 +1014,17 @@ select:focus-visible {
   background: #ff7a1a;
   border: 2px solid #fff;
   box-shadow: 0 0 0 1px #ff7a1a;
+}
+
+.legend-verification {
+  background: #16a36f;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px #16a36f;
+}
+
+.legend-recovery {
+  background: #d6a62d;
+  border: 2px solid #5f4108;
 }
 
 .map-mark-strip {
@@ -1108,6 +1129,23 @@ select:focus-visible {
   font-weight: 800;
 }
 
+.selected-mark .mark-verification-status,
+.selected-mark .mark-recovery-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 2px;
+  font-weight: 900;
+}
+
+.selected-mark .mark-verification-status {
+  color: var(--success);
+}
+
+.selected-mark .mark-recovery-status {
+  color: #76520d;
+}
+
 .passage-observations {
   max-height: 104px;
   display: grid;
@@ -1205,6 +1243,16 @@ select:focus-visible {
   border: 1px solid #c5dce9;
 }
 
+.selected-mark__actions .mark-action--verify {
+  background: var(--success);
+}
+
+.selected-mark__actions .mark-action--recover {
+  color: #5f4108;
+  background: #ffe7a1;
+  border: 1px solid #d6aa3a;
+}
+
 .selected-mark__actions button:disabled {
   opacity: 0.48;
   cursor: not-allowed;
@@ -1286,6 +1334,13 @@ select:focus-visible {
   color: #31546b;
   font-size: 9px;
   font-weight: 850;
+}
+
+.manual-position-guidance {
+  grid-column: 2;
+  color: #496b80;
+  font-size: 8px;
+  line-height: 1.4;
 }
 
 .manual-position-datum.is-error {
@@ -6109,6 +6164,7 @@ select:focus-visible {
   }
 
   .manual-position-modes,
+  .manual-position-guidance,
   .manual-position-datum,
   .manual-position-fields,
   .manual-position-note {

@@ -257,6 +257,7 @@ async function markForRace(
   access: EventAccess,
   raceId: string,
   markId: string,
+  allowUnscopedVerification = false,
 ): Promise<{ markId: string; nodeId: string; label: string; target: readonly [number, number] }> {
   const mark = await env.DB.prepare(
     `SELECT m.id AS mark_id, m.label, cn.id AS node_id, cn.target_lng, cn.target_lat
@@ -271,7 +272,7 @@ async function markForRace(
   }>()
   if (!mark) throw new Response('Mark is not part of the active course', { status: 404 })
 
-  if (!access.isOwner && !['pro', 'ro', 'course-setter'].includes(access.role)) {
+  if (!allowUnscopedVerification && !access.isOwner && !['pro', 'ro', 'course-setter'].includes(access.role)) {
     const scoped = await env.DB.prepare(
       `SELECT 1 AS allowed FROM event_member_scopes
        WHERE event_member_id = ? AND mark_id = ? LIMIT 1`,
@@ -291,7 +292,8 @@ async function persistMark(env: AppEnv, access: EventAccess, operation: Realtime
   }
   const payload = objectPayload(operation.payload)
   const markId = stringValue(payload.markId, 'markId')
-  const mark = await markForRace(env, access, raceId, markId)
+  const requestedStatus = String(payload.status ?? 'deployed')
+  const mark = await markForRace(env, access, raceId, markId, requestedStatus === 'confirmed')
   const coordinates = position(payload.actual)
   const memberId = await requireMemberId(env, access)
   const committeeBoatId = typeof payload.committeeBoatId === 'string' ? payload.committeeBoatId : null
@@ -305,8 +307,27 @@ async function persistMark(env: AppEnv, access: EventAccess, operation: Realtime
     moved: 'moved',
     recovered: 'recovered',
   }
-  const eventType = eventTypes[String(payload.status ?? 'deployed')]
+  const eventType = eventTypes[requestedStatus]
   if (!eventType) throw new Response('Invalid mark state', { status: 400 })
+  const canVerifyWithoutAssignedBoat = access.isOwner || ['pro', 'ro', 'course-setter'].includes(access.role)
+  if (eventType === 'confirmed' && !canVerifyWithoutAssignedBoat && !committeeBoatId) {
+    throw new Response('Committee boat assignment required for mark verification', { status: 400 })
+  }
+  let previousEvent: { event_type: string; committee_boat_id: string | null } | null = null
+  if (['confirmed', 'moved', 'recovered'].includes(eventType)) {
+    previousEvent = await env.DB.prepare(
+      `SELECT event_type, committee_boat_id FROM mark_events
+       WHERE race_id = ? AND mark_id = ?
+       ORDER BY sequence DESC LIMIT 1`,
+    ).bind(raceId, markId).first<{ event_type: string; committee_boat_id: string | null }>()
+    const activePlacement = previousEvent && ['dropped', 'moved', 'confirmed'].includes(previousEvent.event_type)
+    if (!activePlacement) {
+      throw new Response(
+        eventType === 'confirmed' ? 'Mark must be deployed before verification' : 'Mark must be deployed before moving or recovery',
+        { status: 409 },
+      )
+    }
+  }
   const sequence = await env.DB.prepare(
     'SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM mark_events WHERE race_id = ?',
   ).bind(raceId).first<{ sequence: number }>()
@@ -351,6 +372,10 @@ async function persistMark(env: AppEnv, access: EventAccess, operation: Realtime
       note: positionNote,
       originalStatus: payload.status ?? 'deployed',
       targetDifferenceMetres,
+      previousCommitteeBoatId: previousEvent?.committee_boat_id ?? null,
+      independentVerification: eventType === 'confirmed' && Boolean(
+        committeeBoatId && previousEvent?.committee_boat_id && committeeBoatId !== previousEvent.committee_boat_id,
+      ),
     }),
   ).run()
   return {
@@ -365,6 +390,10 @@ async function persistMark(env: AppEnv, access: EventAccess, operation: Realtime
     coordinateDatum,
     note: positionNote,
     targetDifferenceMetres,
+    previousCommitteeBoatId: previousEvent?.committee_boat_id ?? null,
+    independentVerification: eventType === 'confirmed' && Boolean(
+      committeeBoatId && previousEvent?.committee_boat_id && committeeBoatId !== previousEvent.committee_boat_id,
+    ),
   }
 }
 

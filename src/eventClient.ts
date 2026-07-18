@@ -184,7 +184,7 @@ export interface RetentionPreview {
   expiredCount: number
 }
 
-interface BootstrapResponse {
+export interface BootstrapResponse {
   access: EventAccessSummary
   regatta: { id: string; slug: string; name: string; starts_on: string; ends_on: string; status: string }
   races: Array<{
@@ -304,18 +304,34 @@ function formatClock(iso: string): string {
   }).format(new Date(iso))
 }
 
-function bootstrapMarks(response: BootstrapResponse, raceId: string): CourseMark[] {
-  const latest = new Map<string, BootstrapResponse['markEvents'][number]>()
+export type MarkBootstrapSource = Pick<BootstrapResponse, 'courseNodes' | 'markEvents'>
+
+export function bootstrapMarks(response: MarkBootstrapSource, raceId: string): CourseMark[] {
+  const latest = new Map<string, MarkBootstrapSource['markEvents'][number]>()
+  const latestPlacement = new Map<string, MarkBootstrapSource['markEvents'][number]>()
+  const latestVerification = new Map<string, MarkBootstrapSource['markEvents'][number]>()
   response.markEvents.filter((event) => event.race_id === raceId).forEach((event) => {
     const existing = latest.get(event.mark_id)
     if (!existing || event.sequence > existing.sequence) latest.set(event.mark_id, event)
+    if (event.event_type === 'dropped' || event.event_type === 'moved') {
+      const placement = latestPlacement.get(event.mark_id)
+      if (!placement || event.sequence > placement.sequence) latestPlacement.set(event.mark_id, event)
+    }
+    if (event.event_type === 'confirmed') {
+      const verification = latestVerification.get(event.mark_id)
+      if (!verification || event.sequence > verification.sequence) latestVerification.set(event.mark_id, event)
+    }
   })
   return response.courseNodes
     .filter((node) => node.race_id === raceId && node.mark_id)
     .sort((left, right) => left.node_order - right.node_order)
     .map((node) => {
       const event = latest.get(node.mark_id as string)
-      const hasActual = event?.lng != null && event.lat != null
+      const placement = latestPlacement.get(node.mark_id as string)
+      const verification = latestVerification.get(node.mark_id as string)
+      const hasActual = placement?.lng != null && placement.lat != null
+      const hasVerification = verification?.lng != null && verification.lat != null
+        && (!placement || verification.sequence > placement.sequence)
       const isPublishedRevision = (() => {
         try {
           const payload = JSON.parse(event?.payload_json ?? '{}') as { postFinalizationRevisionId?: unknown }
@@ -324,17 +340,23 @@ function bootstrapMarks(response: BootstrapResponse, raceId: string): CourseMark
           return false
         }
       })()
-      const status: CourseMark['status'] = event?.event_type === 'confirmed' || isPublishedRevision
-        ? 'confirmed'
-        : hasActual ? 'deployed' : 'planned'
+      const status: CourseMark['status'] = event?.event_type === 'recovered'
+        ? 'recovered'
+        : event?.event_type === 'confirmed' || isPublishedRevision
+          ? 'confirmed'
+          : hasActual ? 'deployed' : 'planned'
       return {
         id: node.mark_id as string,
         label: node.label,
         shortLabel: shortLabel(node.label),
         target: [node.target_lng, node.target_lat],
-        actual: hasActual ? [event.lng as number, event.lat as number] : undefined,
+        actual: hasActual ? [placement.lng as number, placement.lat as number] : undefined,
+        verificationPosition: hasVerification ? [verification.lng as number, verification.lat as number] : undefined,
+        recoveryPosition: event?.event_type === 'recovered' && event.lng != null && event.lat != null
+          ? [event.lng, event.lat]
+          : undefined,
         status,
-        assignedBoatId: event?.committee_boat_id ?? undefined,
+        assignedBoatId: placement?.committee_boat_id ?? undefined,
         isGate: node.node_type === 'gate',
         gateSide: node.label.endsWith('S') ? 'S' : node.label.endsWith('P') ? 'P' : undefined,
       }

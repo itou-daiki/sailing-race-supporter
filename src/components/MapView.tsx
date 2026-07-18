@@ -1,5 +1,7 @@
 import {
   AlertTriangle,
+  Anchor,
+  BadgeCheck,
   CircleCheckBig,
   CloudOff,
   Crosshair,
@@ -41,12 +43,17 @@ interface MapViewProps {
     position: LngLat,
     metadata: { entryMode: CoordinateEntryMode; accuracyMetres?: number; note?: string },
   ) => void
+  onRecordConfirmation: (markId: string) => void
+  onRecordRecovery: (markId: string) => void
   onRecordLeadingPassage: (markId: string) => void
   onAdoptLeadingPassage: (markId: string, observationId: string) => void
   leadingPassages: Readonly<Record<string, LeadingPassageVisit>>
   raceId: string
   raceAreaName?: string
   locked: boolean
+  canVerifyMarks: boolean
+  manageableMarkIds: readonly string[]
+  canEditFinalizedPosition: boolean
   passageLocked: boolean
   canAdoptLeadingPassage: boolean
 }
@@ -71,6 +78,14 @@ const MAP_STYLE: maplibregl.StyleSpecification = {
 }
 
 const DATUM_CONFIRMATION_ERROR = 'ハンディGPSの測地系がWGS 84であることを確認してください'
+
+function markStatusLabel(status: CourseMark['status']): string {
+  if (status === 'confirmed') return '確認済'
+  if (status === 'deployed') return '投下済'
+  if (status === 'recovered') return '回収済'
+  if (status === 'planned') return '計画中'
+  return '移動中'
+}
 
 function formatEta(seconds: number | undefined): string {
   if (seconds === undefined) return 'ETA —（0.5kt未満）'
@@ -99,12 +114,17 @@ export function MapView({
   onUseCurrentLocation,
   onRecordDrop,
   onRecordManualPosition,
+  onRecordConfirmation,
+  onRecordRecovery,
   onRecordLeadingPassage,
   onAdoptLeadingPassage,
   leadingPassages,
   raceId,
   raceAreaName,
   locked,
+  canVerifyMarks,
+  manageableMarkIds,
+  canEditFinalizedPosition,
   passageLocked,
   canAdoptLeadingPassage,
 }: MapViewProps) {
@@ -131,6 +151,7 @@ export function MapView({
   const features = useMemo(() => buildCourseFeatures(marks), [marks])
   const initialFeaturesRef = useRef(features)
   const selectedMark = marks.find((mark) => mark.id === selectedMarkId)
+  const canManageSelectedMark = Boolean(selectedMark && manageableMarkIds.includes(selectedMark.id))
   const selfBoat = boats.find((boat) => boat.isSelf)
   const selectedPassage = selectedMark ? leadingPassages[passageVisitKey(raceId, selectedMark.id, 1)] : undefined
   const selectedPassageObservations = selectedPassage?.observations.filter((observation) => observation.status === 'active') ?? []
@@ -162,6 +183,9 @@ export function MapView({
     ? distanceMetres(selectedMark.target, manualPreview)
     : undefined
   const manualDatumError = manualEntryError === DATUM_CONFIRMATION_ERROR
+  const verificationDifference = selectedMark?.actual && selectedMark.verificationPosition
+    ? distanceMetres(selectedMark.actual, selectedMark.verificationPosition)
+    : undefined
 
   useEffect(() => {
     const interval = window.setInterval(() => setFreshnessNow(Date.now()), 15_000)
@@ -255,6 +279,30 @@ export function MapView({
           'circle-radius': 7,
           'circle-color': '#ff7a1a',
           'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 2,
+        },
+      })
+      map.addLayer({
+        id: 'mark-verification-point',
+        type: 'circle',
+        source: 'course-points',
+        filter: ['==', ['get', 'kind'], 'verification'],
+        paint: {
+          'circle-radius': 6,
+          'circle-color': '#16a36f',
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 2,
+        },
+      })
+      map.addLayer({
+        id: 'mark-recovery-point',
+        type: 'circle',
+        source: 'course-points',
+        filter: ['==', ['get', 'kind'], 'recovery'],
+        paint: {
+          'circle-radius': 6,
+          'circle-color': '#d6a62d',
+          'circle-stroke-color': '#5f4108',
           'circle-stroke-width': 2,
         },
       })
@@ -466,6 +514,8 @@ export function MapView({
       <div className="map-legend glass-panel" aria-label="地図凡例">
         <span><i className="legend-target" /> 計画</span>
         <span><i className="legend-actual" /> 投下地点</span>
+        <span><i className="legend-verification" /> 位置確認</span>
+        <span><i className="legend-recovery" /> 回収地点</span>
         <span><i className="legend-gate-center" /> ゲート中央</span>
         <span><Navigation size={13} /> 運営ボート</span>
       </div>
@@ -483,7 +533,7 @@ export function MapView({
             }}
           >
             <span>{mark.shortLabel}</span>
-            <small>{mark.status === 'confirmed' ? '確認済' : mark.status === 'deployed' ? '投下済' : '移動中'}</small>
+            <small>{markStatusLabel(mark.status)}</small>
           </button>
         ))}
       </div>
@@ -503,6 +553,8 @@ export function MapView({
                 {selectedMark.actual && `・計画差 ${Math.round(distanceMetres(selectedMark.target, selectedMark.actual))}m`}
               </small>
             </> : <small className="selected-mark__navigation">運営ボート位置未取得・時刻記録は利用可能</small>}
+            {verificationDifference !== undefined && <small className="mark-verification-status"><BadgeCheck size={12} /> 別位置観測との差 {verificationDifference.toFixed(1)}m</small>}
+            {selectedMark.recoveryPosition && <small className="mark-recovery-status"><Anchor size={12} /> 回収地点 {selectedMark.recoveryPosition[1].toFixed(5)}, {selectedMark.recoveryPosition[0].toFixed(5)}</small>}
             {selectedGate && <small className="gate-metrics">{selectedGate.actual ? '実測' : '計画'}ゲート 幅 {Math.round(distanceMetres(selectedGate.positions[0], selectedGate.positions[1]))}m・方位 {Math.round(bearingDegrees(selectedGate.positions[0], selectedGate.positions[1]))}°T・中央 {selectedGate.center[1].toFixed(5)}, {selectedGate.center[0].toFixed(5)}</small>}
             {selectedAdoptedPassage && <small className="passage-recorded">採用 先頭通過 {new Date(selectedAdoptedPassage.passedAt).toLocaleTimeString('ja-JP')}</small>}
             {selectedPassageObservations.length > 0 && (
@@ -528,12 +580,29 @@ export function MapView({
             )}
           </div>
           <div className="selected-mark__actions">
-            <button type="button" onClick={() => onRecordDrop(selectedMark.id)} disabled={locked || !selfBoat}>
-              <CircleCheckBig size={14} /> 現在地を投下地点に記録
+            <button type="button" onClick={() => onRecordDrop(selectedMark.id)} disabled={locked || !selfBoat || !canManageSelectedMark}>
+              <CircleCheckBig size={14} /> {selectedMark.actual ? '現在地へ再投下' : '現在地を投下地点に記録'}
             </button>
-            <button type="button" onClick={openManualEditor} disabled={locked}>
+            <button type="button" onClick={openManualEditor} disabled={!canManageSelectedMark || locked && !canEditFinalizedPosition}>
               <PencilLine size={14} /> GPS数値を手入力
             </button>
+            {selectedMark.status === 'deployed' && (
+              <button type="button" className="mark-action--verify" onClick={() => onRecordConfirmation(selectedMark.id)} disabled={locked || !selfBoat || !canVerifyMarks}>
+                <BadgeCheck size={14} /> 現在地から位置確認
+              </button>
+            )}
+            {(selectedMark.status === 'deployed' || selectedMark.status === 'confirmed') && (
+              <button
+                type="button"
+                className="mark-action--recover"
+                onClick={() => {
+                  if (window.confirm(`${selectedMark.label}を回収済みとして記録しますか？`)) onRecordRecovery(selectedMark.id)
+                }}
+                disabled={locked || !selfBoat || !canManageSelectedMark}
+              >
+                <Anchor size={14} /> 回収済みにする
+              </button>
+            )}
             <button type="button" onClick={() => onRecordLeadingPassage(selectedMark.id)} disabled={passageLocked}>
               <Timer size={14} /> {selectedPassageObservations.length ? '別観測を追加' : '先頭通過を記録'}
             </button>
@@ -555,6 +624,9 @@ export function MapView({
                 <button type="button" className={manualEntryMode === 'decimal-tail-4' ? 'is-active' : ''} onClick={() => changeManualEntryMode('decimal-tail-4')}>10進度・末尾4桁</button>
                 <button type="button" className={manualEntryMode === 'decimal-full' ? 'is-active' : ''} onClick={() => changeManualEntryMode('decimal-full')}>10進度・全桁</button>
               </div>
+              <small className="manual-position-guidance">
+                末尾4桁では計画位置または直前の投下位置から上位桁を補います。GPS表示の上位桁が異なる場合は「10進度・全桁」を選んでください。
+              </small>
               <label className={`manual-position-datum ${manualDatumError ? 'is-error' : ''}`}>
                 <input
                   type="checkbox"
@@ -570,11 +642,11 @@ export function MapView({
               <div className="manual-position-fields">
                 <label>
                   <span>緯度</span>
-                  <span className="coordinate-input">{manualEntryMode === 'dmm-tail-4' && <b>{decimalMinuteTailParts(manualReference[1], 'latitude').prefix}</b>}{manualEntryMode === 'decimal-tail-4' && <b>{decimalTailParts(manualReference[1]).prefix}</b>}<input aria-label="ハンディGPS緯度" inputMode="decimal" value={manualLatitude} maxLength={manualEntryMode === 'decimal-full' ? 14 : 4} onChange={(event) => setManualLatitude(event.target.value)} /></span>
+                  <span className="coordinate-input">{manualEntryMode === 'dmm-tail-4' && <b>{decimalMinuteTailParts(manualReference[1], 'latitude').prefix}</b>}{manualEntryMode === 'decimal-tail-4' && <b>{decimalTailParts(manualReference[1]).prefix}</b>}<input aria-label="ハンディGPS緯度" inputMode={manualEntryMode === 'decimal-full' ? 'decimal' : 'numeric'} autoComplete="off" value={manualLatitude} maxLength={14} onChange={(event) => setManualLatitude(manualEntryMode === 'decimal-full' ? event.target.value : event.target.value.replace(/\D/gu, '').slice(0, 4))} /></span>
                 </label>
                 <label>
                   <span>経度</span>
-                  <span className="coordinate-input">{manualEntryMode === 'dmm-tail-4' && <b>{decimalMinuteTailParts(manualReference[0], 'longitude').prefix}</b>}{manualEntryMode === 'decimal-tail-4' && <b>{decimalTailParts(manualReference[0]).prefix}</b>}<input aria-label="ハンディGPS経度" inputMode="decimal" value={manualLongitude} maxLength={manualEntryMode === 'decimal-full' ? 14 : 4} onChange={(event) => setManualLongitude(event.target.value)} /></span>
+                  <span className="coordinate-input">{manualEntryMode === 'dmm-tail-4' && <b>{decimalMinuteTailParts(manualReference[0], 'longitude').prefix}</b>}{manualEntryMode === 'decimal-tail-4' && <b>{decimalTailParts(manualReference[0]).prefix}</b>}<input aria-label="ハンディGPS経度" inputMode={manualEntryMode === 'decimal-full' ? 'decimal' : 'numeric'} autoComplete="off" value={manualLongitude} maxLength={14} onChange={(event) => setManualLongitude(manualEntryMode === 'decimal-full' ? event.target.value : event.target.value.replace(/\D/gu, '').slice(0, 4))} /></span>
                 </label>
                 <label><span>GPS表示精度（m・任意）</span><input aria-label="ハンディGPS表示精度" type="number" min="0" max="10000" step="0.1" value={manualAccuracy} onChange={(event) => setManualAccuracy(event.target.value)} /></label>
               </div>

@@ -23,4 +23,29 @@ describe('course map geometry', () => {
       [139.461, 35.28],
     ])
   })
+
+  it('keeps the deployed position while showing verification and recovery as separate map points', () => {
+    const mark: CourseMark = {
+      id: 'm1',
+      label: '1マーク',
+      shortLabel: '1',
+      target: [139.46, 35.29],
+      actual: [139.4602, 35.2901],
+      verificationPosition: [139.46021, 35.29011],
+      recoveryPosition: [139.461, 35.291],
+      status: 'recovered',
+    }
+
+    const features = buildCourseFeatures([mark, {
+      id: 'finish', label: 'フィニッシュ', shortLabel: 'F', target: [139.46, 35.28], status: 'planned',
+    }])
+    expect(features.points.features.map((feature) => feature.properties?.kind)).toEqual([
+      'target', 'actual', 'verification', 'recovery', 'target',
+    ])
+    expect(features.course.features[0].geometry.coordinates[0]).toEqual([139.4602, 35.2901])
+    expect(features.targetLinks.features[0].geometry.coordinates).toEqual([
+      [139.46, 35.29],
+      [139.4602, 35.2901],
+    ])
+  })
 })

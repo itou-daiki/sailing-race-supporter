@@ -39,19 +39,31 @@ export function buildCourseFeatures(marks: readonly CourseMark[]): {
 } {
   const gates = findGatePairs(marks)
   const pointFeatures: Feature<Point>[] = marks.flatMap((mark) => {
-    const target: Feature<Point> = {
+    const points: Feature<Point>[] = [{
       type: 'Feature',
       id: `${mark.id}-target`,
       properties: { markId: mark.id, kind: 'target', label: mark.shortLabel },
       geometry: { type: 'Point', coordinates: [...mark.target] },
-    }
-    if (!mark.actual) return [target]
-    return [target, {
+    }]
+    if (mark.actual) points.push({
       type: 'Feature',
       id: `${mark.id}-actual`,
       properties: { markId: mark.id, kind: 'actual', label: mark.shortLabel },
       geometry: { type: 'Point', coordinates: [...mark.actual] },
-    }]
+    })
+    if (mark.verificationPosition) points.push({
+      type: 'Feature',
+      id: `${mark.id}-verification`,
+      properties: { markId: mark.id, kind: 'verification', label: `${mark.shortLabel}確認` },
+      geometry: { type: 'Point', coordinates: [...mark.verificationPosition] },
+    })
+    if (mark.recoveryPosition) points.push({
+      type: 'Feature',
+      id: `${mark.id}-recovery`,
+      properties: { markId: mark.id, kind: 'recovery', label: `${mark.shortLabel}回収` },
+      geometry: { type: 'Point', coordinates: [...mark.recoveryPosition] },
+    })
+    return points
   })
   gates.forEach((gate) => pointFeatures.push({
     type: 'Feature',

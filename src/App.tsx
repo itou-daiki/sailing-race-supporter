@@ -35,6 +35,7 @@ import {
   type LeadingPassageObservation,
   type LeadingPassageVisit,
   type LngLat,
+  type MarkStatus,
   type OperationalMessage,
   type OperationalTask,
   type RaceDefinition,
@@ -335,7 +336,7 @@ export default function App() {
     }
 
     if (event.type === 'mark') {
-      const payload = event.payload as { markId?: string; actual?: LngLat; status?: 'deployed' | 'confirmed' }
+      const payload = event.payload as { markId?: string; actual?: LngLat; status?: MarkStatus }
       if (!event.raceId || !payload.markId || !payload.actual) return
       setRaces((current) => current.map((race) => (
         race.id === event.raceId
@@ -343,7 +344,17 @@ export default function App() {
               ...race,
               marks: race.marks.map((mark) => (
                 mark.id === payload.markId
-                  ? { ...mark, actual: payload.actual, status: payload.status ?? 'deployed' }
+                  ? payload.status === 'confirmed'
+                    ? { ...mark, verificationPosition: payload.actual, status: 'confirmed' }
+                    : payload.status === 'recovered'
+                      ? { ...mark, recoveryPosition: payload.actual, status: 'recovered' }
+                      : {
+                          ...mark,
+                          actual: payload.actual,
+                          verificationPosition: undefined,
+                          recoveryPosition: undefined,
+                          status: payload.status ?? 'deployed',
+                        }
                   : mark
               )),
             }
@@ -629,6 +640,14 @@ export default function App() {
     eventAccess.isOwner || !locked && ['pro', 'ro', 'course-setter'].includes(eventAccess.role)
   ))
   const canShareEnvironment = !locked && (!eventAccess || eventAccess.isOwner || ['pro', 'ro', 'course-setter', 'signal-boat', 'mark-boat', 'safety-boat'].includes(eventAccess.role))
+  const canManageAllMarks = !eventAccess || eventAccess.isOwner || ['pro', 'ro', 'course-setter'].includes(eventAccess.role)
+  const canVerifyMarks = !eventAccess || eventAccess.isOwner || ['pro', 'ro', 'course-setter', 'mark-boat'].includes(eventAccess.role)
+  const ownMemberResource = eventResources.members.find((member) => member.id === eventAccess?.memberId)
+  const assignedMarkId = ownMemberResource?.markId
+    ?? marks.find((mark) => mark.label === eventAccess?.assignment || mark.shortLabel === eventAccess?.assignment)?.id
+  const manageableMarkIds = canManageAllMarks
+    ? marks.map((mark) => mark.id)
+    : assignedMarkId ? [assignedMarkId] : []
   const canScheduleRace = !locked && ['planning', 'setup'].includes(activeRace.status) && Boolean(eventAccess) && (
     Boolean(eventAccess?.isOwner) || ['pro', 'ro'].includes(eventAccess?.role ?? '')
   )
@@ -841,10 +860,12 @@ export default function App() {
       note?: string
       committeeBoatId?: string
     },
+    lifecycleStatus?: 'confirmed' | 'recovered',
   ) => {
     const existingMark = marks.find((mark) => mark.id === markId)
     if (!existingMark) return
     if (locked) {
+      if (lifecycleStatus) return
       if (!eventAccess?.isOwner) return
       if (revisionDraft) {
         setRevisionError('先に進行中の管理者修正版を再確定または破棄してください')
@@ -876,7 +897,17 @@ export default function App() {
         ...race,
         marks: sourceMarks.map((mark) => (
           mark.id === markId
-            ? { ...mark, actual, status: 'deployed' as const }
+            ? lifecycleStatus === 'confirmed'
+              ? { ...mark, verificationPosition: actual, status: 'confirmed' as const }
+              : lifecycleStatus === 'recovered'
+                ? { ...mark, recoveryPosition: actual, status: 'recovered' as const }
+                : {
+                    ...mark,
+                    actual,
+                    verificationPosition: undefined,
+                    recoveryPosition: undefined,
+                    status: 'deployed' as const,
+                  }
             : mark
         )),
       }
@@ -884,7 +915,7 @@ export default function App() {
     void sendRealtimeOperation('mark', {
       markId,
       actual,
-      status: existingMark?.actual ? 'moved' : 'deployed',
+      status: lifecycleStatus ?? (existingMark.actual ? 'moved' : 'deployed'),
       recordedAt: new Date().toISOString(),
       committeeBoatId: metadata.committeeBoatId,
       accuracyMetres: metadata.accuracyMetres,
@@ -916,6 +947,28 @@ export default function App() {
       committeeBoatId: selfBoat?.id,
       ...metadata,
     })
+  }
+
+  const recordMarkConfirmation = (markId: string) => {
+    const selfBoat = boats.find((boat) => boat.isSelf)
+    if (!selfBoat || locked) return
+    recordMarkPosition(markId, selfBoat.position, {
+      source: 'device-geolocation',
+      committeeBoatId: selfBoat.id,
+      accuracyMetres: selfBoat.accuracyMetres,
+      note: `${selfBoat.assignment}から位置確認`,
+    }, 'confirmed')
+  }
+
+  const recordMarkRecovery = (markId: string) => {
+    const selfBoat = boats.find((boat) => boat.isSelf)
+    if (!selfBoat || locked) return
+    recordMarkPosition(markId, selfBoat.position, {
+      source: 'device-geolocation',
+      committeeBoatId: selfBoat.id,
+      accuracyMetres: selfBoat.accuracyMetres,
+      note: `${selfBoat.assignment}が回収`,
+    }, 'recovered')
   }
 
   const recordLeadingPassage = (markId: string) => {
@@ -1563,12 +1616,17 @@ export default function App() {
               onUseCurrentLocation={updateSelfLocation}
               onRecordDrop={recordMarkDrop}
               onRecordManualPosition={recordManualMarkPosition}
+              onRecordConfirmation={recordMarkConfirmation}
+              onRecordRecovery={recordMarkRecovery}
               onRecordLeadingPassage={recordLeadingPassage}
               onAdoptLeadingPassage={adoptLeadingPassage}
               leadingPassages={leadingPassages}
               raceId={activeRace.id}
               raceAreaName={activeRace.raceAreaName}
-              locked={locked && !eventAccess?.isOwner}
+              locked={locked}
+              canVerifyMarks={canVerifyMarks}
+              manageableMarkIds={manageableMarkIds}
+              canEditFinalizedPosition={Boolean(eventAccess?.isOwner)}
               passageLocked={locked && !eventAccess?.isOwner}
               canAdoptLeadingPassage={canAdoptLeadingPassage}
             />

@@ -43,11 +43,35 @@ function markDetail(row: Row): string {
   try {
     if (typeof row.payload_json === 'string') payload = JSON.parse(row.payload_json) as Record<string, unknown>
   } catch { /* Preserve the core event even if a historical payload is malformed. */ }
+  const entryModes: Record<string, string> = {
+    'dmm-tail-4': '度分・末尾4桁',
+    'decimal-tail-4': '10進度・末尾4桁',
+    'decimal-full': '10進度・全桁',
+  }
+  const source = payload.source === 'handheld-gps-manual'
+    ? `ハンディGPS入力${typeof payload.coordinateEntryMode === 'string' ? `（${entryModes[payload.coordinateEntryMode] ?? payload.coordinateEntryMode}）` : ''}`
+    : payload.source === 'device-geolocation' ? 'スマホGPS' : null
   return [
     `位置 ${coordinates(row)}`,
+    source,
+    typeof payload.coordinateDatum === 'string' ? `測地系 ${payload.coordinateDatum}` : null,
     typeof row.accuracy_metres === 'number' ? `GPS精度 ±${Math.round(row.accuracy_metres)}m` : 'GPS精度 記録なし',
     typeof payload.targetDifferenceMetres === 'number' ? `計画差 ${Math.round(payload.targetDifferenceMetres)}m` : '計画差 旧記録・未計算',
-  ].join('・')
+    payload.independentVerification === true ? '別運営ボートによる位置確認' : null,
+    typeof payload.note === 'string' && payload.note ? `メモ ${payload.note}` : null,
+  ].filter(Boolean).join('・')
+}
+
+function markEventLabel(eventType: string): string {
+  const labels: Record<string, string> = {
+    assigned: '担当割当',
+    'en-route': '移動中',
+    dropped: '投下',
+    confirmed: '位置確認',
+    moved: '再投下',
+    recovered: '回収',
+  }
+  return labels[eventType] ?? eventType
 }
 
 function taskStatus(status: string): string {
@@ -281,7 +305,7 @@ async function collectLogs(env: AppEnv, access: EventAccess, raceId: string | nu
     ...marks.map((row) => ({
       id: text(row.id), raceId: nullableText(row.race_id), raceNumber: nullableText(row.race_number),
       sequence: number(row.sequence), occurredAt: text(row.occurred_at), category: 'mark' as const,
-      title: `${text(row.label)}：${text(row.event_type)}`, actor: text(row.actor, '不明'),
+      title: `${text(row.label)}：${markEventLabel(text(row.event_type))}`, actor: text(row.actor, '不明'),
       detail: markDetail(row), eventHash: null,
     })),
     ...wind.map((row) => ({
