@@ -4,6 +4,7 @@ export type OperationPermission =
   | 'view'
   | 'position'
   | 'wind'
+  | 'current'
   | 'mark'
   | 'leading-passage'
   | 'finish'
@@ -41,6 +42,7 @@ const ALL_OPERATIONS = new Set<OperationPermission>([
   'view',
   'position',
   'wind',
+  'current',
   'mark',
   'leading-passage',
   'finish',
@@ -52,14 +54,14 @@ const ALL_OPERATIONS = new Set<OperationPermission>([
 ])
 
 const ROLE_PERMISSIONS: Readonly<Record<string, ReadonlySet<OperationPermission>>> = {
-  pro: new Set(['view', 'position', 'wind', 'mark', 'leading-passage', 'finish', 'task', 'message', 'signal', 'finalize']),
-  ro: new Set(['view', 'position', 'wind', 'mark', 'leading-passage', 'finish', 'task', 'message', 'signal', 'finalize']),
-  'course-setter': new Set(['view', 'position', 'wind', 'mark', 'leading-passage', 'task', 'message']),
-  'signal-boat': new Set(['view', 'position', 'wind', 'leading-passage', 'finish', 'task', 'message', 'signal']),
-  'mark-boat': new Set(['view', 'position', 'wind', 'mark', 'leading-passage', 'task', 'message']),
+  pro: new Set(['view', 'position', 'wind', 'current', 'mark', 'leading-passage', 'finish', 'task', 'message', 'signal', 'finalize']),
+  ro: new Set(['view', 'position', 'wind', 'current', 'mark', 'leading-passage', 'finish', 'task', 'message', 'signal', 'finalize']),
+  'course-setter': new Set(['view', 'position', 'wind', 'current', 'mark', 'leading-passage', 'task', 'message']),
+  'signal-boat': new Set(['view', 'position', 'wind', 'current', 'leading-passage', 'finish', 'task', 'message', 'signal']),
+  'mark-boat': new Set(['view', 'position', 'wind', 'current', 'mark', 'leading-passage', 'task', 'message']),
   timekeeper: new Set(['view', 'leading-passage', 'finish', 'task', 'message', 'signal']),
   'record-keeper': new Set(['view', 'leading-passage', 'finish', 'task', 'message']),
-  'safety-boat': new Set(['view', 'position', 'wind', 'task', 'message']),
+  'safety-boat': new Set(['view', 'position', 'wind', 'current', 'task', 'message']),
   jury: new Set(['view', 'position', 'leading-passage', 'task', 'message']),
   protest: new Set(['view', 'position', 'leading-passage', 'task', 'message']),
   viewer: new Set(['view']),

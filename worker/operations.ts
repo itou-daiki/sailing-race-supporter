@@ -7,7 +7,7 @@ import type { RaceSignalAction } from '../src/domain.js'
 
 export interface RealtimeOperation {
   id: string
-  type: 'presence' | 'position' | 'wind' | 'mark' | 'leading-passage' | 'finish' | 'task' | 'message' | 'signal' | 'signal-audio' | 'finalize'
+  type: 'presence' | 'position' | 'wind' | 'current' | 'mark' | 'leading-passage' | 'finish' | 'task' | 'message' | 'signal' | 'signal-audio' | 'finalize'
   raceId?: string
   payload: unknown
   clientTime?: string
@@ -175,7 +175,55 @@ async function persistWind(env: AppEnv, access: EventAccess, operation: Realtime
     access.displayName,
     payload.confidence === 'high' || payload.confidence === 'medium' ? payload.confidence : 'low',
   ).run()
-  return { directionDegrees, speedKnots, gustKnots, observedAt, position: coordinates, source: access.displayName }
+  return {
+    directionDegrees,
+    speedKnots,
+    gustKnots,
+    observedAt,
+    position: coordinates,
+    source: access.displayName,
+    confidence: payload.confidence === 'high' || payload.confidence === 'medium' ? payload.confidence : 'low',
+  }
+}
+
+async function persistCurrent(env: AppEnv, access: EventAccess, operation: RealtimeOperation): Promise<Record<string, unknown>> {
+  const payload = objectPayload(operation.payload)
+  // Current direction is the true bearing the water flows toward (set).
+  const directionDegrees = finiteNumber(payload.directionDegrees, 'directionDegrees', 0, 360)
+  const speedKnots = finiteNumber(payload.speedKnots, 'speedKnots', 0, 20)
+  const observedAt = isoTime(payload.observedAt ?? operation.clientTime, new Date().toISOString())
+  const coordinates = payload.position == null ? null : position(payload.position)
+  const committeeBoatId = typeof payload.committeeBoatId === 'string' ? payload.committeeBoatId : null
+  if (committeeBoatId) await authorizeCommitteeBoat(env, access, committeeBoatId)
+  const memberId = await requireMemberId(env, access)
+  const confidence = payload.confidence === 'high' || payload.confidence === 'medium' ? payload.confidence : 'low'
+  await env.DB.prepare(
+    `INSERT INTO current_observations
+     (id, regatta_id, race_id, committee_boat_id, member_id, direction_degrees,
+      speed_knots, lng, lat, observed_at, source, confidence)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).bind(
+    operation.id,
+    access.eventId,
+    operation.raceId ?? null,
+    committeeBoatId,
+    memberId,
+    directionDegrees,
+    speedKnots,
+    coordinates?.[0] ?? null,
+    coordinates?.[1] ?? null,
+    observedAt,
+    access.displayName,
+    confidence,
+  ).run()
+  return {
+    directionDegrees,
+    speedKnots,
+    observedAt,
+    position: coordinates,
+    source: access.displayName,
+    confidence,
+  }
 }
 
 async function markForRace(
@@ -975,6 +1023,7 @@ export async function persistRealtimeOperation(
       'skipCommitteeBoatAuthorization' in options && options.skipCommitteeBoatAuthorization === true,
     )
     case 'wind': return persistWind(env, access, operation)
+    case 'current': return persistCurrent(env, access, operation)
     case 'mark': return persistMark(env, access, operation)
     case 'leading-passage': return persistLeadingPassage(env, access, operation)
     case 'finish': return persistFinish(env, access, operation)

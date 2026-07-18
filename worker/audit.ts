@@ -138,7 +138,7 @@ export async function finalizeRace(
   const finalizedAt = new Date().toISOString()
   const finalRace = { ...race, status: 'finalized', finalized_revision: revision, finalized_at: finalizedAt }
   const [courseRevisions, courseNodes, markEvents, signalEvents, passageObservations,
-    passageAdoptions, finishObservations, finishAdoptions, windObservations,
+    passageAdoptions, finishObservations, finishAdoptions, windObservations, currentObservations,
     operationalTasks, operationalTaskEvents, messages, auditHead] = await Promise.all([
     env.DB.prepare('SELECT * FROM course_revisions WHERE race_id = ? ORDER BY revision').bind(raceId).all(),
     env.DB.prepare(
@@ -153,6 +153,7 @@ export async function finalizeRace(
     env.DB.prepare('SELECT * FROM finish_observations WHERE race_id = ? ORDER BY finish_position, finished_at, id').bind(raceId).all(),
     env.DB.prepare('SELECT * FROM finish_adoptions WHERE race_id = ? ORDER BY finish_position, revision').bind(raceId).all(),
     env.DB.prepare('SELECT * FROM wind_observations WHERE race_id = ? ORDER BY observed_at, id').bind(raceId).all(),
+    env.DB.prepare('SELECT * FROM current_observations WHERE race_id = ? ORDER BY observed_at, id').bind(raceId).all(),
     env.DB.prepare('SELECT * FROM operational_tasks WHERE race_id = ? ORDER BY id').bind(raceId).all(),
     env.DB.prepare('SELECT * FROM operational_task_events WHERE race_id = ? ORDER BY server_time, id').bind(raceId).all(),
     env.DB.prepare('SELECT * FROM messages WHERE race_id = ? ORDER BY sent_at, id').bind(raceId).all(),
@@ -173,6 +174,7 @@ export async function finalizeRace(
     finishObservations: finishObservations.results,
     finishAdoptions: finishAdoptions.results,
     windObservations: windObservations.results,
+    currentObservations: currentObservations.results,
     operationalTasks: operationalTasks.results,
     operationalTaskEvents: operationalTaskEvents.results,
     messages: messages.results,

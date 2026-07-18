@@ -38,7 +38,7 @@ interface ClientAttachment {
 
 interface RoomMessage {
   id: string
-  type: 'presence' | 'position' | 'wind' | 'mark' | 'leading-passage' | 'finish' | 'task' | 'message' | 'signal' | 'signal-audio' | 'finalize'
+  type: 'presence' | 'position' | 'wind' | 'current' | 'mark' | 'leading-passage' | 'finish' | 'task' | 'message' | 'signal' | 'signal-audio' | 'finalize'
   raceId?: string
   memberId?: string
   payload: unknown
@@ -54,6 +54,7 @@ const ROOM_MESSAGE_TYPES = new Set<RoomMessage['type']>([
   'presence',
   'position',
   'wind',
+  'current',
   'mark',
   'leading-passage',
   'finish',
@@ -223,7 +224,7 @@ export class EventRoom extends DurableObject<AppEnv> {
         return
       }
       const mutatesFinalizedState = new Set<RoomMessage['type']>([
-        'wind', 'mark', 'leading-passage', 'finish', 'task', 'signal',
+        'wind', 'current', 'mark', 'leading-passage', 'finish', 'task', 'signal',
       ])
       const messageAction = parsed.type === 'message' && parsed.payload && typeof parsed.payload === 'object'
         ? String((parsed.payload as { action?: unknown }).action ?? 'send')
@@ -523,8 +524,14 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
     ).bind(regatta.id).all()
 
     const wind = await env.DB.prepare(
-      `SELECT direction_degrees, speed_knots, gust_knots, observed_at, source, confidence
+      `SELECT direction_degrees, speed_knots, gust_knots, lng, lat, observed_at, source, confidence
        FROM wind_observations WHERE regatta_id = ?
+       ORDER BY observed_at DESC LIMIT 1`,
+    ).bind(regatta.id).first()
+
+    const current = await env.DB.prepare(
+      `SELECT direction_degrees, speed_knots, lng, lat, observed_at, source, confidence
+       FROM current_observations WHERE regatta_id = ?
        ORDER BY observed_at DESC LIMIT 1`,
     ).bind(regatta.id).first()
 
@@ -642,6 +649,7 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
       markEvents: markEvents.results,
       boats: boats.results,
       wind,
+      current,
       messages: messages.results,
       tasks: tasks.results,
       leadingPassages: leadingPassages.results,

@@ -759,12 +759,51 @@ select:focus-visible {
   text-transform: uppercase;
 }
 
+.map-environment {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
 .map-weather {
   display: flex;
   align-items: center;
   gap: 7px;
   font-size: 11px;
   white-space: nowrap;
+}
+
+.map-current {
+  color: #275f78;
+  font-size: 10px;
+}
+
+.map-current .current-direction {
+  width: 15px;
+  height: 15px;
+  display: inline-grid;
+  place-items: center;
+  color: #0a7b9c;
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1;
+  transform-origin: center;
+}
+
+.settings-subsection {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 8px 0 -2px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.settings-subsection small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.55;
 }
 
 .map-weather svg {
@@ -777,6 +816,10 @@ select:focus-visible {
   border-left: 1px solid var(--line);
   font-size: 9px;
   font-weight: 700;
+}
+
+.freshness.is-stale {
+  color: #6c7d88;
 }
 
 .map-actions {
@@ -2392,6 +2435,10 @@ select:focus-visible {
 
 .log-entry.category-message::before {
   background: #12a084;
+}
+
+.log-entry.category-current::before {
+  background: #0a7b9c;
 }
 
 .log-entry__meta,

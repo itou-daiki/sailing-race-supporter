@@ -34,6 +34,18 @@ export interface WindObservation {
   observedAt: string
   source: string
   trend: 'left' | 'steady' | 'right'
+  confidence?: 'low' | 'medium' | 'high'
+  position?: LngLat
+}
+
+export interface CurrentObservation {
+  /** True bearing the water is flowing toward (set), not where it comes from. */
+  directionDegrees: number
+  speedKnots: number
+  observedAt: string
+  source: string
+  confidence: 'low' | 'medium' | 'high'
+  position?: LngLat
 }
 
 export interface RaceDefinition {
@@ -433,4 +445,13 @@ export const INITIAL_WIND: WindObservation = {
   observedAt: new Date(Date.now() - 42_000).toISOString(),
   source: 'コースセッター',
   trend: 'steady',
+  confidence: 'medium',
+}
+
+export const INITIAL_CURRENT: CurrentObservation = {
+  directionDegrees: 185,
+  speedKnots: 0.4,
+  observedAt: new Date(Date.now() - 3 * 60_000).toISOString(),
+  source: 'コースセッター',
+  confidence: 'low',
 }

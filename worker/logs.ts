@@ -3,7 +3,7 @@ import { json } from './http.js'
 import type { AppEnv } from './index.js'
 import { requireSession } from './security.js'
 
-export type LogCategory = 'audit' | 'mark' | 'wind' | 'signal' | 'passage' | 'finish' | 'task' | 'message' | 'position'
+export type LogCategory = 'audit' | 'mark' | 'wind' | 'current' | 'signal' | 'passage' | 'finish' | 'task' | 'message' | 'position'
 
 export interface EventLogEntry {
   id: string
@@ -40,6 +40,10 @@ function coordinates(row: Row): string {
 
 function taskStatus(status: string): string {
   return ({ blocked: 'ブロッカー', waiting: '確認待ち', doing: '対応中', done: '完了' } as Record<string, string>)[status] ?? status
+}
+
+function confidenceLabel(confidence: unknown): string {
+  return confidence === 'high' ? '高' : confidence === 'medium' ? '中' : '低'
 }
 
 function signalTitle(type: string): string {
@@ -115,7 +119,7 @@ async function collectLogs(env: AppEnv, access: EventAccess, raceId: string | nu
   const regattaId = access.eventId
   const values = [regattaId, raceId, raceId, limit]
   const messageValues = [access.memberId, regattaId, raceId, raceId, access.memberId, access.isOwner ? 1 : 0, limit]
-  const [audit, marks, wind, signals, passages, finishes, tasks, messages, positions] = await Promise.all([
+  const [audit, marks, wind, current, signals, passages, finishes, tasks, messages, positions] = await Promise.all([
     rows(env, `SELECT audit.id, audit.race_id, race.race_number, audit.sequence, audit.action,
                       audit.entity_type, audit.reason, audit.server_time AS occurred_at,
                       COALESCE(member.display_name, user.display_name, 'システム') AS actor,
@@ -139,6 +143,14 @@ async function collectLogs(env: AppEnv, access: EventAccess, raceId: string | nu
                       observation.observed_at AS occurred_at, observation.direction_degrees,
                       observation.speed_knots, observation.gust_knots, observation.source AS actor
                FROM wind_observations observation
+               LEFT JOIN races race ON race.id = observation.race_id
+               WHERE observation.regatta_id = ? AND (? IS NULL OR observation.race_id = ?)
+               ORDER BY observation.observed_at DESC LIMIT ?`, values),
+    rows(env, `SELECT observation.id, observation.race_id, race.race_number,
+                      observation.observed_at AS occurred_at, observation.direction_degrees,
+                      observation.speed_knots, observation.lng, observation.lat,
+                      observation.confidence, observation.source AS actor
+               FROM current_observations observation
                LEFT JOIN races race ON race.id = observation.race_id
                WHERE observation.regatta_id = ? AND (? IS NULL OR observation.race_id = ?)
                ORDER BY observation.observed_at DESC LIMIT ?`, values),
@@ -241,6 +253,13 @@ async function collectLogs(env: AppEnv, access: EventAccess, raceId: string | nu
       sequence: null, occurredAt: text(row.occurred_at), category: 'wind' as const, title: '風向風速観測',
       actor: text(row.actor, '不明'),
       detail: `${row.direction_degrees}°・${row.speed_knots}kt${row.gust_knots == null ? '' : `・ガスト${row.gust_knots}kt`}`,
+      eventHash: null,
+    })),
+    ...current.map((row) => ({
+      id: text(row.id), raceId: nullableText(row.race_id), raceNumber: nullableText(row.race_number),
+      sequence: null, occurredAt: text(row.occurred_at), category: 'current' as const, title: '潮流観測',
+      actor: text(row.actor, '不明'),
+      detail: `流向 ${row.direction_degrees}°T→・${row.speed_knots}kt・信頼度 ${confidenceLabel(row.confidence)}・位置 ${coordinates(row)}`,
       eventHash: null,
     })),
     ...signals.map((row) => ({

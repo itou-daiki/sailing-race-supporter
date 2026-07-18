@@ -1,6 +1,7 @@
 import type {
   CommitteeBoat,
   CourseMark,
+  CurrentObservation,
   FinishRecord,
   LeadingPassageVisit,
   OperationalMessage,
@@ -9,6 +10,7 @@ import type {
   RaceSignalAction,
   RaceSignalEvent,
   SailingClass,
+  WindObservation,
 } from './domain'
 import { makeRaceSignalEvent } from './signals'
 
@@ -43,7 +45,8 @@ export interface EventBootstrap {
   finishes: Record<string, FinishRecord>
   memberCount: number
   resources: EventResources
-  wind?: { directionDegrees: number; speedKnots: number; gustKnots: number; observedAt: string; source: string }
+  wind?: WindObservation
+  current?: CurrentObservation
 }
 
 export interface EventResources {
@@ -144,7 +147,12 @@ interface BootstrapResponse {
     lng: number | null; lat: number | null; speed_knots: number | null; course_degrees: number | null; sampled_at: string | null
   }>
   wind: {
-    direction_degrees: number; speed_knots: number; gust_knots: number | null; observed_at: string; source: string
+    direction_degrees: number; speed_knots: number; gust_knots: number | null; lng: number | null; lat: number | null
+    observed_at: string; source: string; confidence: WindObservation['confidence']
+  } | null
+  current: {
+    direction_degrees: number; speed_knots: number; lng: number | null; lat: number | null
+    observed_at: string; source: string; confidence: CurrentObservation['confidence']
   } | null
   messages: Array<{
     id: string; race_id: string | null; channel_key: string; priority: OperationalMessage['priority']
@@ -485,6 +493,21 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
       gustKnots: response.wind.gust_knots ?? response.wind.speed_knots,
       observedAt: response.wind.observed_at,
       source: response.wind.source,
+      trend: 'steady',
+      confidence: response.wind.confidence,
+      position: response.wind.lng != null && response.wind.lat != null
+        ? [response.wind.lng, response.wind.lat]
+        : undefined,
+    } : undefined,
+    current: response.current ? {
+      directionDegrees: response.current.direction_degrees,
+      speedKnots: response.current.speed_knots,
+      observedAt: response.current.observed_at,
+      source: response.current.source,
+      confidence: response.current.confidence,
+      position: response.current.lng != null && response.current.lat != null
+        ? [response.current.lng, response.current.lat]
+        : undefined,
     } : undefined,
   }
 }

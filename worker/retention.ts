@@ -115,7 +115,10 @@ export async function previewRetentionForEvent(
       (SELECT COUNT(*) FROM finish_adoptions adoption JOIN races race ON race.id = adoption.race_id WHERE race.regatta_id = ?) +
       (SELECT COUNT(*) FROM race_finalizations finalization JOIN races race ON race.id = finalization.race_id WHERE race.regatta_id = ?)
     ) AS count`, eventId, eventId, eventId, eventId, eventId, eventId, eventId, eventId),
-    count(env, 'SELECT COUNT(*) AS count FROM wind_observations WHERE regatta_id = ?', eventId),
+    count(env, `SELECT (
+      (SELECT COUNT(*) FROM wind_observations WHERE regatta_id = ?) +
+      (SELECT COUNT(*) FROM current_observations WHERE regatta_id = ?)
+    ) AS count`, eventId, eventId),
     count(env, 'SELECT COUNT(*) AS count FROM position_samples WHERE regatta_id = ?', eventId),
     count(env, `SELECT COUNT(*) AS count FROM messages
                 WHERE regatta_id = ? AND priority = 'normal' AND deleted_at IS NULL`, eventId),
@@ -147,7 +150,7 @@ export async function previewRetentionForEvent(
   })
   const items: RetentionPreviewItem[] = [
     item('finalizedRecordsDays', '確定版・信号・先頭通過・フィニッシュ・監査記録', finalizedRecords, '自動削除せず、管理者の個別承認対象'),
-    item('observationsDays', '風・海面観測', observations, '期限到来時に詳細観測を削除'),
+    item('observationsDays', '風・潮流・海面観測', observations, '期限到来時に詳細観測を削除'),
     item('sampledPositionsDays', '運営ボート位置サンプル', sampledPositions, '期限到来時に位置点を削除'),
     item('localHighFrequencyTrackDays', '端末内の高頻度航跡', 0, '各端末で期限到来時に削除'),
     item('regularMessagesDays', '通常メッセージ本文', regularMessages, '本文をハッシュ付き墓標へ置換'),
@@ -244,6 +247,9 @@ export async function runRetentionForEvent(
     if (hasExpired(end, policy.observationsDays, nowTime)) {
       counts.windObservations = changes(await env.DB.prepare(
         'DELETE FROM wind_observations WHERE regatta_id = ?',
+      ).bind(eventId).run())
+      counts.currentObservations = changes(await env.DB.prepare(
+        'DELETE FROM current_observations WHERE regatta_id = ?',
       ).bind(eventId).run())
     }
     if (hasExpired(end, policy.regularMessagesDays, nowTime)) {

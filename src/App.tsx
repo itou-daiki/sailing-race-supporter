@@ -13,6 +13,7 @@ import {
   Settings2,
   ShieldCheck,
   SlidersHorizontal,
+  Waves,
   X,
 } from 'lucide-react'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -23,9 +24,11 @@ import {
   DEMO_MESSAGES,
   DEMO_RACES,
   DEMO_TASKS,
+  INITIAL_CURRENT,
   INITIAL_WIND,
   type BoardDetail,
   type CommitteeBoat,
+  type CurrentObservation,
   type FinishObservation,
   type FinishRecord,
   type LeadingPassageObservation,
@@ -36,6 +39,7 @@ import {
   type RaceDefinition,
   type RaceSignalEvent,
   type SailingClass,
+  type WindObservation,
 } from './domain'
 import { OperationsBoard } from './components/OperationsBoard'
 import { StartSequence } from './components/StartSequence'
@@ -69,6 +73,8 @@ interface CachedAppState {
   leadingPassages: Record<string, LeadingPassageVisit>
   finishes: Record<string, FinishRecord>
   memberCount: number
+  wind?: WindObservation
+  current?: CurrentObservation
 }
 
 const AuthPanel = lazy(() => import('./components/AuthPanel').then((module) => ({ default: module.AuthPanel })))
@@ -195,6 +201,8 @@ export default function App() {
   const [selectedClass, setSelectedClass] = useState<SailingClass>('470')
   const [windSpeed, setWindSpeed] = useState(INITIAL_WIND.speedKnots)
   const [windDirection, setWindDirection] = useState(INITIAL_WIND.directionDegrees)
+  const [windDetails, setWindDetails] = useState<WindObservation>(INITIAL_WIND)
+  const [seaCurrent, setSeaCurrent] = useState<CurrentObservation>(INITIAL_CURRENT)
   const [courseTemplate, setCourseTemplate] = useState<CourseTemplate>('O2')
   const [lowerGate, setLowerGate] = useState(true)
   const [upperGate, setUpperGate] = useState(false)
@@ -305,9 +313,34 @@ export default function App() {
     }
 
     if (event.type === 'wind') {
-      const payload = event.payload as { directionDegrees?: number; speedKnots?: number }
+      const payload = event.payload as Partial<WindObservation>
       if (typeof payload.directionDegrees === 'number') setWindDirection(payload.directionDegrees)
       if (typeof payload.speedKnots === 'number') setWindSpeed(payload.speedKnots)
+      if (typeof payload.directionDegrees === 'number' && typeof payload.speedKnots === 'number') {
+        setWindDetails({
+          directionDegrees: payload.directionDegrees,
+          speedKnots: payload.speedKnots,
+          gustKnots: payload.gustKnots ?? payload.speedKnots,
+          observedAt: payload.observedAt ?? event.serverTime,
+          source: payload.source ?? '運営メンバー',
+          trend: payload.trend ?? 'steady',
+          confidence: payload.confidence ?? 'low',
+          position: payload.position,
+        })
+      }
+    }
+
+    if (event.type === 'current') {
+      const payload = event.payload as Partial<CurrentObservation>
+      if (typeof payload.directionDegrees !== 'number' || typeof payload.speedKnots !== 'number') return
+      setSeaCurrent({
+        directionDegrees: payload.directionDegrees,
+        speedKnots: payload.speedKnots,
+        observedAt: payload.observedAt ?? event.serverTime,
+        source: payload.source ?? '運営メンバー',
+        confidence: payload.confidence ?? 'low',
+        position: payload.position,
+      })
     }
 
     if (event.type === 'message') {
@@ -426,6 +459,7 @@ export default function App() {
   const locked = activeRace.status === 'finalized'
   const canControlSignals = !locked && (!eventAccess || eventAccess.isOwner || ['pro', 'ro', 'signal-boat'].includes(eventAccess.role))
   const canChangeCourse = !locked && (!eventAccess || eventAccess.isOwner || ['pro', 'ro'].includes(eventAccess.role))
+  const canShareEnvironment = !locked && (!eventAccess || eventAccess.isOwner || ['pro', 'ro', 'course-setter', 'signal-boat', 'mark-boat', 'safety-boat'].includes(eventAccess.role))
   const canAdoptLeadingPassage = !eventAccess || eventAccess.isOwner || ['pro', 'ro', 'timekeeper', 'record-keeper', 'signal-boat'].includes(eventAccess.role)
   const canRecordFinish = (!locked || Boolean(eventAccess?.isOwner)) && (
     !eventAccess || eventAccess.isOwner || ['pro', 'ro', 'timekeeper', 'record-keeper', 'signal-boat'].includes(eventAccess.role)
@@ -483,6 +517,12 @@ export default function App() {
       setLeadingPassages(cached.value.leadingPassages)
       setFinishes(cached.value.finishes ?? {})
       setMemberCount(cached.value.memberCount ?? 0)
+      if (cached.value.wind) {
+        setWindSpeed(cached.value.wind.speedKnots)
+        setWindDirection(cached.value.wind.directionDegrees)
+        setWindDetails({ ...INITIAL_WIND, ...cached.value.wind })
+      }
+      if (cached.value.current) setSeaCurrent(cached.value.current)
     }
     if (session.mode === 'offline-demo') {
       void applyCachedState()
@@ -510,7 +550,9 @@ export default function App() {
         if (bootstrap.wind) {
           setWindSpeed(bootstrap.wind.speedKnots)
           setWindDirection(bootstrap.wind.directionDegrees)
+          setWindDetails(bootstrap.wind)
         }
+        if (bootstrap.current) setSeaCurrent(bootstrap.current)
       })
       .catch(() => void applyCachedState())
     return () => { active = false }
@@ -522,11 +564,22 @@ export default function App() {
         eventId,
         sequence: realtime.lastSequence,
         savedAt: new Date().toISOString(),
-        value: { eventName, races, boats, messages, tasks, leadingPassages, finishes, memberCount },
+        value: {
+          eventName,
+          races,
+          boats,
+          messages,
+          tasks,
+          leadingPassages,
+          finishes,
+          memberCount,
+          wind: { ...windDetails, speedKnots: windSpeed, directionDegrees: windDirection },
+          current: seaCurrent,
+        },
       })
     }, 250)
     return () => window.clearTimeout(timeout)
-  }, [boats, eventId, eventName, finishes, leadingPassages, memberCount, messages, races, realtime.lastSequence, tasks])
+  }, [boats, eventId, eventName, finishes, leadingPassages, memberCount, messages, races, realtime.lastSequence, seaCurrent, tasks, windDetails, windDirection, windSpeed])
 
   useEffect(() => {
     const move = (event: PointerEvent) => {
@@ -785,14 +838,55 @@ export default function App() {
   }, [sendRealtimeOperation])
 
   const shareWind = () => {
+    if (!canShareEnvironment) return
+    const selfBoat = boats.find((boat) => boat.isSelf)
+    const observedAt = new Date().toISOString()
+    const nextWind: WindObservation = {
+      ...windDetails,
+      directionDegrees: windDirection,
+      speedKnots: windSpeed,
+      gustKnots: Math.max(windSpeed, windDetails.gustKnots),
+      observedAt,
+      source: eventAccess?.displayName ?? windDetails.source,
+      confidence: 'medium',
+      position: selfBoat?.position ?? windDetails.position,
+    }
+    setWindDetails(nextWind)
     void sendRealtimeOperation('wind', {
       directionDegrees: windDirection,
       speedKnots: windSpeed,
-      gustKnots: Math.max(windSpeed, INITIAL_WIND.gustKnots),
+      gustKnots: nextWind.gustKnots,
       averagingSeconds: 300,
-      observedAt: new Date().toISOString(),
+      observedAt,
       confidence: 'medium',
+      position: selfBoat?.position,
+      committeeBoatId: selfBoat?.id,
     }, activeRace.id)
+  }
+
+  const shareCurrent = () => {
+    if (!canShareEnvironment) return
+    const selfBoat = boats.find((boat) => boat.isSelf)
+    const observedAt = new Date().toISOString()
+    setSeaCurrent((current) => ({
+      ...current,
+      observedAt,
+      source: eventAccess?.displayName ?? current.source,
+      position: selfBoat?.position ?? current.position,
+    }))
+    void sendRealtimeOperation('current', {
+      directionDegrees: seaCurrent.directionDegrees,
+      speedKnots: seaCurrent.speedKnots,
+      observedAt,
+      confidence: seaCurrent.confidence,
+      position: selfBoat?.position,
+      committeeBoatId: selfBoat?.id,
+    }, activeRace.id)
+  }
+
+  const shareEnvironment = () => {
+    shareWind()
+    shareCurrent()
   }
 
   const sendMessage = async (event: React.FormEvent) => {
@@ -1027,7 +1121,8 @@ export default function App() {
             <MapView
               marks={marks}
               boats={boats}
-              wind={{ ...INITIAL_WIND, directionDegrees: windDirection, speedKnots: windSpeed }}
+              wind={{ ...windDetails, directionDegrees: windDirection, speedKnots: windSpeed }}
+              current={seaCurrent}
               selectedMarkId={selectedMarkId}
               onSelectMark={setSelectedMarkId}
               onUseCurrentLocation={updateSelfLocation}
@@ -1054,7 +1149,7 @@ export default function App() {
             </label>
             <label>
               <span>風速 <strong>{windSpeed.toFixed(1)}kt</strong></span>
-              <input type="range" min="2" max="20" step="0.5" value={windSpeed} onChange={(event) => setWindSpeed(Number(event.target.value))} onPointerUp={shareWind} />
+              <input type="range" min="2" max="20" step="0.5" value={windSpeed} onChange={(event) => setWindSpeed(Number(event.target.value))} onPointerUp={shareWind} disabled={!canShareEnvironment} />
             </label>
             <div className="course-advisor__result">
               <strong>{recommendation.kilometres.toFixed(1)} km</strong>
@@ -1080,7 +1175,8 @@ export default function App() {
           boats={boats}
           tasks={activeTasks}
           messages={messages}
-          wind={{ ...INITIAL_WIND, directionDegrees: windDirection, speedKnots: windSpeed }}
+          wind={{ ...windDetails, directionDegrees: windDirection, speedKnots: windSpeed }}
+          current={seaCurrent}
           scale={boardScale}
           detail={boardDetail}
           postponed={postponed}
@@ -1188,6 +1284,16 @@ export default function App() {
             <label><span>競技ヨットクラス</span><select value={selectedClass} onChange={(event) => setSelectedClass(event.target.value as SailingClass)}>{CLASS_PROFILES.map((profile) => <option key={profile.className}>{profile.className}</option>)}</select></label>
             <label><span>コース</span><select value={courseTemplate} onChange={(event) => setCourseTemplate(event.target.value as CourseTemplate)}><option>O2</option><option>I2</option><option>L2</option><option>L3</option><option>W2</option><option>トライアングル</option></select></label>
             <label><span>風向（真方位）</span><input type="number" min="0" max="360" value={windDirection} onChange={(event) => setWindDirection(Number(event.target.value))} /></label>
+            <div className="settings-subsection">
+              <span className="eyebrow">潮流観測</span>
+              <small>流向は海水が流れていく方向を真方位で入力</small>
+            </div>
+            <label><span>流向（真方位・行き先）</span><input type="number" min="0" max="360" value={seaCurrent.directionDegrees} onChange={(event) => setSeaCurrent((current) => ({ ...current, directionDegrees: Number(event.target.value) }))} /></label>
+            <label><span>流速（kt）</span><input type="number" min="0" max="20" step="0.1" value={seaCurrent.speedKnots} onChange={(event) => setSeaCurrent((current) => ({ ...current, speedKnots: Number(event.target.value) }))} /></label>
+            <label><span>信頼度</span><select value={seaCurrent.confidence} onChange={(event) => setSeaCurrent((current) => ({ ...current, confidence: event.target.value as CurrentObservation['confidence'] }))}><option value="low">低・目測</option><option value="medium">中・複数回確認</option><option value="high">高・機器観測</option></select></label>
+            <button type="button" className="sheet-secondary" onClick={shareEnvironment} disabled={!canShareEnvironment}>
+              <Waves size={17} /> 風・潮流を現在地と共有
+            </button>
             <label><span>準備信号</span><select value={preparatoryFlag} onChange={(event) => setPreparatoryFlag(event.target.value)}><option>P旗</option><option>I旗</option><option>Z旗</option><option>Z旗 + I旗</option><option>U旗</option><option>黒旗</option></select></label>
             <label className="switch-row"><span><strong>下ゲート</strong><small>3S / 3Pを使用</small></span><input type="checkbox" checked={lowerGate} onChange={(event) => setLowerGate(event.target.checked)} /></label>
             <label className="switch-row"><span><strong>上ゲート</strong><small>1S / 1Pを使用</small></span><input type="checkbox" checked={upperGate} onChange={(event) => setUpperGate(event.target.checked)} /></label>

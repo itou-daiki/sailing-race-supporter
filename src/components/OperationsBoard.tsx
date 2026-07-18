@@ -17,12 +17,14 @@ import {
   ShipWheel,
   TimerReset,
   Users,
+  Waves,
   Wind,
 } from 'lucide-react'
 import type {
   BoardDetail,
   CommitteeBoat,
   CourseMark,
+  CurrentObservation,
   FinishRecord,
   OperationalMessage,
   OperationalTask,
@@ -40,6 +42,7 @@ interface OperationsBoardProps {
   tasks: readonly OperationalTask[]
   messages: readonly OperationalMessage[]
   wind: WindObservation
+  current: CurrentObservation
   scale: number
   detail: BoardDetail
   postponed: boolean
@@ -81,6 +84,7 @@ export function OperationsBoard({
   tasks,
   messages,
   wind,
+  current,
   scale,
   detail,
   postponed,
@@ -190,6 +194,11 @@ export function OperationsBoard({
             <span><Wind size={16} /> 5分平均風</span>
             <strong>{wind.directionDegrees}° <small>{wind.speedKnots.toFixed(1)}kt</small></strong>
             <small>ガスト {wind.gustKnots.toFixed(1)}kt・安定</small>
+          </article>
+          <article className="metric-card">
+            <span><Waves size={16} /> 潮流（流向）</span>
+            <strong>{current.directionDegrees}°T <small>{current.speedKnots.toFixed(1)}kt</small></strong>
+            <small>{current.source}・信頼度 {current.confidence === 'high' ? '高' : current.confidence === 'medium' ? '中' : '低'}</small>
           </article>
         </div>
 

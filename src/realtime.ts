@@ -13,6 +13,7 @@ export type OperationType =
   | 'presence'
   | 'position'
   | 'wind'
+  | 'current'
   | 'mark'
   | 'leading-passage'
   | 'finish'

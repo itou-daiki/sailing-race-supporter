@@ -14,13 +14,14 @@ import maplibregl, { type GeoJSONSource, type Map as MapLibreMap } from 'maplibr
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Feature, FeatureCollection, LineString, Point } from 'geojson'
 import { bearingDegrees, distanceMetres, estimateEtaSeconds, formatDistance, headingDifferenceDegrees, midpoint } from '../course'
-import type { CommitteeBoat, CourseMark, LeadingPassageVisit, LngLat, WindObservation } from '../domain'
+import type { CommitteeBoat, CourseMark, CurrentObservation, LeadingPassageVisit, LngLat, WindObservation } from '../domain'
 import { passageVisitKey } from '../passages'
 
 interface MapViewProps {
   marks: readonly CourseMark[]
   boats: readonly CommitteeBoat[]
   wind: WindObservation
+  current: CurrentObservation
   selectedMarkId?: string
   onSelectMark: (markId?: string) => void
   onUseCurrentLocation: (position: LngLat, motion: { speedKnots?: number; courseDegrees?: number; accuracyMetres?: number }) => void
@@ -86,6 +87,17 @@ function formatEta(seconds: number | undefined): string {
   if (seconds === undefined) return 'ETA —（0.5kt未満）'
   const minutes = Math.max(1, Math.ceil(seconds / 60))
   return minutes < 60 ? `ETA 約${minutes}分` : `ETA 約${Math.floor(minutes / 60)}時間${minutes % 60}分`
+}
+
+function observationAgeSeconds(observedAt: string, now: number): number {
+  return Math.max(0, Math.round((now - Date.parse(observedAt)) / 1_000))
+}
+
+function freshnessLabel(seconds: number): string {
+  if (!Number.isFinite(seconds)) return '時刻不明'
+  if (seconds < 60) return `${seconds}秒前`
+  if (seconds < 3_600) return `${Math.floor(seconds / 60)}分前`
+  return `${Math.floor(seconds / 3_600)}時間前`
 }
 
 function buildCourseFeatures(marks: readonly CourseMark[]): {
@@ -167,6 +179,7 @@ export function MapView({
   marks,
   boats,
   wind,
+  current,
   selectedMarkId,
   onSelectMark,
   onUseCurrentLocation,
@@ -187,6 +200,7 @@ export function MapView({
   const [mapReady, setMapReady] = useState(false)
   const [locationError, setLocationError] = useState<string>()
   const [tracking, setTracking] = useState(false)
+  const [freshnessNow, setFreshnessNow] = useState(() => Date.now())
   const features = useMemo(() => buildCourseFeatures(marks), [marks])
   const initialFeaturesRef = useRef(features)
   const selectedMark = marks.find((mark) => mark.id === selectedMarkId)
@@ -202,6 +216,13 @@ export function MapView({
     : undefined
   const selectedEta = selfBoat && selectedDistance !== undefined ? estimateEtaSeconds(selectedDistance, selfBoat.speedKnots) : undefined
   const selectedGate = selectedMark ? findGatePairs(marks).find((gate) => gate.starboard.id === selectedMark.id || gate.port.id === selectedMark.id) : undefined
+  const windAgeSeconds = observationAgeSeconds(wind.observedAt, freshnessNow)
+  const currentAgeSeconds = observationAgeSeconds(current.observedAt, freshnessNow)
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setFreshnessNow(Date.now()), 15_000)
+    return () => window.clearInterval(interval)
+  }, [])
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return
@@ -388,10 +409,17 @@ export function MapView({
           <span className="eyebrow"><Radio size={13} /> 海面A・LIVE</span>
           <strong>江の島沖 コース設営</strong>
         </div>
-        <div className="map-weather">
-          <Wind size={17} />
-          <span><strong>{wind.directionDegrees}°</strong> / {wind.speedKnots.toFixed(1)} kt</span>
-          <span className="freshness">42秒前</span>
+        <div className="map-environment">
+          <div className="map-weather">
+            <Wind size={17} />
+            <span>風 <strong>{wind.directionDegrees}°T</strong> / {wind.speedKnots.toFixed(1)} kt</span>
+            <span className={`freshness ${windAgeSeconds > 30 ? 'is-stale' : ''}`}>{windAgeSeconds > 30 ? '古い・' : ''}{freshnessLabel(windAgeSeconds)}</span>
+          </div>
+          <div className="map-weather map-current">
+            <span className="current-direction" style={{ transform: `rotate(${current.directionDegrees}deg)` }} aria-hidden="true">↑</span>
+            <span>潮流 <strong>{current.directionDegrees}°T</strong> → / {current.speedKnots.toFixed(1)} kt</span>
+            <span className={`freshness ${currentAgeSeconds > 30 ? 'is-stale' : ''}`}>{currentAgeSeconds > 30 ? '古い・' : ''}{freshnessLabel(currentAgeSeconds)}</span>
+          </div>
         </div>
       </div>
 
