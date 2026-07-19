@@ -48,6 +48,7 @@ export interface EventBootstrap {
   memberCount: number
   resources: EventResources
   wind?: WindObservation
+  winds: WindObservation[]
   current?: CurrentObservation
   revisionDrafts: PostFinalizationRevisionDraft[]
 }
@@ -212,9 +213,15 @@ export interface BootstrapResponse {
     lng: number | null; lat: number | null; accuracy_metres: number | null; speed_knots: number | null; course_degrees: number | null; sampled_at: string | null
   }>
   wind: {
+    race_id: string | null; committee_boat_id: string | null
     direction_degrees: number; speed_knots: number; gust_knots: number | null; lng: number | null; lat: number | null
     observed_at: string; source: string; confidence: WindObservation['confidence']
   } | null
+  winds: Array<{
+    race_id: string | null; committee_boat_id: string | null
+    direction_degrees: number; speed_knots: number; gust_knots: number | null; lng: number | null; lat: number | null
+    observed_at: string; source: string; confidence: WindObservation['confidence']
+  }>
   current: {
     direction_degrees: number; speed_knots: number; lng: number | null; lat: number | null
     observed_at: string; source: string; confidence: CurrentObservation['confidence']
@@ -626,7 +633,21 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
       position: response.wind.lng != null && response.wind.lat != null
         ? [response.wind.lng, response.wind.lat]
         : undefined,
+      raceId: response.wind.race_id ?? undefined,
+      committeeBoatId: response.wind.committee_boat_id ?? undefined,
     } : undefined,
+    winds: (response.winds ?? []).map((wind) => ({
+      directionDegrees: wind.direction_degrees,
+      speedKnots: wind.speed_knots,
+      gustKnots: wind.gust_knots ?? wind.speed_knots,
+      observedAt: wind.observed_at,
+      source: wind.source,
+      trend: 'steady',
+      confidence: wind.confidence,
+      position: wind.lng != null && wind.lat != null ? [wind.lng, wind.lat] : undefined,
+      raceId: wind.race_id ?? undefined,
+      committeeBoatId: wind.committee_boat_id ?? undefined,
+    })),
     current: response.current ? {
       directionDegrees: response.current.direction_degrees,
       speedKnots: response.current.speed_knots,

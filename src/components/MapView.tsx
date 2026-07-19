@@ -8,12 +8,14 @@ import {
   ChevronDown,
   LocateFixed,
   MapPin,
+  MousePointer2,
   Navigation,
   PencilLine,
   Radio,
   Timer,
   Waves,
   Wind,
+  X,
 } from 'lucide-react'
 import maplibregl, { type GeoJSONSource, type Map as MapLibreMap } from 'maplibre-gl'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -31,6 +33,7 @@ import {
 } from '../coordinateEntry'
 import { formatTrueBearing } from '../../shared/trueBearing'
 import { GSI_MAP_STYLE } from '../mapStyle'
+import { assignWindReadingsToMarks, formatWindSpeedDual } from '../markWind'
 
 interface MapViewProps {
   marks: readonly CourseMark[]
@@ -53,10 +56,16 @@ interface MapViewProps {
   leadingPassages: Readonly<Record<string, LeadingPassageVisit>>
   raceId: string
   raceAreaName?: string
+  raceAreaCenter?: LngLat
+  courseCode: string
+  courseName: string
+  courseRoute: readonly string[]
+  markWinds: readonly WindObservation[]
   locked: boolean
   canVerifyMarks: boolean
   manageableMarkIds: readonly string[]
   canEditFinalizedPosition: boolean
+  canPlaceMarksFreely: boolean
   passageLocked: boolean
   canAdoptLeadingPassage: boolean
 }
@@ -88,6 +97,29 @@ function freshnessLabel(seconds: number): string {
   return `${Math.floor(seconds / 3_600)}時間前`
 }
 
+function fitMapToRace(map: MapLibreMap, marks: readonly CourseMark[], raceAreaCenter?: LngLat): void {
+  if (!marks.length) {
+    if (raceAreaCenter) map.jumpTo({ center: [...raceAreaCenter], zoom: 13.5 })
+    return
+  }
+  const bounds = new maplibregl.LngLatBounds()
+  marks.forEach((mark) => bounds.extend([...(mark.actual ?? mark.target)]))
+  const northEast = bounds.getNorthEast()
+  const southWest = bounds.getSouthWest()
+  if (northEast.lng === southWest.lng && northEast.lat === southWest.lat) {
+    map.jumpTo({ center: [...(marks[0].actual ?? marks[0].target)], zoom: 15 })
+    return
+  }
+  const mobile = map.getContainer().clientWidth <= 520
+  map.fitBounds(bounds, {
+    padding: mobile
+      ? { top: 118, right: 126, bottom: 158, left: 94 }
+      : { top: 92, right: 108, bottom: 116, left: 96 },
+    maxZoom: 15,
+    duration: 0,
+  })
+}
+
 export function MapView({
   marks,
   boats,
@@ -105,16 +137,24 @@ export function MapView({
   leadingPassages,
   raceId,
   raceAreaName,
+  raceAreaCenter,
+  courseCode,
+  courseName,
+  courseRoute,
+  markWinds,
   locked,
   canVerifyMarks,
   manageableMarkIds,
   canEditFinalizedPosition,
+  canPlaceMarksFreely,
   passageLocked,
   canAdoptLeadingPassage,
 }: MapViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
-  const markerRefs = useRef<maplibregl.Marker[]>([])
+  const boatMarkerRefs = useRef<maplibregl.Marker[]>([])
+  const markLabelRefs = useRef<maplibregl.Marker[]>([])
+  const placementPreviewRef = useRef<maplibregl.Marker | null>(null)
   const watchRef = useRef<number | undefined>(undefined)
   const manualEditorRef = useRef<HTMLFormElement>(null)
   const firstTrackingFix = useRef(true)
@@ -133,9 +173,14 @@ export function MapView({
   const [manualDatumConfirmed, setManualDatumConfirmed] = useState(false)
   const [manualEntryError, setManualEntryError] = useState<string>()
   const [freshnessNow, setFreshnessNow] = useState(() => Date.now())
-  const features = useMemo(() => buildCourseFeatures(marks), [marks])
+  const [mapPlacementMarkId, setMapPlacementMarkId] = useState<string>()
+  const [pendingMapPosition, setPendingMapPosition] = useState<LngLat>()
+  const features = useMemo(() => buildCourseFeatures(marks, courseRoute), [courseRoute, marks])
+  const markWindReadings = useMemo(() => assignWindReadingsToMarks(marks, markWinds), [markWinds, marks])
   const initialFeaturesRef = useRef(features)
+  const initialCenterRef = useRef<LngLat>(raceAreaCenter ?? marks[0]?.actual ?? marks[0]?.target ?? [131.5221959, 33.2786648])
   const selectedMark = marks.find((mark) => mark.id === selectedMarkId)
+  const mapPlacementMode = Boolean(selectedMark && mapPlacementMarkId === selectedMark.id)
   const selectedIsStartEndpoint = selectedMark?.label === 'スタート・ピン' || selectedMark?.label === 'シグナルボート'
   const markDetailsExpanded = Boolean(selectedMarkId && expandedMarkId === selectedMarkId)
   const canManageSelectedMark = Boolean(selectedMark && manageableMarkIds.includes(selectedMark.id))
@@ -152,6 +197,13 @@ export function MapView({
     : undefined
   const selectedEta = selfBoat && selectedDistance !== undefined ? estimateEtaSeconds(selectedDistance, selfBoat.speedKnots) : undefined
   const selectedGate = selectedMark ? findGatePairs(marks).find((gate) => gate.starboard.id === selectedMark.id || gate.port.id === selectedMark.id) : undefined
+  const selectedWindReading = selectedMark ? markWindReadings.get(selectedMark.id) : undefined
+  const selectedWindBoat = selectedWindReading?.observation.committeeBoatId
+    ? boats.find((boat) => boat.id === selectedWindReading.observation.committeeBoatId)
+    : undefined
+  const selectedWindAge = selectedWindReading
+    ? observationAgeSeconds(selectedWindReading.observation.observedAt, freshnessNow)
+    : undefined
   const windAgeSeconds = observationAgeSeconds(wind.observedAt, freshnessNow)
   const currentAgeSeconds = observationAgeSeconds(current.observedAt, freshnessNow)
   const manualPreview = (() => {
@@ -185,7 +237,7 @@ export function MapView({
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: GSI_MAP_STYLE,
-      center: [139.465, 35.2857],
+      center: [...initialCenterRef.current],
       zoom: 13.4,
       minZoom: 6,
       maxZoom: 18,
@@ -297,8 +349,12 @@ export function MapView({
     })
 
     return () => {
-      markerRefs.current.forEach((marker) => marker.remove())
-      markerRefs.current = []
+      boatMarkerRefs.current.forEach((marker) => marker.remove())
+      markLabelRefs.current.forEach((marker) => marker.remove())
+      placementPreviewRef.current?.remove()
+      boatMarkerRefs.current = []
+      markLabelRefs.current = []
+      placementPreviewRef.current = null
       map.remove()
       mapRef.current = null
     }
@@ -316,9 +372,15 @@ export function MapView({
   useEffect(() => {
     const map = mapRef.current
     if (!map || !mapReady) return
+    fitMapToRace(map, marks, raceAreaCenter)
+  }, [mapReady, marks, raceAreaCenter, raceId])
 
-    markerRefs.current.forEach((marker) => marker.remove())
-    markerRefs.current = boats.map((boat) => {
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapReady) return
+
+    boatMarkerRefs.current.forEach((marker) => marker.remove())
+    boatMarkerRefs.current = boats.map((boat) => {
       const element = document.createElement('button')
       element.type = 'button'
       element.className = `boat-marker ${boat.isSelf ? 'boat-marker--self' : ''}`
@@ -338,15 +400,96 @@ export function MapView({
     })
 
     return () => {
-      markerRefs.current.forEach((marker) => marker.remove())
-      markerRefs.current = []
+      boatMarkerRefs.current.forEach((marker) => marker.remove())
+      boatMarkerRefs.current = []
     }
   }, [boats, mapReady])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapReady) return
+    markLabelRefs.current.forEach((marker) => marker.remove())
+    markLabelRefs.current = marks.map((mark) => {
+      const reading = markWindReadings.get(mark.id)
+      const age = reading ? observationAgeSeconds(reading.observation.observedAt, freshnessNow) : undefined
+      const element = document.createElement('button')
+      element.type = 'button'
+      element.className = `mark-map-label ${mark.actual ? 'is-deployed' : 'is-planned'} ${selectedMarkId === mark.id ? 'is-selected' : ''} ${(age ?? 0) > 300 ? 'is-stale' : ''}`
+      const boatName = reading?.observation.committeeBoatId
+        ? boats.find((boat) => boat.id === reading.observation.committeeBoatId)?.name
+        : undefined
+      element.setAttribute('aria-label', reading
+        ? `${mark.label}、風向${formatTrueBearing(reading.observation.directionDegrees)}、風速${formatWindSpeedDual(reading.observation.speedKnots)}、${boatName ?? reading.observation.source}観測`
+        : mark.label)
+      element.title = reading
+        ? `${boatName ?? reading.observation.source}・${freshnessLabel(age ?? 0)}${reading.association === 'nearest-observation' ? '・最寄り観測' : ''}`
+        : mark.label
+      const identifier = document.createElement('strong')
+      identifier.textContent = mark.shortLabel
+      element.appendChild(identifier)
+      if (reading) {
+        const windLabel = document.createElement('span')
+        const bearingLabel = document.createElement('b')
+        bearingLabel.textContent = formatTrueBearing(reading.observation.directionDegrees)
+        const speedLabel = document.createElement('small')
+        speedLabel.textContent = formatWindSpeedDual(reading.observation.speedKnots)
+        windLabel.appendChild(bearingLabel)
+        windLabel.appendChild(speedLabel)
+        element.appendChild(windLabel)
+      }
+      element.addEventListener('click', (event) => {
+        event.stopPropagation()
+        setMapPlacementMarkId(undefined)
+        setPendingMapPosition(undefined)
+        onSelectMark(mark.id)
+      })
+      const gateOffset: [number, number] = mark.gateSide === 'S' ? [-24, -12] : mark.gateSide === 'P' ? [24, 12] : [0, 0]
+      return new maplibregl.Marker({ element, anchor: 'center', offset: gateOffset })
+        .setLngLat([...(mark.actual ?? mark.target)])
+        .addTo(map)
+    })
+    return () => {
+      markLabelRefs.current.forEach((marker) => marker.remove())
+      markLabelRefs.current = []
+    }
+  }, [boats, freshnessNow, mapReady, markWindReadings, marks, onSelectMark, selectedMarkId])
 
   useEffect(() => {
     if (!selectedMark || !mapRef.current) return
     mapRef.current.flyTo({ center: [...(selectedMark.actual ?? selectedMark.target)], zoom: 15.3 })
   }, [selectedMark])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapReady || !mapPlacementMode || !selectedMark) return
+    const canvas = map.getCanvas()
+    canvas.classList.add('is-placing-mark')
+    const handleMapClick = (event: maplibregl.MapMouseEvent) => {
+      setPendingMapPosition([event.lngLat.lng, event.lngLat.lat])
+    }
+    map.on('click', handleMapClick)
+    return () => {
+      canvas.classList.remove('is-placing-mark')
+      map.off('click', handleMapClick)
+    }
+  }, [mapPlacementMode, mapReady, selectedMark])
+
+  useEffect(() => {
+    const map = mapRef.current
+    placementPreviewRef.current?.remove()
+    placementPreviewRef.current = null
+    if (!map || !mapReady || !mapPlacementMode || !pendingMapPosition) return
+    const element = document.createElement('span')
+    element.className = 'map-placement-preview'
+    element.setAttribute('aria-hidden', 'true')
+    placementPreviewRef.current = new maplibregl.Marker({ element, anchor: 'center' })
+      .setLngLat([...pendingMapPosition])
+      .addTo(map)
+    return () => {
+      placementPreviewRef.current?.remove()
+      placementPreviewRef.current = null
+    }
+  }, [mapPlacementMode, mapReady, pendingMapPosition])
 
   useEffect(() => () => {
     if (watchRef.current != null) navigator.geolocation.clearWatch(watchRef.current)
@@ -365,6 +508,17 @@ export function MapView({
     setManualEntryError(undefined)
     setExpandedMarkId(selectedMark.id)
     setManualEditorMarkId(selectedMark.id)
+  }
+
+  const confirmMapPlacement = () => {
+    if (!selectedMark || !pendingMapPosition) return
+    onRecordManualPosition(selectedMark.id, pendingMapPosition, {
+      entryMode: 'decimal-full',
+      note: '大会ホストが地図上で指定',
+    })
+    setMapPlacementMarkId(undefined)
+    setPendingMapPosition(undefined)
+    setExpandedMarkId(undefined)
   }
 
   const changeManualEntryMode = (mode: CoordinateEntryMode) => {
@@ -473,13 +627,13 @@ export function MapView({
       <div className="map-topbar glass-panel">
         <div className="map-topbar__primary">
           <span className="eyebrow"><Radio size={13} /> {raceAreaName ?? 'レース海面'}・LIVE</span>
-          <strong>{raceAreaName ?? 'レース海面'} コース設営</strong>
-          <small className="map-primary-guidance">① 下の地点を選ぶ → ②「マーク／ライン操作」</small>
+          <strong>{courseCode}・{courseName}</strong>
+          <small className="map-primary-guidance">{raceAreaName ?? 'レース海面'}｜① 地点を選ぶ → ②「マーク／ライン操作」</small>
         </div>
         <div className="map-environment">
           <div className="map-weather">
             <Wind size={17} />
-            <span>風 <strong>{formatTrueBearing(wind.directionDegrees)}</strong> / {wind.speedKnots.toFixed(1)} kt</span>
+            <span>全体風 <strong>{formatTrueBearing(wind.directionDegrees)}</strong> / {formatWindSpeedDual(wind.speedKnots)}</span>
             <span className={`freshness ${windAgeSeconds > 30 ? 'is-stale' : ''}`}>{windAgeSeconds > 30 ? '古い・' : ''}{freshnessLabel(windAgeSeconds)}</span>
           </div>
           <div className="map-weather map-current">
@@ -521,6 +675,8 @@ export function MapView({
               setManualEditorMarkId(undefined)
               setExpandedMarkId(undefined)
               setManualEntryError(undefined)
+              setMapPlacementMarkId(undefined)
+              setPendingMapPosition(undefined)
               onSelectMark(selectedMarkId === mark.id ? undefined : mark.id)
             }}
           >
@@ -530,7 +686,7 @@ export function MapView({
         ))}
       </div>
 
-      {selectedMark && (
+      {selectedMark && !mapPlacementMode && (
         <article className={`selected-mark glass-panel ${markDetailsExpanded ? 'selected-mark--expanded' : ''} ${manualEditorMarkId === selectedMark.id ? 'selected-mark--editing' : ''}`}>
           <div className="selected-mark__icon"><MapPin size={19} /></div>
           <div className="selected-mark__body">
@@ -548,6 +704,11 @@ export function MapView({
             {verificationDifference !== undefined && <small className="mark-verification-status"><BadgeCheck size={12} /> 別位置観測との差 {verificationDifference.toFixed(1)}m</small>}
             {selectedMark.recoveryPosition && <small className="mark-recovery-status"><Anchor size={12} /> 回収地点 {selectedMark.recoveryPosition[1].toFixed(5)}, {selectedMark.recoveryPosition[0].toFixed(5)}</small>}
             {selectedGate && <small className="gate-metrics">{selectedGate.actual ? '実測' : '計画'}ゲート 幅 {Math.round(distanceMetres(selectedGate.positions[0], selectedGate.positions[1]))}m・方位 {formatTrueBearing(bearingDegrees(selectedGate.positions[0], selectedGate.positions[1]))}・中央 {selectedGate.center[1].toFixed(5)}, {selectedGate.center[0].toFixed(5)}</small>}
+            {selectedWindReading && <small className={`mark-wind-status ${(selectedWindAge ?? 0) > 300 ? 'is-stale' : ''}`}>
+              <Wind size={12} /> マーク別実測 {formatTrueBearing(selectedWindReading.observation.directionDegrees)}・{formatWindSpeedDual(selectedWindReading.observation.speedKnots)}
+              ・{selectedWindBoat?.name ?? selectedWindReading.observation.source}・{freshnessLabel(selectedWindAge ?? 0)}
+              {selectedWindReading.association === 'nearest-observation' && '（最寄り観測）'}
+            </small>}
             {selectedAdoptedPassage && <small className="passage-recorded">採用 先頭通過 {new Date(selectedAdoptedPassage.passedAt).toLocaleTimeString('ja-JP')}</small>}
             {selectedPassageObservations.length > 0 && (
               <div className="passage-observations" aria-label="先頭通過の観測候補">
@@ -592,6 +753,19 @@ export function MapView({
             <button type="button" onClick={openManualEditor} disabled={!canManageSelectedMark || locked && !canEditFinalizedPosition}>
               <PencilLine size={14} /> GPS数値を手入力
             </button>
+            {canPlaceMarksFreely && <button
+              type="button"
+              className="mark-action--map-place"
+              onClick={() => {
+                setManualEditorMarkId(undefined)
+                setExpandedMarkId(undefined)
+                setMapPlacementMarkId(selectedMark.id)
+                setPendingMapPosition(undefined)
+              }}
+              disabled={!canManageSelectedMark || locked && !canEditFinalizedPosition}
+            >
+              <MousePointer2 size={14} /> 地図をタップして配置
+            </button>}
             {selectedMark.status === 'deployed' && (
               <button type="button" className="mark-action--verify" onClick={() => onRecordConfirmation(selectedMark.id)} disabled={locked || !selfBoat || !canVerifyMarks}>
                 <BadgeCheck size={14} /> 現在地から位置確認
@@ -664,6 +838,25 @@ export function MapView({
             </form>
           )}
         </article>
+      )}
+
+      {mapPlacementMode && selectedMark && (
+        <aside className="map-placement-panel glass-panel" role="dialog" aria-label={`${selectedMark.label}の地図配置`}>
+          <div>
+            <MousePointer2 size={18} />
+            <span>
+              <strong>{pendingMapPosition ? `${selectedMark.shortLabel}：この地点でよいですか？` : `${selectedMark.shortLabel}を置く地点をタップ`}</strong>
+              <small>{pendingMapPosition
+                ? `${pendingMapPosition[1].toFixed(6)}, ${pendingMapPosition[0].toFixed(6)}・地図指定は概略位置です`
+                : '地図を拡大してから地点を選べます。保存前に座標を確認してください。'}</small>
+            </span>
+          </div>
+          <div className="map-placement-panel__actions">
+            {pendingMapPosition && <button type="button" className="map-placement-confirm" onClick={confirmMapPlacement}>この地点に配置</button>}
+            <button type="button" onClick={() => setPendingMapPosition(undefined)} disabled={!pendingMapPosition}>選び直す</button>
+            <button type="button" aria-label="地図配置を取り消す" onClick={() => { setMapPlacementMarkId(undefined); setPendingMapPosition(undefined) }}><X size={17} /></button>
+          </div>
+        </aside>
       )}
 
       {locationError && <div className="map-error" role="alert">{locationError}</div>}

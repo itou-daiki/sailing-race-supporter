@@ -124,7 +124,7 @@ describe('Cloudflare Workers runtime integration', () => {
       "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
     ).first<{ count: number }>()
 
-    expect(migrations.results).toHaveLength(26)
+    expect(migrations.results).toHaveLength(27)
     expect(tableCount?.count).toBeGreaterThanOrEqual(50)
   })
 
@@ -516,7 +516,10 @@ describe('Cloudflare Workers runtime integration', () => {
         confidence: 'high',
       },
     })
-    expect(windEvent).toMatchObject({ type: 'wind', payload: { directionDegrees: 342, speedKnots: 9.6, confidence: 'high' } })
+    expect(windEvent).toMatchObject({
+      type: 'wind',
+      payload: { directionDegrees: 342, speedKnots: 9.6, confidence: 'high', committeeBoatId: boatId },
+    })
 
     const markEvent = await share({
       id: 'runtime-realtime-mark-drop',
@@ -608,6 +611,7 @@ describe('Cloudflare Workers runtime integration', () => {
     )
     const privateBootstrap = await privateBootstrapResponse.json<{
       boats: Array<{ id: string; lng: number | null; lat: number | null; speed_knots: number | null }>
+      winds: Array<{ committee_boat_id: string; lng: number | null; lat: number | null; speed_knots: number }>
     }>()
     expect(privateBootstrapResponse.status).toBe(200)
     expect(privateBootstrap.boats).toContainEqual(expect.objectContaining({
@@ -615,6 +619,12 @@ describe('Cloudflare Workers runtime integration', () => {
       lng: null,
       lat: null,
       speed_knots: null,
+    }))
+    expect(privateBootstrap.winds).toContainEqual(expect.objectContaining({
+      committee_boat_id: boatId,
+      lng: null,
+      lat: null,
+      speed_knots: 9.6,
     }))
 
     const persistence = await Promise.all([

@@ -207,6 +207,7 @@ async function persistWind(env: AppEnv, access: EventAccess, operation: Realtime
     gustKnots,
     observedAt,
     position: coordinates,
+    committeeBoatId,
     source: access.displayName,
     confidence: payload.confidence === 'high' || payload.confidence === 'medium' ? payload.confidence : 'low',
   }

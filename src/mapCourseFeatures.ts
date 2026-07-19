@@ -31,7 +31,7 @@ export function findGatePairs(marks: readonly CourseMark[]): GatePair[] {
   })
 }
 
-export function buildCourseFeatures(marks: readonly CourseMark[]): {
+export function buildCourseFeatures(marks: readonly CourseMark[], route?: readonly string[]): {
   points: FeatureCollection<Point>
   targetLinks: FeatureCollection<LineString>
   course: FeatureCollection<LineString>
@@ -90,13 +90,29 @@ export function buildCourseFeatures(marks: readonly CourseMark[]): {
     gateByMark.set(gate.port.id, gate)
   })
   const includedGates = new Set<string>()
-  const ordered = marks.flatMap((mark) => {
+  const physicalOrder = marks.flatMap((mark) => {
     const gate = gateByMark.get(mark.id)
     if (!gate) return [[...(mark.actual ?? mark.target)]]
     if (includedGates.has(gate.key)) return []
     includedGates.add(gate.key)
     return [[...gate.center]]
   })
+  const startMarks = marks.filter((mark) => mark.shortLabel === 'PIN' || mark.shortLabel === 'RC')
+  const startCenter = startMarks.length === 2
+    ? midpoint(startMarks[0].actual ?? startMarks[0].target, startMarks[1].actual ?? startMarks[1].target)
+    : undefined
+  const routeOrder = route?.flatMap((point) => {
+    if (point === 'Start' || point === 'Finish') return startCenter ? [[...startCenter]] : []
+    const exact = marks.find((mark) => mark.shortLabel === point)
+    if (exact) return [[...(exact.actual ?? exact.target)]]
+    const gateNumber = point.match(/^(\d+)[SP]?\/(?:\1)?[SP]$/u)?.[1] ?? point.match(/^(\d+)$/u)?.[1]
+    if (!gateNumber) return []
+    const gate = gates.find((candidate) => (
+      candidate.starboard.shortLabel.startsWith(gateNumber) && candidate.port.shortLabel.startsWith(gateNumber)
+    ))
+    return gate ? [[...gate.center]] : []
+  })
+  const ordered = routeOrder && routeOrder.length > 1 ? routeOrder : physicalOrder
   const course: FeatureCollection<LineString> = {
     type: 'FeatureCollection',
     features: ordered.length > 1 ? [{

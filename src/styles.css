@@ -842,6 +842,7 @@ select:focus-visible {
 }
 
 .map-topbar__primary {
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }
@@ -1146,6 +1147,19 @@ select:focus-visible {
   font-weight: 900;
 }
 
+.selected-mark .mark-wind-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 3px;
+  color: #075f92;
+  font-weight: 900;
+}
+
+.selected-mark .mark-wind-status.is-stale {
+  color: #8a5700;
+}
+
 .selected-mark .mark-verification-status {
   color: var(--success);
 }
@@ -1265,6 +1279,12 @@ select:focus-visible {
   color: #5f4108;
   background: #ffe7a1;
   border: 1px solid #d6aa3a;
+}
+
+.selected-mark__actions .mark-action--map-place {
+  color: #075f92;
+  background: #e6f5ff;
+  border-color: #9bcff2;
 }
 
 .selected-mark__actions button:disabled {
@@ -1580,6 +1600,164 @@ select:focus-visible {
   transform: translateX(-50%);
 }
 
+.mark-map-label {
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 4px 6px;
+  color: #0b3857;
+  background: rgba(255, 255, 255, 0.96);
+  border: 2px solid #087ee8;
+  border-radius: 10px;
+  box-shadow: 0 3px 12px rgba(9, 39, 62, 0.24);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.mark-map-label > strong {
+  min-width: 25px;
+  height: 25px;
+  display: grid;
+  place-items: center;
+  padding: 0 3px;
+  color: #fff;
+  background: #087ee8;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.mark-map-label > span {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.15;
+}
+
+.mark-map-label > span b {
+  color: #0b5179;
+  font-size: 9px;
+}
+
+.mark-map-label > span small {
+  color: #315d77;
+  font-size: 7px;
+  font-weight: 850;
+}
+
+.mark-map-label.is-planned {
+  background: rgba(255, 255, 255, 0.86);
+  border-style: dashed;
+}
+
+.mark-map-label.is-deployed {
+  border-color: #ff7a1a;
+}
+
+.mark-map-label.is-deployed > strong {
+  background: #e65e00;
+}
+
+.mark-map-label.is-selected {
+  outline: 4px solid rgba(30, 144, 255, 0.28);
+  transform: scale(1.06);
+}
+
+.mark-map-label.is-stale > span b,
+.mark-map-label.is-stale > span small {
+  color: #8a5700;
+}
+
+.map-canvas.is-placing-mark,
+.map-canvas.is-placing-mark .maplibregl-canvas {
+  cursor: crosshair;
+}
+
+.map-placement-preview {
+  width: 28px;
+  height: 28px;
+  display: block;
+  background: rgba(229, 82, 45, 0.22);
+  border: 4px solid #e5522d;
+  border-radius: 50%;
+  box-shadow: 0 0 0 9px rgba(229, 82, 45, 0.16);
+}
+
+.map-placement-panel {
+  position: absolute;
+  left: 50%;
+  bottom: 164px;
+  z-index: 8;
+  width: min(620px, calc(100% - 28px));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 2px solid #65b6f2;
+  border-radius: 13px;
+  transform: translateX(-50%);
+}
+
+.map-placement-panel > div:first-child {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.map-placement-panel > div:first-child > svg {
+  flex: 0 0 auto;
+  color: var(--dodger-strong);
+}
+
+.map-placement-panel > div:first-child span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.map-placement-panel strong {
+  font-size: 12px;
+}
+
+.map-placement-panel small {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.map-placement-panel__actions {
+  display: flex;
+  gap: 6px;
+}
+
+.map-placement-panel__actions button {
+  min-height: 42px;
+  padding: 0 10px;
+  color: #24475e;
+  background: #eef6fa;
+  border: 1px solid #c5dce9;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 900;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.map-placement-panel__actions button:disabled {
+  opacity: 0.4;
+}
+
+.map-placement-panel__actions .map-placement-confirm {
+  color: #fff;
+  background: var(--dodger-strong);
+  border-color: var(--dodger-strong);
+}
+
 .course-advisor {
   position: absolute;
   left: 14px;
@@ -1835,6 +2013,268 @@ select:focus-visible {
   color: #50437a;
   background: #f0edfb;
   border-color: #cbc3ee;
+}
+
+.next-action-card,
+.regatta-overview-card,
+.beginner-guide {
+  margin-bottom: calc(8px * var(--board-scale));
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 4px 13px rgba(9, 39, 62, 0.055);
+}
+
+.next-action-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: calc(9px * var(--board-scale));
+  padding: calc(9px * var(--board-scale));
+  border-color: #82c8f5;
+  background: linear-gradient(135deg, #f8fcff 0%, #e8f6ff 100%);
+}
+
+.next-action-card__icon {
+  width: calc(36px * var(--board-scale));
+  height: calc(36px * var(--board-scale));
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: var(--dodger-strong);
+  border-radius: 10px;
+}
+
+.next-action-card > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.next-action-card > div > strong {
+  overflow: hidden;
+  font-size: 0.9em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.next-action-card > div > small {
+  color: var(--muted);
+  font-size: 0.64em;
+  line-height: 1.4;
+}
+
+.next-action-card > button {
+  min-height: 40px;
+  padding: 0 12px;
+  color: #fff;
+  background: var(--dodger-strong);
+  border: 0;
+  border-radius: 8px;
+  font-size: 0.68em;
+  font-weight: 900;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.regatta-overview-card {
+  padding: calc(8px * var(--board-scale));
+}
+
+.regatta-overview-card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.regatta-overview-card > header > div {
+  display: flex;
+  flex-direction: column;
+}
+
+.regatta-overview-card > header strong {
+  font-size: 0.86em;
+}
+
+.regatta-overview-card > header > small {
+  color: var(--muted);
+  font-size: 0.58em;
+}
+
+.regatta-race-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(calc(130px * var(--board-scale)), 1fr));
+  gap: 6px;
+}
+
+.regatta-race-grid > button {
+  position: relative;
+  min-width: 0;
+  min-height: 67px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-content: start;
+  gap: 2px 7px;
+  padding: 7px 8px;
+  text-align: left;
+  color: #24475e;
+  background: #f6fafc;
+  border: 1px solid #d6e5ed;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.regatta-race-grid > button.is-active {
+  background: #eaf7ff;
+  border-color: var(--dodger-strong);
+  box-shadow: inset 3px 0 0 var(--dodger-strong);
+}
+
+.regatta-race-grid > button > span:first-child {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.regatta-race-grid > button > span:first-child strong {
+  font-size: 0.8em;
+}
+
+.regatta-race-grid > button > span:first-child small,
+.regatta-race-progress {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.54em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.regatta-race-grid > button > b {
+  padding: 3px 5px;
+  color: #456a80;
+  background: #e6eff4;
+  border-radius: 999px;
+  font-size: 0.52em;
+  white-space: nowrap;
+}
+
+.regatta-race-grid > button.status-racing > b,
+.regatta-race-grid > button.status-start-sequence > b {
+  color: #075d91;
+  background: #dcefff;
+}
+
+.regatta-race-grid > button.status-finalized > b {
+  color: #087659;
+  background: #def4eb;
+}
+
+.regatta-race-progress {
+  grid-column: 1 / -1;
+}
+
+.regatta-race-grid > button > em {
+  grid-column: 1 / -1;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #a23d27;
+  font-size: 0.52em;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.beginner-guide > summary {
+  min-height: 43px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  color: #21536f;
+  cursor: pointer;
+  list-style: none;
+}
+
+.beginner-guide > summary::-webkit-details-marker {
+  display: none;
+}
+
+.beginner-guide > summary > svg {
+  color: var(--dodger-strong);
+}
+
+.beginner-guide > summary > span {
+  display: flex;
+  flex-direction: column;
+}
+
+.beginner-guide > summary strong {
+  font-size: 0.76em;
+}
+
+.beginner-guide > summary small {
+  color: var(--muted);
+  font-size: 0.57em;
+}
+
+.beginner-guide__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(220px, 0.9fr);
+  gap: 12px;
+  padding: 0 10px 10px;
+  border-top: 1px solid #e1ebf1;
+}
+
+.beginner-guide__body ol {
+  display: grid;
+  gap: 4px;
+  margin: 9px 0 0;
+  padding-left: 23px;
+}
+
+.beginner-guide__body li {
+  padding-left: 3px;
+  color: var(--dodger-strong);
+  font-size: 0.68em;
+  font-weight: 900;
+}
+
+.beginner-guide__body li span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.88em;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.beginner-guide__body dl {
+  display: grid;
+  gap: 4px;
+  margin: 9px 0 0;
+}
+
+.beginner-guide__body dl > div {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 5px;
+  padding: 5px 6px;
+  background: #f3f8fb;
+  border-radius: 6px;
+}
+
+.beginner-guide__body dt {
+  color: #075d91;
+  font-size: 0.63em;
+  font-weight: 900;
+}
+
+.beginner-guide__body dd {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.58em;
+  line-height: 1.4;
 }
 
 .race-phase-card {
@@ -2787,7 +3227,7 @@ select:focus-visible {
 }
 
 .finalize-button {
-  height: 38px;
+  min-height: 44px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -2803,7 +3243,7 @@ select:focus-visible {
 }
 
 .revision-button {
-  height: 39px;
+  min-height: 44px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -6956,6 +7396,9 @@ select:focus-visible {
   .map-weather {
     gap: 4px;
     font-size: 11px;
+    line-height: 1.2;
+    text-align: right;
+    white-space: normal;
   }
 
   .map-current {
@@ -6989,6 +7432,59 @@ select:focus-visible {
 
   .mark-chip small {
     font-size: 10px;
+  }
+
+  .mark-map-label {
+    min-width: 44px;
+    min-height: 44px;
+    gap: 3px;
+    padding: 3px 4px;
+  }
+
+  .mark-map-label > strong {
+    min-width: 23px;
+    height: 23px;
+    font-size: 10px;
+  }
+
+  .mark-map-label > span small {
+    font-size: 6.5px;
+  }
+
+  .boat-marker {
+    width: 44px;
+    height: 44px;
+  }
+
+  .boat-marker__label {
+    top: 44px;
+  }
+
+  .map-placement-panel {
+    bottom: 66px;
+    width: calc(100% - 18px);
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+    padding: 9px;
+  }
+
+  .map-placement-panel strong {
+    font-size: 13px;
+  }
+
+  .map-placement-panel small {
+    font-size: 10px;
+  }
+
+  .map-placement-panel__actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .map-placement-panel__actions button {
+    min-height: 44px;
+    padding: 0 9px;
   }
 
   .selected-mark {
@@ -7142,7 +7638,7 @@ select:focus-visible {
 
   .segmented-control button,
   .zoom-control button {
-    height: 42px;
+    height: 44px;
     padding: 0 7px;
     font-size: 11px;
   }
@@ -7183,6 +7679,73 @@ select:focus-visible {
   }
 
   .metric-card > small {
+    font-size: 10px;
+  }
+
+  .next-action-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .next-action-card__icon {
+    width: 38px;
+    height: 38px;
+  }
+
+  .next-action-card > div > strong {
+    font-size: 13px;
+    white-space: normal;
+  }
+
+  .next-action-card > div > small {
+    font-size: 10px;
+  }
+
+  .next-action-card > button {
+    grid-column: 1 / -1;
+    min-height: 44px;
+    font-size: 11px;
+  }
+
+  .regatta-overview-card > header strong {
+    font-size: 13px;
+  }
+
+  .regatta-race-grid {
+    grid-auto-columns: 150px;
+    grid-auto-flow: column;
+    grid-template-columns: none;
+    overflow-x: auto;
+    padding-bottom: 3px;
+    scroll-snap-type: x mandatory;
+  }
+
+  .regatta-race-grid > button {
+    min-height: 80px;
+    scroll-snap-align: start;
+  }
+
+  .beginner-guide > summary {
+    min-height: 48px;
+  }
+
+  .beginner-guide > summary strong {
+    font-size: 12px;
+  }
+
+  .beginner-guide > summary small {
+    font-size: 9px;
+  }
+
+  .beginner-guide__body {
+    grid-template-columns: 1fr;
+  }
+
+  .beginner-guide__body li {
+    font-size: 11px;
+  }
+
+  .beginner-guide__body dt,
+  .beginner-guide__body dd {
     font-size: 10px;
   }
 

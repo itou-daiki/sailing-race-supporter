@@ -48,4 +48,26 @@ describe('course map geometry', () => {
       [139.4602, 35.2901],
     ])
   })
+
+  it('draws an O2 trapezoid in sailing order without connecting the physical-mark list order', () => {
+    const marks: CourseMark[] = [
+      { id: 'm1', label: '1マーク', shortLabel: '1', target: [131.522, 33.29], status: 'planned' },
+      { id: 'm2', label: '2マーク', shortLabel: '2', target: [131.532, 33.285], status: 'planned' },
+      { id: 'm3s', label: '下ゲート 3S', shortLabel: '3S', target: [131.521, 33.28], status: 'planned', isGate: true, gateSide: 'S' },
+      { id: 'm3p', label: '下ゲート 3P', shortLabel: '3P', target: [131.523, 33.28], status: 'planned', isGate: true, gateSide: 'P' },
+      { id: 'pin', label: 'スタート・ピン', shortLabel: 'PIN', target: [131.520, 33.278], status: 'planned' },
+      { id: 'rc', label: 'シグナルボート', shortLabel: 'RC', target: [131.524, 33.278], status: 'planned' },
+    ]
+
+    const features = buildCourseFeatures(marks, ['Start', '1', '2', '3S/3P', '2', '3P', 'Finish'])
+    expect(features.course.features[0].geometry.coordinates).toEqual([
+      [131.522, 33.278],
+      [131.522, 33.29],
+      [131.532, 33.285],
+      [131.522, 33.28],
+      [131.532, 33.285],
+      [131.523, 33.28],
+      [131.522, 33.278],
+    ])
+  })
 })

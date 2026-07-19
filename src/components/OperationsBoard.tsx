@@ -4,6 +4,8 @@ import {
   Check,
   CircleDot,
   Clock3,
+  Compass,
+  HelpCircle,
   LockKeyhole,
   MapPin,
   Maximize2,
@@ -20,6 +22,7 @@ import {
   Waves,
   Wind,
 } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import type {
   BoardDetail,
   CommitteeBoat,
@@ -38,15 +41,19 @@ import type { FreeTierBudgetEstimate, RuntimeBudgetStatus } from '../../shared/f
 import type { LatestPassageSummary } from '../passages'
 import { buildRaceTimeline, deriveRacePhases, type RacePhaseState } from '../racePhases'
 import { formatTrueBearing } from '../../shared/trueBearing'
+import { assignWindReadingsToMarks, formatWindSpeedDual } from '../markWind'
 import { summarizeReadiness } from '../readiness'
 
 interface OperationsBoardProps {
   race: RaceDefinition
+  races: readonly RaceDefinition[]
   marks: readonly CourseMark[]
   boats: readonly CommitteeBoat[]
   tasks: readonly OperationalTask[]
+  allTasks: readonly OperationalTask[]
   messages: readonly OperationalMessage[]
   wind: WindObservation
+  markWinds: readonly WindObservation[]
   current: CurrentObservation
   freeTierBudget: FreeTierBudgetEstimate
   runtimeBudget?: RuntimeBudgetStatus
@@ -65,6 +72,8 @@ interface OperationsBoardProps {
   onScaleChange: (scale: number) => void
   onDetailChange: (detail: BoardDetail) => void
   onSelectMark: (markId: string) => void
+  onSelectRace: (raceId: string) => void
+  onOpenCourseSettings: () => void
   onAcknowledgeMessage: (messageId: string) => void
   onOpenMessages: () => void
   onOpenTaskMessage: (task: OperationalTask) => void
@@ -95,6 +104,15 @@ const phaseStateLabels: Record<RacePhaseState, string> = {
   stopped: '停止',
 }
 
+const raceStatusLabels: Record<RaceDefinition['status'], string> = {
+  planning: '計画中',
+  setup: 'コース設営',
+  'start-sequence': 'スタート手順',
+  racing: 'レース中',
+  provisional: '暫定記録',
+  finalized: '確定済み',
+}
+
 function phaseStateIcon(state: RacePhaseState) {
   if (state === 'completed') return <Check size={13} />
   if (state === 'warning') return <AlertTriangle size={13} />
@@ -113,11 +131,14 @@ function operationTime(value: string | undefined): string {
 
 export function OperationsBoard({
   race,
+  races,
   marks,
   boats,
   tasks,
+  allTasks,
   messages,
   wind,
+  markWinds,
   current,
   freeTierBudget,
   runtimeBudget,
@@ -136,6 +157,8 @@ export function OperationsBoard({
   onScaleChange,
   onDetailChange,
   onSelectMark,
+  onSelectRace,
+  onOpenCourseSettings,
   onAcknowledgeMessage,
   onOpenMessages,
   onOpenTaskMessage,
@@ -143,8 +166,14 @@ export function OperationsBoard({
   onRecordFinish,
   onAdoptFinish,
 }: OperationsBoardProps) {
+  const [freshnessNow, setFreshnessNow] = useState(() => Date.now())
+  useEffect(() => {
+    const interval = window.setInterval(() => setFreshnessNow(Date.now()), 15_000)
+    return () => window.clearInterval(interval)
+  }, [])
   const confirmedMarks = marks.filter((mark) => mark.status === 'confirmed').length
-  const liveBoats = boats.filter((boat) => boat.status !== 'offline').length
+  const liveBoats = boats.filter((boat) => boat.status !== 'offline' && boat.freshnessSeconds <= 60).length
+  const staleBoats = boats.filter((boat) => boat.status === 'offline' || boat.freshnessSeconds > 60)
   const readiness = summarizeReadiness(tasks)
   const orderedTasks = [...readiness.required, ...readiness.reference]
   const controlSignal = latestSignal && signalDefinition(latestSignal.action).group !== 'sequence' ? latestSignal : undefined
@@ -156,6 +185,31 @@ export function OperationsBoard({
   const phases = deriveRacePhases(phaseContext)
   const currentPhase = phases.find((phase) => phase.isCurrent) ?? phases[0]!
   const timelineEvents = buildRaceTimeline(phaseContext)
+  const markWindReadings = assignWindReadingsToMarks(marks, markWinds)
+  const freshMarkWindCount = [...markWindReadings.values()].filter((reading) => (
+    freshnessNow - Date.parse(reading.observation.observedAt) <= 5 * 60_000
+  )).length
+  const windAgeSeconds = Math.max(0, Math.round((freshnessNow - Date.parse(wind.observedAt)) / 1_000))
+  const primaryTask = readiness.blockers[0] ?? readiness.required.find((task) => task.status !== 'done')
+  const firstUnconfirmedMark = marks.find((mark) => mark.status !== 'confirmed')
+  const nextAction: { title: string; reason: string; label?: string; action?: () => void } = postponed
+    ? { title: '本部船の再開決定を待つ', reason: '延期中です。予定時刻ではなく、本部船が共有する信号を基準にしてください。', label: '運営連絡を確認', action: onOpenMessages }
+    : unresolvedUrgent > 0
+      ? { title: `緊急連絡 ${unresolvedUrgent}件を確認`, reason: '未確認の緊急連絡が最優先です。内容を確認し、了解を返してください。', label: '緊急連絡を開く', action: onOpenMessages }
+      : locked
+        ? { title: `${race.number}は確定済み`, reason: '通常編集はロックされています。訂正が必要な場合は大会管理者が修正版を発行します。' }
+        : race.status === 'planning'
+          ? { title: `${race.number}のコースとスタートラインを設定`, reason: 'レース海面、クラス、コース記号、ゲート有無を確認してから推奨位置を保存します。', label: 'コース設定を開く', action: onOpenCourseSettings }
+        : primaryTask
+        ? {
+            title: primaryTask.title,
+            reason: `${primaryTask.owner}の${taskStatusLabel[primaryTask.status]}です。${primaryTask.dueLabel}。`,
+            label: primaryTask.markId ? '対象マークを地図で開く' : '担当者へ連絡',
+            action: primaryTask.markId ? () => onSelectMark(primaryTask.markId as string) : () => onOpenTaskMessage(primaryTask),
+          }
+        : firstUnconfirmedMark
+          ? { title: `${firstUnconfirmedMark.label}の位置を確認`, reason: '計画位置・投下地点・別艇確認の順で記録すると、設営状況を全員が判断できます。', label: '地図で開く', action: () => onSelectMark(firstUnconfirmedMark.id) }
+          : { title: `${currentPhase.label}を進める`, reason: `現在は${phaseStateLabels[currentPhase.state]}です。次の完了条件：${currentPhase.progress}` }
 
   const setScale = (next: number) => onScaleChange(Math.min(200, Math.max(75, next)))
 
@@ -219,6 +273,65 @@ export function OperationsBoard({
           )}
         </div>
 
+        <section className="next-action-card" aria-label="次にやること">
+          <span className="next-action-card__icon"><Compass size={20} /></span>
+          <div>
+            <span className="eyebrow">初めてでも迷わない・次にやること</span>
+            <strong>{nextAction.title}</strong>
+            <small>{nextAction.reason}</small>
+          </div>
+          {nextAction.action && <button type="button" onClick={nextAction.action}>{nextAction.label}</button>}
+        </section>
+
+        <section className="regatta-overview-card" aria-label="大会全レースの状況">
+          <header>
+            <div><span className="eyebrow">大会全体</span><strong>全レースの状況</strong></div>
+            <small>タップしてレースを切替</small>
+          </header>
+          <div className="regatta-race-grid">
+            {races.map((candidate) => {
+              const candidateMarks = candidate.id === race.id ? marks : candidate.marks
+              const candidateTasks = allTasks.filter((task) => !task.raceId || task.raceId === candidate.id)
+              const markDone = candidateMarks.filter((mark) => mark.status === 'confirmed').length
+              const blockers = candidateTasks.filter((task) => task.priority === 'required' && task.status === 'blocked').length
+              const requiredRemaining = candidateTasks.filter((task) => task.priority === 'required' && task.status !== 'done').length
+              return (
+                <button
+                  type="button"
+                  className={`${candidate.id === race.id ? 'is-active' : ''} status-${candidate.status}`}
+                  aria-current={candidate.id === race.id ? 'page' : undefined}
+                  onClick={() => onSelectRace(candidate.id)}
+                  key={candidate.id}
+                >
+                  <span><strong>{candidate.number}</strong><small>{candidate.className}・{candidate.courseCode.split(' / ')[0]}</small></span>
+                  <b>{raceStatusLabels[candidate.status]}</b>
+                  <span className="regatta-race-progress">マーク {markDone}/{candidateMarks.length || '—'}・必須残り {requiredRemaining}</span>
+                  {blockers > 0 && <em><AlertTriangle size={11} /> ブロッカー {blockers}</em>}
+                </button>
+              )
+            })}
+          </div>
+        </section>
+
+        <details className="beginner-guide">
+          <summary><HelpCircle size={16} /><span><strong>初めて使う方へ</strong><small>海上で迷わない5ステップと用語</small></span></summary>
+          <div className="beginner-guide__body">
+            <ol>
+              <li><b>担当を確認</b><span>自分の名前・艇・担当マークが「（自分）」になっているか確認します。</span></li>
+              <li><b>位置共有を開始</b><span>スマホの位置情報を許可します。競技中のヨットではなく、運営ボートだけを共有します。</span></li>
+              <li><b>計画位置へ移動</b><span>地図の番号をタップし、距離・目標方位・ETAを見て移動します。</span></li>
+              <li><b>投下と別艇確認</b><span>投下地点を記録し、可能なら別の運営艇が「位置確認」を行います。</span></li>
+              <li><b>本部船の信号を優先</b><span>予定時刻より、延期・リコール・中止を含む本部船の信号を常に優先します。</span></li>
+            </ol>
+            <dl>
+              <div><dt>°T</dt><dd>真方位。磁気コンパス方位と混同しないでください。</dd></div>
+              <div><dt>COG</dt><dd>運営ボートが実際に進んでいる対地針路です。</dd></div>
+              <div><dt>計画／投下</dt><dd>推奨位置と、実際にマークを落とした位置です。差を地図で確認できます。</dd></div>
+              <div><dt>kt／m/s</dt><dd>ノットとメートル毎秒。風速は両方を併記します。</dd></div>
+            </dl>
+          </div>
+        </details>
+
         <section className="race-phase-card" aria-label="レースフェーズ">
           <header>
             <div>
@@ -256,12 +369,17 @@ export function OperationsBoard({
           <article className="metric-card metric-boats">
             <span><ShipWheel size={16} /> 運営ボート</span>
             <strong>{liveBoats}<small> / {boats.length}</small></strong>
-            <small>全艇と通信中</small>
+            <small>{staleBoats.length ? `要確認 ${staleBoats.length}艇（60秒以上更新なし）` : '全艇が60秒以内に更新'}</small>
           </article>
-          <article className="metric-card metric-wind">
+          <article className={`metric-card metric-wind ${windAgeSeconds > 300 ? 'metric-card--warning' : ''}`}>
             <span><Wind size={16} /> 5分平均風</span>
-            <strong>{formatTrueBearing(wind.directionDegrees)} <small>{wind.speedKnots.toFixed(1)}kt</small></strong>
-            <small>ガスト {wind.gustKnots.toFixed(1)}kt・安定</small>
+            <strong>{formatTrueBearing(wind.directionDegrees)} <small>{formatWindSpeedDual(wind.speedKnots)}</small></strong>
+            <small>ガスト {formatWindSpeedDual(wind.gustKnots)}・{windAgeSeconds > 300 ? `${Math.floor(windAgeSeconds / 60)}分更新なし` : `${Math.max(0, Math.floor(windAgeSeconds / 60))}分前`}</small>
+          </article>
+          <article className={`metric-card metric-mark-wind ${freshMarkWindCount < Math.min(3, marks.length) ? 'metric-card--warning' : ''}`}>
+            <span><Wind size={16} /> マーク別風</span>
+            <strong>{freshMarkWindCount}<small> / {marks.length}</small></strong>
+            <small>5分以内の担当艇観測・地図に表示</small>
           </article>
           <article className="metric-card metric-current">
             <span><Waves size={16} /> 潮流（流向）</span>

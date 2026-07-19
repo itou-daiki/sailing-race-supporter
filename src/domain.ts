@@ -40,6 +40,8 @@ export interface WindObservation {
   trend: 'left' | 'steady' | 'right'
   confidence?: 'low' | 'medium' | 'high'
   position?: LngLat
+  raceId?: string
+  committeeBoatId?: string
 }
 
 export interface CurrentObservation {
@@ -252,15 +254,6 @@ export const DEMO_RACES: readonly RaceDefinition[] = [
         assignedBoatId: 'mark-a',
       },
       {
-        id: 'mark-1a',
-        label: 'オフセット 1A',
-        shortLabel: '1A',
-        target: [139.46915, 35.2945],
-        actual: [139.46906, 35.29431],
-        status: 'deployed',
-        assignedBoatId: 'mark-a',
-      },
-      {
         id: 'mark-2',
         label: '2マーク',
         shortLabel: '2',
@@ -461,6 +454,45 @@ export const INITIAL_WIND: WindObservation = {
   trend: 'steady',
   confidence: 'medium',
 }
+
+export const DEMO_MARK_WINDS: readonly WindObservation[] = [
+  {
+    directionDegrees: 348,
+    speedKnots: 8.7,
+    gustKnots: 10.3,
+    observedAt: new Date(Date.now() - 48_000).toISOString(),
+    source: 'マークボートA',
+    trend: 'steady',
+    confidence: 'medium',
+    position: [139.4682, 35.2918],
+    raceId: 'race-1',
+    committeeBoatId: 'mark-a',
+  },
+  {
+    directionDegrees: 353,
+    speedKnots: 8.1,
+    gustKnots: 9.8,
+    observedAt: new Date(Date.now() - 82_000).toISOString(),
+    source: 'マークボートB',
+    trend: 'right',
+    confidence: 'medium',
+    position: [139.4738, 35.2855],
+    raceId: 'race-1',
+    committeeBoatId: 'mark-b',
+  },
+  {
+    directionDegrees: 346,
+    speedKnots: 7.6,
+    gustKnots: 9.1,
+    observedAt: new Date(Date.now() - 116_000).toISOString(),
+    source: 'マークボートC',
+    trend: 'left',
+    confidence: 'medium',
+    position: [139.4631, 35.2821],
+    raceId: 'race-1',
+    committeeBoatId: 'mark-c',
+  },
+] as const
 
 export const INITIAL_CURRENT: CurrentObservation = {
   directionDegrees: 185,
