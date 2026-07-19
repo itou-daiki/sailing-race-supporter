@@ -44,6 +44,7 @@ import {
   type WindObservation,
 } from './domain'
 import { OperationsBoard } from './components/OperationsBoard'
+import { CoursePresetPicker } from './components/CoursePresetPicker'
 import { StartSequence } from './components/StartSequence'
 import { RaceTabs } from './components/RaceTabs'
 import {
@@ -75,6 +76,7 @@ import { estimateRegattaFreeTierUsage, STANDARD_REGATTA_LOAD } from '../shared/f
 import { normalizeBoatMotion } from './boatMotion'
 import type { CoordinateEntryMode } from './coordinateEntry'
 import { formatTrueBearing } from '../shared/trueBearing'
+import { coursePresetForClass, normalizeCoursePresetCode, type CoursePresetCode } from '../shared/coursePresets'
 
 const DETAIL_KEY = 'srs-board-detail'
 const SCALE_KEY = 'srs-board-scale'
@@ -607,6 +609,22 @@ export default function App() {
   const selectedClass = selectedClassOverrides[activeRace.id] ?? activeRace.className
   const setSelectedClass = (className: SailingClass) => {
     setSelectedClassOverrides((current) => ({ ...current, [activeRace.id]: className }))
+  }
+  const changeSelectedClass = (nextClass: SailingClass) => {
+    const crossesSnipeBoundary = (selectedClass === 'スナイプ') !== (nextClass === 'スナイプ')
+    const nextCode = crossesSnipeBoundary
+      ? nextClass === 'スナイプ' ? 'W2' : 'O2'
+      : normalizeCoursePresetCode(nextClass, courseTemplate)
+    setSelectedClass(nextClass)
+    setCourseTemplate(nextCode)
+    setLowerGate(coursePresetForClass(nextClass, nextCode).route.some((point) => point.includes('S/')))
+    setSecondGate(false)
+  }
+  const changeCourseTemplate = (code: CoursePresetCode) => {
+    const preset = coursePresetForClass(selectedClass, code)
+    setCourseTemplate(code as CourseTemplate)
+    setLowerGate(preset.route.some((point) => point.includes('S/')))
+    setSecondGate(false)
   }
   const revisionDraft = revisionDrafts[activeRace.id]
   const postponed = isRaceSignalHeld(activeRace.latestSignal)
@@ -1249,11 +1267,11 @@ export default function App() {
   }
 
   const openCourseSettings = () => {
-    const supported = ['O2', 'I2', 'L2', 'L3', 'W2', 'トライアングル'].includes(activeRace.courseCode)
+    const supported = ['O2', 'I2', 'L2', 'L3', 'W2', 'T2', 'トライアングル'].includes(activeRace.courseCode)
       ? activeRace.courseCode as CourseTemplate
       : 'O2'
-    setCourseTemplate(supported)
-    setLowerGate(activeRace.marks.some((mark) => mark.label.startsWith('下ゲート')) || activeRace.courseCode.includes('ゲート'))
+    setCourseTemplate(normalizeCoursePresetCode(selectedClass, supported))
+    setLowerGate(activeRace.marks.some((mark) => mark.label.startsWith('下ゲート') || mark.label.startsWith('内側ゲート')) || activeRace.courseCode.includes('ゲート'))
     setUpperGate(activeRace.marks.some((mark) => mark.label.startsWith('上ゲート')))
     setSecondGate(activeRace.marks.some((mark) => mark.label.startsWith('中ゲート')))
     setGateWidthMetres(130)
@@ -1313,6 +1331,7 @@ export default function App() {
       windDirection,
       totalLengthMetres: recommendation.kilometres * 1_000,
       courseCode: courseTemplate,
+      className: selectedClass,
       lowerGate,
       upperGate,
       secondGate,
@@ -1330,7 +1349,7 @@ export default function App() {
       return [{
         id: physical.id,
         label: node.label,
-        shortLabel: node.label === 'スタート・ピン' ? 'PIN' : node.label === 'シグナルボート' ? 'RC' : node.label.replace('オフセット ', '').replace('下ゲート ', '').replace('中ゲート ', '').replace('上ゲート ', '').replace('マーク', '').trim(),
+        shortLabel: node.label === 'スタート・ピン' ? 'PIN' : node.label === 'シグナルボート' ? 'RC' : node.label.replace('オフセット ', '').replace('下ゲート ', '').replace('内側ゲート ', '').replace('中ゲート ', '').replace('上ゲート ', '').replace('マーク', '').trim(),
         target: node.target,
         actual: existing?.actual,
         status: existing?.status ?? 'planned' as const,
@@ -1790,8 +1809,8 @@ export default function App() {
         <div className="drawer-backdrop drawer-backdrop--map-visible" role="presentation" onMouseDown={() => setSettingsOpen(false)}>
           <aside className="settings-sheet" aria-label="コース設定" onMouseDown={(event) => event.stopPropagation()}>
             <header><div><span className="eyebrow">{activeRace.number}</span><strong>コース・表示設定</strong></div><button type="button" onClick={() => setSettingsOpen(false)}><X size={20} /></button></header>
-            <label><span>競技ヨットクラス</span><select value={selectedClass} onChange={(event) => setSelectedClass(event.target.value as SailingClass)}>{CLASS_PROFILES.map((profile) => <option key={profile.className}>{profile.className}</option>)}</select></label>
-            <label><span>コース</span><select value={courseTemplate} onChange={(event) => setCourseTemplate(event.target.value as CourseTemplate)}><option>O2</option><option>I2</option><option>L2</option><option>L3</option><option>W2</option><option>トライアングル</option></select></label>
+            <label><span>競技ヨットクラス</span><select value={selectedClass} onChange={(event) => changeSelectedClass(event.target.value as SailingClass)}>{CLASS_PROFILES.map((profile) => <option key={profile.className}>{profile.className}</option>)}</select></label>
+            <CoursePresetPicker className={selectedClass} value={courseTemplate} label="コーステンプレート" onChange={changeCourseTemplate} />
             <div className="settings-subsection">
               <span className="eyebrow">レース予告予定</span>
               <small>変更時に未完了タスクとリマインドを同じ差分で再計算</small>
@@ -1815,9 +1834,9 @@ export default function App() {
               <Waves size={17} /> 風・潮流を現在地と共有
             </button>
             <label><span>準備信号</span><select value={preparatoryFlag} onChange={(event) => setPreparatoryFlag(event.target.value)}><option>P旗</option><option>I旗</option><option>Z旗</option><option>Z旗 + I旗</option><option>U旗</option><option>黒旗</option></select></label>
-            <label className="switch-row"><span><strong>下ゲート</strong><small>3S / 3Pを使用</small></span><input type="checkbox" checked={lowerGate} onChange={(event) => setLowerGate(event.target.checked)} /></label>
+            <label className="switch-row"><span><strong>風下／内側ゲート</strong><small>{courseTemplate === 'I2' || courseTemplate === 'L2' || courseTemplate === 'L3' ? '4S / 4Pを使用' : '3S / 3Pを使用'}</small></span><input type="checkbox" checked={lowerGate} onChange={(event) => setLowerGate(event.target.checked)} /></label>
             <label className="switch-row"><span><strong>上ゲート</strong><small>1S / 1Pを使用</small></span><input type="checkbox" checked={upperGate} onChange={(event) => setUpperGate(event.target.checked)} /></label>
-            {(courseTemplate === 'O2' || courseTemplate === 'I2' || courseTemplate === 'トライアングル') && <label className="switch-row"><span><strong>中ゲート</strong><small>2マークを2S / 2Pへ切替</small></span><input type="checkbox" checked={secondGate} onChange={(event) => setSecondGate(event.target.checked)} /></label>}
+            {(courseTemplate === 'O2' || courseTemplate === 'I2' || courseTemplate === 'T2' || courseTemplate === 'トライアングル') && <label className="switch-row"><span><strong>中ゲート</strong><small>2マークを2S / 2Pへ切替</small></span><input type="checkbox" checked={secondGate} onChange={(event) => setSecondGate(event.target.checked)} /></label>}
             {(lowerGate || upperGate || secondGate) && <label><span>計画ゲート幅（m・全ゲート共通）</span><input type="number" min="40" max="600" step="5" value={gateWidthMetres} onChange={(event) => setGateWidthMetres(Math.min(600, Math.max(40, Number(event.target.value) || 40)))} /></label>}
             {canViewCourseHistory && <section className="course-history" aria-label="コース版履歴">
               <div className="settings-subsection">

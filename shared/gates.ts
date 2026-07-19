@@ -79,7 +79,7 @@ export function buildGateConfiguration(
   })
 
   const detected = {
-    lower: gates.some((gate) => gate.label.startsWith('下ゲート')),
+    lower: gates.some((gate) => gate.label.startsWith('下ゲート') || gate.label.startsWith('内側ゲート')),
     upper: gates.some((gate) => gate.label.startsWith('上ゲート')),
     second: gates.some((gate) => gate.label.startsWith('中ゲート')),
   }

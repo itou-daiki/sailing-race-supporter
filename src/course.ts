@@ -78,7 +78,7 @@ export function formatDistance(metres: number): string {
   return `${(metres / 1_000).toFixed(2)} km`
 }
 
-export type CourseTemplate = 'O2' | 'I2' | 'L2' | 'L3' | 'W2' | 'トライアングル'
+export type CourseTemplate = 'O2' | 'I2' | 'L2' | 'L3' | 'W2' | 'T2' | 'トライアングル'
 
 export interface CoursePlanNode {
   key: string
@@ -92,6 +92,7 @@ export interface CoursePlanInput {
   windDirection: number
   totalLengthMetres: number
   courseCode: CourseTemplate
+  className?: string
   lowerGate: boolean
   upperGate: boolean
   secondGate?: boolean
@@ -118,6 +119,7 @@ export function destinationPoint(origin: LngLat, distance: number, bearingDegree
 function courseLegDivisor(courseCode: CourseTemplate): number {
   if (courseCode === 'O2' || courseCode === 'I2') return 5.4
   if (courseCode === 'トライアングル') return 4.2
+  if (courseCode === 'T2') return 6
   if (courseCode === 'L3') return 6
   return 4
 }
@@ -129,6 +131,8 @@ export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
   const lineLength = input.startLineLengthMetres ?? Math.min(600, Math.max(180, leg * 0.35))
   const upwind = destinationPoint(input.center, leg, wind)
   let lowerRoundingCenter = destinationPoint(input.center, Math.min(160, leg * 0.14), wind)
+  const innerGateCenter = destinationPoint(input.center, Math.min(420, leg * 0.38), wind)
+  const isSnipe = input.className === 'スナイプ'
   const nodes: CoursePlanNode[] = [
     { key: 'start-pin', label: 'スタート・ピン', nodeType: 'start', target: destinationPoint(input.center, lineLength / 2, wind - 90) },
     { key: 'start-rc', label: 'シグナルボート', nodeType: 'start', target: destinationPoint(input.center, lineLength / 2, wind + 90) },
@@ -143,11 +147,26 @@ export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
     nodes.push({ key: 'mark-1', label: '1マーク', nodeType: 'single', target: upwind })
   }
 
-  if (input.courseCode === 'O2' || input.courseCode === 'I2') {
-    const reachAngle = input.courseCode === 'O2' ? 120 : -120
-    const offset = destinationPoint(upwind, Math.min(200, leg * 0.18), wind + 90)
+  const pushGateOrSingle = (
+    key: 'mark-3' | 'mark-4',
+    label: '下ゲート 3' | '内側ゲート 4',
+    center: LngLat,
+  ) => {
+    if (input.lowerGate) {
+      nodes.push(
+        { key: `${key}s`, label: `${label}S`, nodeType: 'gate', target: destinationPoint(center, gateWidth / 2, wind - 90) },
+        { key: `${key}p`, label: `${label}P`, nodeType: 'gate', target: destinationPoint(center, gateWidth / 2, wind + 90) },
+      )
+    } else {
+      nodes.push({ key, label: key === 'mark-3' ? '3マーク' : '4マーク', nodeType: 'single', target: center })
+    }
+  }
+
+  if (isSnipe && input.courseCode === 'W2') {
+    const offset = destinationPoint(upwind, Math.min(200, leg * 0.18), wind - 90)
     nodes.push({ key: 'mark-1a', label: 'オフセット 1A', nodeType: 'offset', target: offset })
-    const mark2 = destinationPoint(offset, leg * 0.67, wind + reachAngle)
+  } else if (!isSnipe && input.courseCode === 'O2') {
+    const mark2 = destinationPoint(upwind, leg * 0.67, wind + 120)
     if (input.secondGate) {
       nodes.push(
         { key: 'mark-2s', label: '中ゲート 2S', nodeType: 'gate', target: destinationPoint(mark2, gateWidth / 2, wind - 90) },
@@ -156,7 +175,23 @@ export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
     } else {
       nodes.push({ key: 'mark-2', label: '2マーク', nodeType: 'single', target: mark2 })
     }
-  } else if (input.courseCode === 'トライアングル') {
+  } else if (!isSnipe && input.courseCode === 'I2') {
+    pushGateOrSingle('mark-4', '内側ゲート 4', innerGateCenter)
+    const mark2 = destinationPoint(upwind, leg * 0.67, wind - 120)
+    if (input.secondGate) {
+      nodes.push(
+        { key: 'mark-2s', label: '中ゲート 2S', nodeType: 'gate', target: destinationPoint(mark2, gateWidth / 2, wind - 90) },
+        { key: 'mark-2p', label: '中ゲート 2P', nodeType: 'gate', target: destinationPoint(mark2, gateWidth / 2, wind + 90) },
+      )
+    } else {
+      nodes.push({ key: 'mark-2', label: '2マーク', nodeType: 'single', target: mark2 })
+    }
+    nodes.push({ key: 'mark-3p', label: '下ゲート 3P', nodeType: 'single', target: destinationPoint(lowerRoundingCenter, gateWidth / 2, wind + 90) })
+    return nodes
+  } else if (!isSnipe && (input.courseCode === 'L2' || input.courseCode === 'L3')) {
+    pushGateOrSingle('mark-4', '内側ゲート 4', innerGateCenter)
+    return nodes
+  } else if ((isSnipe && (input.courseCode === 'O2' || input.courseCode === 'T2')) || input.courseCode === 'トライアングル') {
     const mark2 = destinationPoint(upwind, leg * 0.86, wind + 120)
     if (input.secondGate) {
       nodes.push(
@@ -169,13 +204,6 @@ export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
     lowerRoundingCenter = destinationPoint(mark2, leg * 0.86, wind + 240)
   }
 
-  if (input.lowerGate) {
-    nodes.push(
-      { key: 'mark-3s', label: '下ゲート 3S', nodeType: 'gate', target: destinationPoint(lowerRoundingCenter, gateWidth / 2, wind - 90) },
-      { key: 'mark-3p', label: '下ゲート 3P', nodeType: 'gate', target: destinationPoint(lowerRoundingCenter, gateWidth / 2, wind + 90) },
-    )
-  } else {
-    nodes.push({ key: 'mark-3', label: '3マーク', nodeType: 'single', target: lowerRoundingCenter })
-  }
+  pushGateOrSingle('mark-3', '下ゲート 3', lowerRoundingCenter)
   return nodes
 }

@@ -41,4 +41,16 @@ describe('authoritative gate geometry', () => {
       ],
     )).toThrow('構成が一致')
   })
+
+  it('treats the World Sailing 4S/4P inner gate as the primary lower gate', () => {
+    const configuration = buildGateConfiguration(
+      { lower: true, upper: false, second: false },
+      [
+        { markId: 'mark-4s', label: '内側ゲート 4S', nodeType: 'gate', target: [131.522, 33.278] },
+        { markId: 'mark-4p', label: '内側ゲート 4P', nodeType: 'gate', target: [131.523, 33.278] },
+      ],
+    )
+    expect(configuration.lower).toBe(true)
+    expect(configuration.gates[0].label).toBe('内側ゲート 4')
+  })
 })

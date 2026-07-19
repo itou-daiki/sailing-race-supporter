@@ -180,7 +180,7 @@ describe('Cloudflare Workers runtime integration', () => {
     expect(issued.ownerRecoveryKit).toMatchObject({ eventId: issued.event.id, eventSlug: issued.event.slug })
     expect(issued.ownerRecoveryKit?.recoveryCode).toMatch(/^SRSO-/u)
 
-    const [raceCount, markCount, boatCount, ownerMember] = await Promise.all([
+    const [raceCount, markCount, boatCount, ownerMember, initialCourseNodes] = await Promise.all([
       env.DB.prepare('SELECT COUNT(*) AS count FROM races WHERE regatta_id = ?').bind(issued.event.id).first<{ count: number }>(),
       env.DB.prepare('SELECT COUNT(*) AS count FROM marks WHERE regatta_id = ?').bind(issued.event.id).first<{ count: number }>(),
       env.DB.prepare('SELECT COUNT(*) AS count FROM committee_boats WHERE regatta_id = ?').bind(issued.event.id).first<{ count: number }>(),
@@ -188,11 +188,48 @@ describe('Cloudflare Workers runtime integration', () => {
         `SELECT display_name, role, assignment FROM event_members
          WHERE regatta_id = ? AND user_id = ? LIMIT 1`,
       ).bind(issued.event.id, ownerId).first<{ display_name: string; role: string; assignment: string }>(),
+      env.DB.prepare(
+        `SELECT node.label, node.node_type
+         FROM course_nodes node
+         JOIN course_revisions revision ON revision.id = node.course_revision_id
+         JOIN races race ON race.id = revision.race_id
+         WHERE race.regatta_id = ? AND race.race_order = 1 AND revision.revision = 1
+         ORDER BY node.node_order`,
+      ).bind(issued.event.id).all<{ label: string; node_type: string }>(),
     ])
     expect(raceCount?.count).toBe(2)
     expect(markCount?.count).toBeGreaterThanOrEqual(8)
     expect(boatCount?.count).toBe(5)
     expect(ownerMember).toEqual({ display_name: '大会発行テスト管理者', role: 'owner', assignment: '大会管理者' })
+    expect(initialCourseNodes.results).toEqual([
+      { label: 'スタート・ピン', node_type: 'start' },
+      { label: 'シグナルボート', node_type: 'start' },
+      { label: '1マーク', node_type: 'single' },
+      { label: '2マーク', node_type: 'single' },
+      { label: '下ゲート 3S', node_type: 'gate' },
+      { label: '下ゲート 3P', node_type: 'gate' },
+    ])
+
+    const incompatibleCourseResponse = await exports.default.fetch('https://example.test/api/events', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        Cookie: `srs_session=${sessionToken}`,
+        Origin: 'https://example.test',
+      },
+      body: JSON.stringify({
+        name: '不整合コース確認',
+        startsOn: '2026-07-19',
+        endsOn: '2026-07-19',
+        className: '470',
+        courseCode: 'W2',
+        firstWarningAt: '2026-07-19T03:00:00.000Z',
+      }),
+    })
+    expect(incompatibleCourseResponse.status).toBe(400)
+    await expect(incompatibleCourseResponse.json()).resolves.toMatchObject({
+      error: '選択した競技ヨットクラスでは使用できない初期コースです',
+    })
 
     const listResponse = await exports.default.fetch('https://example.test/api/events', {
       headers: { Cookie: `srs_session=${sessionToken}` },

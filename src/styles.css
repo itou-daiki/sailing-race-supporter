@@ -5080,6 +5080,205 @@ select:focus-visible {
   font-size: 11px;
 }
 
+.course-preset-picker {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-sheet > .course-preset-picker {
+  margin: 0 15px;
+}
+
+.course-preset-select {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.course-preset-select select {
+  width: 100%;
+  height: 44px;
+  min-width: 0;
+  padding: 0 10px;
+  color: var(--navy);
+  background: #f8fbfd;
+  border: 1px solid #9bcaf0;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.settings-sheet .course-preset-select select {
+  background: #fff;
+}
+
+.course-preset-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 11px;
+  color: var(--navy);
+  background: linear-gradient(145deg, #f5fbff, #eaf5ff);
+  border: 1px solid #b9dcf5;
+  border-radius: 11px;
+}
+
+.course-preset-preview > header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+}
+
+.course-preset-preview > header > b {
+  min-width: 45px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  padding: 0 7px;
+  color: #fff;
+  background: var(--dodger-strong);
+  border-radius: 9px;
+  box-shadow: 0 5px 12px rgba(30, 144, 255, 0.22);
+  font-size: 13px;
+  letter-spacing: 0.03em;
+}
+
+.course-preset-preview > header > span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.course-preset-preview > header strong {
+  font-size: 11px;
+}
+
+.course-preset-preview > header small {
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.4;
+}
+
+.course-preset-preview > header em {
+  padding: 4px 6px;
+  color: #087659;
+  background: #dff6ed;
+  border-radius: 999px;
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.course-preset-preview > p {
+  margin: 0;
+  color: #486b80;
+  font-size: 9px;
+  line-height: 1.55;
+}
+
+.course-preset-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.course-preset-tags span {
+  padding: 4px 7px;
+  color: #17699f;
+  background: #fff;
+  border: 1px solid #c5e0f2;
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.course-route {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #d2e5f2;
+  border-radius: 8px;
+}
+
+.course-route > small {
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.course-route ol {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0 0 3px;
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: thin;
+}
+
+.course-route li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  color: #164f72;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.course-route li:not(:last-child)::after {
+  color: #79a7c6;
+  content: '→';
+}
+
+.course-route li:first-child,
+.course-route li:last-child {
+  color: #fff;
+  padding: 3px 6px;
+  background: #1f658f;
+  border-radius: 5px;
+}
+
+.course-route li:first-child::after {
+  margin-left: 2px;
+  color: #79a7c6;
+}
+
+.course-preset-preview > footer {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 6px;
+}
+
+.course-preset-preview > footer span {
+  padding: 3px 5px;
+  color: #77530b;
+  background: #fff4d6;
+  border-radius: 5px;
+  font-size: 7px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.course-preset-preview > footer small {
+  color: var(--muted);
+  font-size: 7px;
+  line-height: 1.45;
+}
+
 .event-location-button {
   min-height: 39px;
   display: flex;
@@ -5093,6 +5292,36 @@ select:focus-visible {
   font-size: 10px;
   font-weight: 800;
   cursor: pointer;
+}
+
+.event-center-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: #f7fbfe;
+  border: 1px solid #c8e0f0;
+  border-radius: 10px;
+}
+
+.event-center-editor > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.event-center-editor > header span {
+  color: var(--navy);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.event-center-editor > header small,
+.event-center-editor__hint {
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.5;
 }
 
 .event-location-button.is-set {

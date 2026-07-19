@@ -1,6 +1,8 @@
 import type { EventAccess } from './authorization.js'
 import { appendAuditEventWithoutBlockingSecretDelivery } from './audit.js'
 import { buildGateConfiguration } from '../shared/gates.js'
+import { coursePresetForClass, coursePresetsForClass } from '../shared/coursePresets.js'
+import { DEFAULT_RACE_AREA_CENTER } from '../shared/defaultRaceArea.js'
 import { json, readJson } from './http.js'
 import type { AppEnv } from './index.js'
 import { generateOwnerRecoveryCode, normalizeOwnerRecoveryCode } from '../shared/ownerRecovery.js'
@@ -8,7 +10,7 @@ import { assertSameOrigin, hasRecentAuthentication, randomToken, requireSession,
 import { STANDARD_MARK_DEFINITIONS } from './standardArea.js'
 
 const CLASSES = new Set(['OP', 'ILCA 4', 'ILCA 6', 'ILCA 7', '420', '470', 'スナイプ'])
-const COURSES = new Set(['O2', 'I2', 'L2', 'L3', 'W2', 'トライアングル'])
+const COURSES = new Set(['O2', 'I2', 'L2', 'L3', 'W2', 'T2', 'トライアングル'])
 
 const RETENTION_DEFAULTS = {
   finalizedRecordsDays: 1826,
@@ -82,6 +84,7 @@ function pointAt(origin: readonly [number, number], distanceMetres: number, bear
 
 function initialTargets(center: readonly [number, number]): Record<string, readonly [number, number]> {
   const gateCenter = pointAt(center, 150, 350)
+  const innerGateCenter = pointAt(center, 380, 350)
   const mark1 = pointAt(center, 1_000, 350)
   return {
     'mark-1': mark1,
@@ -92,6 +95,9 @@ function initialTargets(center: readonly [number, number]): Record<string, reado
     'mark-3s': pointAt(gateCenter, 65, 260),
     'mark-3p': pointAt(gateCenter, 65, 80),
     'mark-3': gateCenter,
+    'mark-4s': pointAt(innerGateCenter, 65, 260),
+    'mark-4p': pointAt(innerGateCenter, 65, 80),
+    'mark-4': innerGateCenter,
     'start-pin': pointAt(center, 240, 260),
     'start-rc': pointAt(center, 240, 80),
   }
@@ -151,12 +157,15 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
   if (raceCount < 1 || raceCount > 20) return json({ error: 'レース数は1〜20で指定してください' }, { status: 400 })
   const className = body.className ?? '470'
   if (!CLASSES.has(className)) return json({ error: '未対応の競技ヨットクラスです' }, { status: 400 })
-  const courseCode = body.courseCode ?? 'O2'
+  const courseCode = body.courseCode ?? (className === 'スナイプ' ? 'W2' : 'O2')
   if (!COURSES.has(courseCode)) return json({ error: '未対応の初期コースです' }, { status: 400 })
+  if (!coursePresetsForClass(className).some((preset) => preset.code === courseCode)) {
+    return json({ error: '選択した競技ヨットクラスでは使用できない初期コースです' }, { status: 400 })
+  }
 
   const center = [
-    coordinate(body.center?.longitude, 139.4638, -180, 180),
-    coordinate(body.center?.latitude, 35.283, -85, 85),
+    coordinate(body.center?.longitude, DEFAULT_RACE_AREA_CENTER.longitude, -180, 180),
+    coordinate(body.center?.latitude, DEFAULT_RACE_AREA_CENTER.latitude, -85, 85),
   ] as const
   const now = new Date().toISOString()
   const eventId = crypto.randomUUID()
@@ -224,15 +233,22 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
     ).bind(crypto.randomUUID(), eventId, boatName, role, callSign))
   }
 
-  const nodeDefinitions = [
-    ['start-pin', 'スタート・ピン', 'start'],
-    ['start-rc', 'シグナルボート', 'start'],
-    ['mark-1', '1マーク', 'single'],
-    ['mark-1a', 'オフセット 1A', 'offset'],
-    ['mark-2', '2マーク', 'single'],
-    ['mark-3s', '下ゲート 3S', 'gate'],
-    ['mark-3p', '下ゲート 3P', 'gate'],
-  ] as const
+  const initialMarkKeys = coursePresetForClass(className, courseCode).initialMarkKeys
+  const initialMarkKeySet = new Set<string>(initialMarkKeys)
+  const nodeDefinitions = initialMarkKeys.map((key) => {
+    const definition = STANDARD_MARK_DEFINITIONS.find(([standardKey]) => standardKey === key)
+    if (!definition) throw new Error(`初期コース用の標準マーク ${key} が見つかりません`)
+    const [, label, markType] = definition
+    const counterpart = key.endsWith('s') ? `${key.slice(0, -1)}p` : key.endsWith('p') ? `${key.slice(0, -1)}s` : undefined
+    const nodeType = markType === 'pin' || markType === 'signal'
+      ? 'start'
+      : markType === 'offset'
+        ? 'offset'
+        : markType === 'gate' && counterpart && initialMarkKeySet.has(counterpart)
+          ? 'gate'
+          : 'single'
+    return [key, label, nodeType] as const
+  })
   for (let index = 0; index < raceCount; index += 1) {
     const raceId = crypto.randomUUID()
     const revisionId = crypto.randomUUID()
@@ -243,7 +259,11 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
       return { markId, label, nodeType, target: targets[key] }
     })
     const gateConfiguration = buildGateConfiguration(
-      { lower: true, upper: false, second: false },
+      {
+        lower: initialCourseNodes.some((node) => node.nodeType === 'gate' && (node.label.startsWith('下ゲート') || node.label.startsWith('内側ゲート'))),
+        upper: initialCourseNodes.some((node) => node.nodeType === 'gate' && node.label.startsWith('上ゲート')),
+        second: initialCourseNodes.some((node) => node.nodeType === 'gate' && node.label.startsWith('中ゲート')),
+      },
       initialCourseNodes,
     )
     statements.push(env.DB.prepare(

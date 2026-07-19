@@ -9,6 +9,9 @@ export const STANDARD_MARK_DEFINITIONS = [
   ['mark-3s', '下ゲート 3S', 'gate'],
   ['mark-3p', '下ゲート 3P', 'gate'],
   ['mark-3', '3マーク', 'rounding'],
+  ['mark-4s', '内側ゲート 4S', 'gate'],
+  ['mark-4p', '内側ゲート 4P', 'gate'],
+  ['mark-4', '4マーク', 'rounding'],
   ['start-pin', 'スタート・ピン', 'pin'],
   ['start-rc', 'シグナルボート', 'signal'],
 ] as const

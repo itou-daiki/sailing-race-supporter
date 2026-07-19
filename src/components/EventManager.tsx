@@ -22,6 +22,8 @@ import {
 import { useEffect, useMemo, useState } from 'react'
 import type { OwnerRecoveryKit, SessionState } from '../authClient'
 import { CLASS_PROFILES, type RaceDefinition, type SailingClass } from '../domain'
+import { normalizeCoursePresetCode } from '../../shared/coursePresets'
+import { DEFAULT_RACE_AREA_CENTER } from '../../shared/defaultRaceArea'
 import {
   assignRaceArea,
   createRaceArea,
@@ -54,6 +56,7 @@ import {
   type EncryptedBackup,
 } from '../backup'
 import { exportLocalEventData } from '../offlineStore'
+import { CoursePresetPicker } from './CoursePresetPicker'
 import { OwnerRecoveryKitPanel } from './OwnerRecoveryKitPanel'
 
 interface EventManagerProps {
@@ -129,7 +132,17 @@ export function EventManager({
   const [className, setClassName] = useState<SailingClass>('470')
   const [courseCode, setCourseCode] = useState('O2')
   const [firstWarningAt, setFirstWarningAt] = useState(localDateTime(new Date(today.getTime() + 60 * 60_000)))
-  const [center, setCenter] = useState<{ longitude: number; latitude: number }>()
+  const [centerLongitude, setCenterLongitude] = useState(String(DEFAULT_RACE_AREA_CENTER.longitude))
+  const [centerLatitude, setCenterLatitude] = useState(String(DEFAULT_RACE_AREA_CENTER.latitude))
+  const center = useMemo(() => {
+    const longitude = Number(centerLongitude)
+    const latitude = Number(centerLatitude)
+    return centerLongitude.trim() && centerLatitude.trim() &&
+      Number.isFinite(longitude) && longitude >= -180 && longitude <= 180 &&
+      Number.isFinite(latitude) && latitude >= -85 && latitude <= 85
+      ? { longitude, latitude }
+      : undefined
+  }, [centerLatitude, centerLongitude])
   const [invites, setInvites] = useState<InviteRecord[]>([])
   const [inviteRole, setInviteRole] = useState('mark-boat')
   const [inviteAreaId, setInviteAreaId] = useState('')
@@ -221,10 +234,21 @@ export function EventManager({
   const useCurrentLocation = () => {
     setError(undefined)
     navigator.geolocation.getCurrentPosition(
-      (position) => setCenter({ longitude: position.coords.longitude, latitude: position.coords.latitude }),
+      (position) => {
+        setCenterLongitude(position.coords.longitude.toFixed(7))
+        setCenterLatitude(position.coords.latitude.toFixed(7))
+      },
       () => setError('現在地を取得できません。大会作成後に地図を移動して設定できます。'),
       { enableHighAccuracy: true, timeout: 12_000 },
     )
+  }
+
+  const changeClass = (nextClass: SailingClass) => {
+    const crossesSnipeBoundary = (className === 'スナイプ') !== (nextClass === 'スナイプ')
+    setClassName(nextClass)
+    setCourseCode(crossesSnipeBoundary
+      ? nextClass === 'スナイプ' ? 'W2' : 'O2'
+      : normalizeCoursePresetCode(nextClass, courseCode))
   }
 
   const submit = async (event: React.FormEvent) => {
@@ -818,15 +842,26 @@ export function EventManager({
                 <label className="event-field"><span>開始日</span><input type="date" value={startsOn} onChange={(event) => setStartsOn(event.target.value)} required /></label>
                 <label className="event-field"><span>終了日</span><input type="date" min={startsOn} value={endsOn} onChange={(event) => setEndsOn(event.target.value)} required /></label>
                 <label className="event-field"><span>レース数</span><input type="number" min="1" max="20" value={raceCount} onChange={(event) => setRaceCount(Number(event.target.value))} required /></label>
-                <label className="event-field"><span>競技ヨットクラス</span><select value={className} onChange={(event) => setClassName(event.target.value as SailingClass)}>{CLASS_PROFILES.map((profile) => <option key={profile.className}>{profile.className}</option>)}</select></label>
-                <label className="event-field"><span>初期コース</span><select value={courseCode} onChange={(event) => setCourseCode(event.target.value)}><option>O2</option><option>I2</option><option>L2</option><option>L3</option><option>W2</option><option>トライアングル</option></select></label>
+                <label className="event-field"><span>競技ヨットクラス</span><select value={className} onChange={(event) => changeClass(event.target.value as SailingClass)}>{CLASS_PROFILES.map((profile) => <option key={profile.className}>{profile.className}</option>)}</select></label>
                 <label className="event-field"><span>1R 予告予定</span><input type="datetime-local" value={firstWarningAt} onChange={(event) => setFirstWarningAt(event.target.value)} required /></label>
               </div>
-              <button type="button" className={`event-location-button ${center ? 'is-set' : ''}`} onClick={useCurrentLocation}>
-                <LocateFixed size={17} />{center ? `海面中心 ${center.latitude.toFixed(4)}, ${center.longitude.toFixed(4)}` : '現在地を海面中心にする'}
-              </button>
+              <CoursePresetPicker className={className} value={courseCode} onChange={setCourseCode} />
+              <section className="event-center-editor" aria-labelledby="event-center-title">
+                <header>
+                  <span id="event-center-title">レース海面の初期中心</span>
+                  <small>WGS84・小数度</small>
+                </header>
+                <div className="event-form-grid">
+                  <label className="event-field"><span>経度（東経は正）</span><input aria-label="レース海面の経度" type="number" inputMode="decimal" min="-180" max="180" step="0.0000001" value={centerLongitude} onChange={(event) => setCenterLongitude(event.target.value)} required /></label>
+                  <label className="event-field"><span>緯度（北緯は正）</span><input aria-label="レース海面の緯度" type="number" inputMode="decimal" min="-85" max="85" step="0.0000001" value={centerLatitude} onChange={(event) => setCenterLatitude(event.target.value)} required /></label>
+                </div>
+                <small className="event-center-editor__hint">例：経度 {DEFAULT_RACE_AREA_CENTER.longitude} ／ 緯度 {DEFAULT_RACE_AREA_CENTER.latitude}。大会発行後の海面Aと初期マーク配置の基準になります。</small>
+                <button type="button" className={`event-location-button ${center ? 'is-set' : ''}`} onClick={useCurrentLocation}>
+                  <LocateFixed size={17} />現在地を入力値へ反映
+                </button>
+              </section>
               <div className="event-create-note"><CalendarDays size={17} /><p>大会内の1R〜{raceCount}R、海面A、標準マークと運営ボートを作成します。予備パスキーが2個未満の場合は、発行直後に一回限りのオーナー復旧キットを保存します。</p></div>
-              <button type="submit" className="event-create-submit" disabled={creating || name.trim().length < 2}>
+              <button type="submit" className="event-create-submit" disabled={creating || name.trim().length < 2 || !center}>
                 {creating ? <LoaderCircle className="is-spinning" size={18} /> : <Clipboard size={18} />}
                 {creating ? '大会URLを発行中…' : '大会URLを発行する'}
               </button>
