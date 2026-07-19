@@ -2,7 +2,7 @@ import { readdir, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
 const outputDirectory = 'dist'
-const defaultProductionOrigin = 'https://sailing-race-supporter.dddd-sailing470.workers.dev'
+const defaultProductionOrigin = 'https://sailing-race-supporter.dit-lab.workers.dev'
 
 const forbiddenFileNames = new Set([
   '.dev.vars',
