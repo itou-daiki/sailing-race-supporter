@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EventManager } from '../src/components/EventManager'
 
@@ -34,5 +34,27 @@ describe('EventManager free-only backup UI', () => {
     expect(screen.getByText('課金のない端末保存')).toBeInTheDocument()
     expect(screen.getByText(/D1には無料のTime Travelが常時有効/u)).toBeInTheDocument()
     expect(screen.queryByText('R2暗号化バックアップ')).not.toBeInTheDocument()
+  })
+
+  it('guides an anonymous organizer into authentication and back to event issuance', () => {
+    const onRequestAuthentication = vi.fn()
+    render(<EventManager
+      session={{ mode: 'anonymous' }}
+      currentEventSlug="demo"
+      currentEventName="デモ大会"
+      isCurrentEventOwner={false}
+      resources={{ areas: [], boats: [], marks: [], members: [] }}
+      races={[]}
+      assignmentRealtimeAvailable={false}
+      onUpdateAssignment={vi.fn()}
+      onRequestAuthentication={onRequestAuthentication}
+      onEventStructureChanged={vi.fn()}
+      onRecoverParticipation={vi.fn()}
+      onClose={vi.fn()}
+    />)
+
+    expect(screen.getByText('大会の発行には本人確認が必要です')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '管理者登録へ進む' }))
+    expect(onRequestAuthentication).toHaveBeenCalledOnce()
   })
 })

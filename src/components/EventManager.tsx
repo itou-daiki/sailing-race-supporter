@@ -580,8 +580,8 @@ export function EventManager({
           <section className="event-auth-required">
             <ShieldCheck size={31} />
             <h2>大会の発行には本人確認が必要です</h2>
-            <p>大会URLを発行したパスキー認証済みユーザーが、唯一の大会管理者になります。</p>
-            <button type="button" onClick={onRequestAuthentication}>パスキーを登録・ログイン</button>
+            <p>管理者名を入力してパスキーを登録すると、この画面へ自動的に戻り、大会URLを発行できます。発行したユーザーが唯一の大会管理者になります。</p>
+            <button type="button" onClick={onRequestAuthentication}>管理者登録へ進む</button>
           </section>
         ) : (
           <>

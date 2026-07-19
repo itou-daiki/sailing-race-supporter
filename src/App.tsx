@@ -250,6 +250,7 @@ export default function App() {
   const [logsOpen, setLogsOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
+  const [resumeEventIssuanceAfterAuth, setResumeEventIssuanceAfterAuth] = useState(false)
   const [eventManagerOpen, setEventManagerOpen] = useState(false)
   const [joinContext, setJoinContext] = useState(joinContextFromLocation)
   const [recoveryOpen, setRecoveryOpen] = useState(false)
@@ -1533,7 +1534,7 @@ export default function App() {
         </div>
 
         <button type="button" className="event-selector" onClick={() => setEventManagerOpen(true)}>
-          <span><small>大会</small><strong>{eventName}</strong></span>
+          <span><small>大会を発行・選択</small><strong>{eventName}</strong></span>
           <ChevronDown size={16} />
         </button>
 
@@ -1562,7 +1563,7 @@ export default function App() {
               <ScrollText size={19} />
             </button>
           )}
-          <button type="button" className="owner-button" onClick={() => setAuthOpen(true)}>
+          <button type="button" className="owner-button" onClick={() => { setResumeEventIssuanceAfterAuth(false); setAuthOpen(true) }}>
             <CircleUserRound size={21} />
             <span>
               <strong>{session.mode === 'authenticated' ? session.user.displayName : '伊藤 大輝'}</strong>
@@ -1846,9 +1847,9 @@ export default function App() {
               ))}
             </section>}
             {courseSaveError && <div className="auth-error" role="alert">{courseSaveError}</div>}
-            <button type="button" className="sheet-secondary" onClick={() => { setSettingsOpen(false); setEventManagerOpen(true) }}><Anchor size={17} /> 大会URL・参加者・バックアップ</button>
+            <button type="button" className="sheet-secondary" onClick={() => { setSettingsOpen(false); setEventManagerOpen(true) }}><Anchor size={17} /> 大会を発行・選択・共有</button>
             {session.mode === 'authenticated' && <button type="button" className="sheet-secondary" onClick={() => { setSettingsOpen(false); setLogsOpen(true) }}><ScrollText size={17} /> 大会・レース別の運営ログ</button>}
-            <button type="button" className="sheet-secondary" onClick={() => { setSettingsOpen(false); setAuthOpen(true) }}><ShieldCheck size={17} /> 本人確認・パスキー</button>
+            <button type="button" className="sheet-secondary" onClick={() => { setSettingsOpen(false); setResumeEventIssuanceAfterAuth(false); setAuthOpen(true) }}><ShieldCheck size={17} /> 本人確認・パスキー</button>
             <button type="button" className="sheet-primary" onClick={() => void saveCourse()} disabled={courseSaving || locked}>{courseSaving ? '座標を計算・保存中…' : '設定案を保存'}</button>
           </aside>
         </div>
@@ -1965,7 +1966,18 @@ export default function App() {
 
       <Suspense fallback={null}>
         {authOpen && (
-          <AuthPanel session={session} onSessionChange={setSession} onClose={() => setAuthOpen(false)} />
+          <AuthPanel
+            session={session}
+            onSessionChange={(nextSession) => {
+              setSession(nextSession)
+              if (nextSession.mode === 'authenticated' && resumeEventIssuanceAfterAuth) {
+                setResumeEventIssuanceAfterAuth(false)
+                setAuthOpen(false)
+                setEventManagerOpen(true)
+              }
+            }}
+            onClose={() => { setAuthOpen(false); setResumeEventIssuanceAfterAuth(false) }}
+          />
         )}
 
         {eventManagerOpen && (
@@ -1987,7 +1999,11 @@ export default function App() {
                 }, change.raceId)
               }
             }}
-            onRequestAuthentication={() => { setEventManagerOpen(false); setAuthOpen(true) }}
+            onRequestAuthentication={() => {
+              setEventManagerOpen(false)
+              setResumeEventIssuanceAfterAuth(true)
+              setAuthOpen(true)
+            }}
             onRecoverParticipation={() => { setEventManagerOpen(false); setRecoveryOpen(true) }}
             onClose={() => setEventManagerOpen(false)}
           />

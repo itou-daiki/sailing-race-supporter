@@ -32,17 +32,19 @@ npm run preview
 
 `npm run test:all` はブラウザー／ロジックの単体テストに加え、Cloudflareのworkerd上でD1マイグレーション、Durable Objectsの永続化、Workerエントリーポイントを検証します。
 
-`npm run build` はWranglerに依存しないPages専用ビルドで、静的クライアントだけを `dist` に生成します。
+`npm run build` はWranglerに依存しないPages専用ビルドです。`dist` に静的クライアントと、本番Workerへパス・クエリを保ったまま転送するPagesルールを生成します。
 Worker統合成果物を確認する場合は `npm run build:cloudflare`、Workers
 Runtimeで確認する場合は `npm run preview` を使用します。
 
 ## Cloudflare
 
-Cloudflare Pagesでフロントエンドだけを確認する場合は、次を設定します。
+Cloudflare Pagesを公開入口として使う場合は、次を設定します。
 
 - Framework preset: React (Vite)
 - Build command: `npm run build`
 - Build output directory: `dist`
 - Root directory: 空欄
+
+Pages URLへのアクセスは、自動的に本番Workerへ転送されます。これにより、どちらの公開URLを共有してもパスキー登録と大会URL発行が使える入口へ到達します。
 
 本番はCloudflare Workers Static Assetsを使用し、Worker API、SQLite-backed Durable Objects、D1、日次Cronを同じプロジェクトへ接続します。R2とWorkers Paidプランは使用せず、上限超過時に課金されないFreeプラン構成です。長期バックアップは端末でAES-GCM暗号化したファイル、短期復旧はD1 Time Travel（Freeは7日）を使用します。初回手順は[DEPLOYMENT.md](./DEPLOYMENT.md)を参照してください。

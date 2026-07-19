@@ -128,6 +128,80 @@ describe('Cloudflare Workers runtime integration', () => {
     expect(tableCount?.count).toBeGreaterThanOrEqual(50)
   })
 
+  it('issues a shareable event URL with races, marks, boats, and an owner recovery kit', async () => {
+    const now = new Date().toISOString()
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1_000).toISOString()
+    const ownerId = 'runtime-event-create-owner'
+    const sessionToken = 'runtime-event-create-session'
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO users (id, display_name, created_at, updated_at)
+         VALUES (?, ?, ?, ?)`,
+      ).bind(ownerId, '大会発行テスト管理者', now, now),
+      env.DB.prepare(
+        `INSERT INTO passkey_credentials
+         (id, user_id, credential_id, public_key, sign_count, created_at)
+         VALUES (?, ?, ?, ?, 0, ?)`,
+      ).bind('runtime-event-create-passkey', ownerId, 'runtime-event-create-credential', new Uint8Array([1, 2, 3]), now),
+      env.DB.prepare(
+        `INSERT INTO auth_sessions
+         (token_hash, user_id, created_at, expires_at, last_seen_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).bind(await sha256Base64Url(sessionToken), ownerId, now, expiresAt, now),
+    ])
+
+    const response = await exports.default.fetch('https://example.test/api/events', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        Cookie: `srs_session=${sessionToken}`,
+        Origin: 'https://example.test',
+      },
+      body: JSON.stringify({
+        name: '2026 大会発行テスト',
+        startsOn: '2026-07-19',
+        endsOn: '2026-07-20',
+        raceCount: 2,
+        className: '470',
+        courseCode: 'O2',
+        firstWarningAt: '2026-07-19T03:00:00.000Z',
+        center: { longitude: 139.4638, latitude: 35.283 },
+      }),
+    })
+    const issued = await response.json<{
+      event: { id: string; slug: string; name: string; status: string }
+      url: string
+      ownerRecoveryKit: { eventId: string; eventSlug: string; recoveryCode: string } | null
+    }>()
+
+    expect(response.status).toBe(201)
+    expect(issued.event).toMatchObject({ name: '2026 大会発行テスト', status: 'draft' })
+    expect(issued.url).toBe(`/e/${issued.event.slug}`)
+    expect(issued.ownerRecoveryKit).toMatchObject({ eventId: issued.event.id, eventSlug: issued.event.slug })
+    expect(issued.ownerRecoveryKit?.recoveryCode).toMatch(/^SRSO-/u)
+
+    const [raceCount, markCount, boatCount, ownerMember] = await Promise.all([
+      env.DB.prepare('SELECT COUNT(*) AS count FROM races WHERE regatta_id = ?').bind(issued.event.id).first<{ count: number }>(),
+      env.DB.prepare('SELECT COUNT(*) AS count FROM marks WHERE regatta_id = ?').bind(issued.event.id).first<{ count: number }>(),
+      env.DB.prepare('SELECT COUNT(*) AS count FROM committee_boats WHERE regatta_id = ?').bind(issued.event.id).first<{ count: number }>(),
+      env.DB.prepare(
+        `SELECT display_name, role, assignment FROM event_members
+         WHERE regatta_id = ? AND user_id = ? LIMIT 1`,
+      ).bind(issued.event.id, ownerId).first<{ display_name: string; role: string; assignment: string }>(),
+    ])
+    expect(raceCount?.count).toBe(2)
+    expect(markCount?.count).toBeGreaterThanOrEqual(8)
+    expect(boatCount?.count).toBe(5)
+    expect(ownerMember).toEqual({ display_name: '大会発行テスト管理者', role: 'owner', assignment: '大会管理者' })
+
+    const listResponse = await exports.default.fetch('https://example.test/api/events', {
+      headers: { Cookie: `srs_session=${sessionToken}` },
+    })
+    const listed = await listResponse.json<{ events: Array<{ id: string; relationship: string }> }>()
+    expect(listResponse.status).toBe(200)
+    expect(listed.events).toContainEqual(expect.objectContaining({ id: issued.event.id, relationship: 'owner' }))
+  })
+
   it('exports branded race logs for CSV and the client-side PDF report', async () => {
     const now = new Date().toISOString()
     const expiresAt = new Date(Date.now() + 60 * 60 * 1_000).toISOString()
