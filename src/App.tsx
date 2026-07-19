@@ -281,6 +281,8 @@ export default function App() {
     return stored === 'overview' || stored === 'detail' ? stored : 'standard'
   })
   const [mapSplit, setMapSplit] = useState(() => storedNumber(SPLIT_KEY, 58))
+  const [mobileMapPriority, setMobileMapPriority] = useState(true)
+  const [courseAdvisorExpanded, setCourseAdvisorExpanded] = useState(false)
   const [selectedClassOverrides, setSelectedClassOverrides] = useState<Partial<Record<string, SailingClass>>>({})
   const [windSpeed, setWindSpeed] = useState(INITIAL_WIND.speedKnots)
   const [windDirection, setWindDirection] = useState(INITIAL_WIND.directionDegrees)
@@ -1627,10 +1629,10 @@ export default function App() {
       )}
 
       <main
-        className="race-workspace"
+        className={`race-workspace ${mobileMapPriority ? 'mobile-map-priority' : ''}`}
         style={{ '--map-split': `${mapSplit}%` } as React.CSSProperties}
       >
-        <div className="map-column">
+        <div className={`map-column ${selectedMarkId ? 'has-selected-mark' : ''}`}>
           <Suspense fallback={<div className="map-loading"><RadioTower size={24} /><strong>海面地図を準備中…</strong></div>}>
             <MapView
               marks={marks}
@@ -1638,7 +1640,10 @@ export default function App() {
               wind={{ ...windDetails, directionDegrees: windDirection, speedKnots: windSpeed }}
               current={seaCurrent}
               selectedMarkId={selectedMarkId}
-              onSelectMark={setSelectedMarkId}
+              onSelectMark={(markId) => {
+                setCourseAdvisorExpanded(false)
+                setSelectedMarkId(markId)
+              }}
               onUseCurrentLocation={updateSelfLocation}
               onRecordDrop={recordMarkDrop}
               onRecordManualPosition={recordManualMarkPosition}
@@ -1657,7 +1662,17 @@ export default function App() {
               canAdoptLeadingPassage={canAdoptLeadingPassage}
             />
           </Suspense>
-          <div className="course-advisor glass-panel">
+          <div className={`course-advisor glass-panel ${courseAdvisorExpanded ? 'is-expanded' : ''}`}>
+            <button
+              type="button"
+              className="course-advisor__mobile-toggle"
+              aria-expanded={courseAdvisorExpanded}
+              onClick={() => setCourseAdvisorExpanded((current) => !current)}
+            >
+              <SlidersHorizontal size={17} />
+              <span><small>推奨コース長</small><strong>{recommendation.kilometres.toFixed(1)} km <em>{selectedClass}・風 {windSpeed.toFixed(1)}kt</em></strong></span>
+              <ChevronDown size={17} />
+            </button>
             <div className="course-advisor__title">
               <SlidersHorizontal size={16} />
               <span><small>目標時間から算出</small><strong>推奨コース長</strong></span>
@@ -1684,11 +1699,16 @@ export default function App() {
           type="button"
           className="split-handle"
           onPointerDown={(event) => {
+            if (event.currentTarget.offsetWidth > event.currentTarget.offsetHeight) return
             event.currentTarget.setPointerCapture(event.pointerId)
             draggingSplit.current = true
           }}
-          aria-label="地図と運用ボードの幅を調整"
-        ><span /></button>
+          onClick={(event) => {
+            if (event.currentTarget.offsetWidth <= event.currentTarget.offsetHeight) return
+            setMobileMapPriority((current) => !current)
+          }}
+          aria-label={mobileMapPriority ? '運用ボードを広げる' : '地図を広げる'}
+        ><span /><b>{mobileMapPriority ? '運用を広げる' : '地図を広げる'}</b></button>
 
         <OperationsBoard
           race={activeRace}
@@ -1714,7 +1734,10 @@ export default function App() {
           canAdoptFinish={canAdoptFinish}
           onScaleChange={setBoardScale}
           onDetailChange={setBoardDetail}
-          onSelectMark={setSelectedMarkId}
+          onSelectMark={(markId) => {
+            setCourseAdvisorExpanded(false)
+            setSelectedMarkId(markId)
+          }}
           onAcknowledgeMessage={acknowledgeMessage}
           onOpenMessages={() => setMessagesOpen(true)}
           onOpenTaskMessage={openTaskMessage}

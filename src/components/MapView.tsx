@@ -5,6 +5,7 @@ import {
   CircleCheckBig,
   CloudOff,
   Crosshair,
+  ChevronDown,
   LocateFixed,
   MapPin,
   Navigation,
@@ -139,6 +140,7 @@ export function MapView({
   const [basemapUnavailable, setBasemapUnavailable] = useState(false)
   const [locationError, setLocationError] = useState<string>()
   const [tracking, setTracking] = useState(false)
+  const [expandedMarkId, setExpandedMarkId] = useState<string>()
   const [manualEditorMarkId, setManualEditorMarkId] = useState<string>()
   const [manualEntryMode, setManualEntryMode] = useState<CoordinateEntryMode>('dmm-tail-4')
   const [manualLatitude, setManualLatitude] = useState('')
@@ -152,6 +154,7 @@ export function MapView({
   const features = useMemo(() => buildCourseFeatures(marks), [marks])
   const initialFeaturesRef = useRef(features)
   const selectedMark = marks.find((mark) => mark.id === selectedMarkId)
+  const markDetailsExpanded = Boolean(selectedMarkId && expandedMarkId === selectedMarkId)
   const canManageSelectedMark = Boolean(selectedMark && manageableMarkIds.includes(selectedMark.id))
   const selfBoat = boats.find((boat) => boat.isSelf)
   const selectedPassage = selectedMark ? leadingPassages[passageVisitKey(raceId, selectedMark.id, 1)] : undefined
@@ -377,6 +380,7 @@ export function MapView({
     setManualNote('ハンディGPSから転記')
     setManualDifferenceConfirmed(false)
     setManualEntryError(undefined)
+    setExpandedMarkId(selectedMark.id)
     setManualEditorMarkId(selectedMark.id)
   }
 
@@ -425,6 +429,7 @@ export function MapView({
         note: manualNote.trim() || undefined,
       })
       setManualEditorMarkId(undefined)
+      setExpandedMarkId(undefined)
       setManualEntryError(undefined)
     } catch (reason) {
       setManualEntryError(reason instanceof Error ? reason.message : '座標を確認してください')
@@ -529,6 +534,7 @@ export function MapView({
             key={mark.id}
             onClick={() => {
               setManualEditorMarkId(undefined)
+              setExpandedMarkId(undefined)
               setManualEntryError(undefined)
               onSelectMark(selectedMarkId === mark.id ? undefined : mark.id)
             }}
@@ -540,7 +546,7 @@ export function MapView({
       </div>
 
       {selectedMark && (
-        <article className={`selected-mark glass-panel ${manualEditorMarkId === selectedMark.id ? 'selected-mark--editing' : ''}`}>
+        <article className={`selected-mark glass-panel ${markDetailsExpanded ? 'selected-mark--expanded' : ''} ${manualEditorMarkId === selectedMark.id ? 'selected-mark--editing' : ''}`}>
           <div className="selected-mark__icon"><MapPin size={19} /></div>
           <div className="selected-mark__body">
             <span className="eyebrow">{selectedMark.label}</span>
@@ -580,6 +586,18 @@ export function MapView({
               </div>
             )}
           </div>
+          <button
+            type="button"
+            className="selected-mark__toggle"
+            aria-expanded={markDetailsExpanded}
+            onClick={() => {
+              setExpandedMarkId(markDetailsExpanded ? undefined : selectedMark.id)
+              if (markDetailsExpanded) setManualEditorMarkId(undefined)
+            }}
+          >
+            <span>{markDetailsExpanded ? '地図へ戻る' : 'マーク操作'}</span>
+            <ChevronDown size={17} />
+          </button>
           <div className="selected-mark__actions">
             <button type="button" onClick={() => onRecordDrop(selectedMark.id)} disabled={locked || !selfBoat || !canManageSelectedMark}>
               <CircleCheckBig size={14} /> {selectedMark.actual ? '現在地へ再投下' : '現在地を投下地点に記録'}
