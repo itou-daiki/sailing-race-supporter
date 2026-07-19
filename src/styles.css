@@ -3314,6 +3314,113 @@ select:focus-visible {
   line-height: 1.5;
 }
 
+.start-line-basis {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 0 15px;
+  padding: 11px;
+  color: var(--navy);
+  background: #fff9e9;
+  border: 1px solid #e7cd8d;
+  border-radius: 11px;
+}
+
+.start-line-basis.is-recorded {
+  background: #edf9f4;
+  border-color: #9bd9c4;
+}
+
+.start-line-basis > header,
+.start-line-basis > header > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.start-line-basis > header {
+  justify-content: space-between;
+}
+
+.start-line-basis > header svg {
+  color: var(--dodger-strong);
+}
+
+.start-line-basis > header strong {
+  font-size: 12px;
+}
+
+.start-line-basis > header b {
+  padding: 4px 7px;
+  color: #76570f;
+  background: #fff;
+  border-radius: 999px;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.start-line-basis.is-recorded > header b {
+  color: #087659;
+}
+
+.start-line-basis > p {
+  margin: 0;
+  color: #4b687c;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.start-line-basis__metrics {
+  display: grid;
+  grid-template-columns: 1.3fr 0.7fr 0.8fr;
+  gap: 6px;
+}
+
+.start-line-basis__metrics > span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(133, 170, 191, 0.35);
+  border-radius: 8px;
+}
+
+.start-line-basis__metrics small {
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.start-line-basis__metrics strong {
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.start-line-basis__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+
+.start-line-basis__actions button {
+  min-height: 42px;
+  color: var(--dodger-strong);
+  background: #fff;
+  border: 1px solid #9bcaf0;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.start-line-basis__actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .settings-sheet input:disabled,
 .settings-sheet textarea:disabled {
   opacity: 0.6;
@@ -5357,6 +5464,77 @@ select:focus-visible {
   line-height: 1.5;
 }
 
+.event-center-editor__lead {
+  margin: 0;
+  color: #36566c;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.race-area-picker {
+  position: relative;
+  min-height: 220px;
+  overflow: hidden;
+  background:
+    linear-gradient(rgba(30, 144, 255, 0.09) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(30, 144, 255, 0.09) 1px, transparent 1px),
+    #dff2fc;
+  background-size: 24px 24px;
+  border: 2px solid #7fc3f3;
+  border-radius: 11px;
+}
+
+.race-area-picker__map {
+  position: absolute;
+  inset: 0;
+}
+
+.race-area-picker__guide {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 2;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  color: #064f85;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid #9bcaf0;
+  border-radius: 8px;
+  box-shadow: 0 3px 10px rgba(9, 39, 62, 0.12);
+  font-size: 9px;
+  font-weight: 850;
+  pointer-events: none;
+}
+
+.event-coordinate-details {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.event-coordinate-details summary {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  padding: 0 9px;
+  color: #315b77;
+  background: #edf5f9;
+  border-radius: 8px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.event-coordinate-details[open] summary {
+  margin-bottom: 8px;
+}
+
+.event-coordinate-details .event-center-editor__hint {
+  display: block;
+  margin-top: 6px;
+}
+
 .event-location-button.is-set {
   color: #087659;
   background: #e8f8f2;
@@ -6641,6 +6819,27 @@ select:focus-visible {
 
   .signal-dialog > footer button {
     padding: 0 10px;
+    font-size: 11px;
+  }
+
+  .race-area-picker {
+    min-height: 240px;
+  }
+
+  .race-area-picker__guide {
+    min-height: 38px;
+    font-size: 11px;
+  }
+
+  .event-location-button,
+  .event-coordinate-details summary,
+  .start-line-basis__actions button {
+    min-height: 44px;
+    font-size: 11px;
+  }
+
+  .event-center-editor__lead,
+  .start-line-basis > p {
     font-size: 11px;
   }
 

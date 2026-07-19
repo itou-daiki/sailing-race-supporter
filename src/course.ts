@@ -1,4 +1,5 @@
 import { CLASS_PROFILES, type LngLat, type SailingClass } from './domain'
+import { geodesicMidpoint } from '../shared/geo'
 
 const EARTH_RADIUS_METRES = 6_371_008.8
 
@@ -89,6 +90,10 @@ export interface CoursePlanNode {
 
 export interface CoursePlanInput {
   center: LngLat
+  startLine?: {
+    pin: LngLat
+    signal: LngLat
+  }
   windDirection: number
   totalLengthMetres: number
   courseCode: CourseTemplate
@@ -126,16 +131,17 @@ function courseLegDivisor(courseCode: CourseTemplate): number {
 
 export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
   const wind = ((input.windDirection % 360) + 360) % 360
+  const center = input.startLine ? geodesicMidpoint(input.startLine.pin, input.startLine.signal) : input.center
   const leg = Math.min(3_000, Math.max(250, input.totalLengthMetres / courseLegDivisor(input.courseCode)))
   const gateWidth = input.gateWidthMetres ?? Math.min(180, Math.max(70, leg * 0.12))
   const lineLength = input.startLineLengthMetres ?? Math.min(600, Math.max(180, leg * 0.35))
-  const upwind = destinationPoint(input.center, leg, wind)
-  let lowerRoundingCenter = destinationPoint(input.center, Math.min(160, leg * 0.14), wind)
-  const innerGateCenter = destinationPoint(input.center, Math.min(420, leg * 0.38), wind)
+  const upwind = destinationPoint(center, leg, wind)
+  let lowerRoundingCenter = destinationPoint(center, Math.min(160, leg * 0.14), wind)
+  const innerGateCenter = destinationPoint(center, Math.min(420, leg * 0.38), wind)
   const isSnipe = input.className === 'スナイプ'
   const nodes: CoursePlanNode[] = [
-    { key: 'start-pin', label: 'スタート・ピン', nodeType: 'start', target: destinationPoint(input.center, lineLength / 2, wind - 90) },
-    { key: 'start-rc', label: 'シグナルボート', nodeType: 'start', target: destinationPoint(input.center, lineLength / 2, wind + 90) },
+    { key: 'start-pin', label: 'スタート・ピン', nodeType: 'start', target: input.startLine?.pin ?? destinationPoint(center, lineLength / 2, wind - 90) },
+    { key: 'start-rc', label: 'シグナルボート', nodeType: 'start', target: input.startLine?.signal ?? destinationPoint(center, lineLength / 2, wind + 90) },
   ]
 
   if (input.upperGate) {

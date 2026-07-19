@@ -18,7 +18,7 @@ import {
   X,
 } from 'lucide-react'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { generateCoursePlan, recommendedCourseLength, type CourseTemplate } from './course'
+import { bearingDegrees, distanceMetres, generateCoursePlan, midpoint, recommendedCourseLength, type CourseTemplate } from './course'
 import {
   CLASS_PROFILES,
   DEMO_BOATS,
@@ -652,6 +652,22 @@ export default function App() {
     committeeBoatId: draftMarkCorrection.committeeBoatId,
   } : undefined)
   const recommendation = recommendedCourseLength(selectedClass, windSpeed)
+  const startPinMark = marks.find((mark) => mark.label === 'スタート・ピン')
+  const startSignalMark = marks.find((mark) => mark.label === 'シグナルボート')
+  const recordedStartEndpoints = Number(Boolean(startPinMark?.actual)) + Number(Boolean(startSignalMark?.actual))
+  const useRecordedStartLine = recordedStartEndpoints === 2
+  const startPinPosition = startPinMark
+    ? useRecordedStartLine ? startPinMark.actual! : startPinMark.target
+    : undefined
+  const startSignalPosition = startSignalMark
+    ? useRecordedStartLine ? startSignalMark.actual! : startSignalMark.target
+    : undefined
+  const startLineLength = startPinPosition && startSignalPosition
+    ? distanceMetres(startPinPosition, startSignalPosition)
+    : undefined
+  const startLineBearing = startPinPosition && startSignalPosition
+    ? bearingDegrees(startPinPosition, startSignalPosition)
+    : undefined
   const freeTierBudget = useMemo(() => estimateRegattaFreeTierUsage(STANDARD_REGATTA_LOAD), [])
   const activeTasks = useMemo(
     () => tasks.filter((task) => !task.raceId || task.raceId === activeRace.id),
@@ -1323,13 +1339,15 @@ export default function App() {
     if (locked) return
     setCourseSaving(true)
     setCourseSaveError(undefined)
-    const pin = marks.find((mark) => mark.label === 'スタート・ピン')
-    const signal = marks.find((mark) => mark.label === 'シグナルボート')
-    const center: LngLat = pin && signal
-      ? [(pin.target[0] + signal.target[0]) / 2, (pin.target[1] + signal.target[1]) / 2]
+    const startLine = startPinPosition && startSignalPosition
+      ? { pin: startPinPosition, signal: startSignalPosition }
+      : undefined
+    const center: LngLat = startLine
+      ? midpoint(startLine.pin, startLine.signal)
       : marks[0]?.target ?? [139.4638, 35.283]
     const plan = generateCoursePlan({
       center,
+      startLine,
       windDirection,
       totalLengthMetres: recommendation.kilometres * 1_000,
       courseCode: courseTemplate,
@@ -1846,6 +1864,34 @@ export default function App() {
               <BellRing size={17} /> {scheduleWorking ? '予告予定を共有中…' : '予告予定を全運営へ共有'}
             </button>
             <label><span>風向（真方位・°T）</span><input type="number" min="0" max="359" value={windDirection} onChange={(event) => setWindDirection(Number(event.target.value))} /></label>
+            <section className={`start-line-basis ${useRecordedStartLine ? 'is-recorded' : ''}`} aria-label="推奨マーク位置の基準">
+              <header>
+                <span><Anchor size={17} /><strong>② スタートラインを決める</strong></span>
+                <b>{useRecordedStartLine ? '実位置 2/2' : `実位置 ${recordedStartEndpoints}/2`}</b>
+              </header>
+              <p>地図でPINとRCを選び、「マーク操作」から現在地またはハンディGPSの位置を記録します。</p>
+              {startLineLength !== undefined && startLineBearing !== undefined && (
+                <div className="start-line-basis__metrics">
+                  <span><small>使用するライン</small><strong>{useRecordedStartLine ? '記録した実位置' : '現在の計画位置'}</strong></span>
+                  <span><small>長さ</small><strong>{Math.round(startLineLength)} m</strong></span>
+                  <span><small>PIN → RC</small><strong>{formatTrueBearing(startLineBearing)}</strong></span>
+                </div>
+              )}
+              <div className="start-line-basis__actions">
+                <button type="button" disabled={!startPinMark} onClick={() => {
+                  if (!startPinMark) return
+                  setSettingsOpen(false)
+                  setSelectedMarkId(startPinMark.id)
+                  setMobileMapPriority(true)
+                }}>PINを地図で決める</button>
+                <button type="button" disabled={!startSignalMark} onClick={() => {
+                  if (!startSignalMark) return
+                  setSettingsOpen(false)
+                  setSelectedMarkId(startSignalMark.id)
+                  setMobileMapPriority(true)
+                }}>RCを地図で決める</button>
+              </div>
+            </section>
             <div className="settings-subsection">
               <span className="eyebrow">潮流観測</span>
               <small>流向は海水が流れていく方向を真方位で入力</small>
@@ -1892,7 +1938,7 @@ export default function App() {
             <button type="button" className="sheet-secondary" onClick={() => { setSettingsOpen(false); setEventManagerOpen(true) }}><Anchor size={17} /> 大会を発行・選択・共有</button>
             {session.mode === 'authenticated' && <button type="button" className="sheet-secondary" onClick={() => { setSettingsOpen(false); setLogsOpen(true) }}><ScrollText size={17} /> 大会・レース別の運営ログ</button>}
             <button type="button" className="sheet-secondary" onClick={() => { setSettingsOpen(false); setResumeEventIssuanceAfterAuth(false); setAuthOpen(true) }}><ShieldCheck size={17} /> 本人確認・パスキー</button>
-            <button type="button" className="sheet-primary" onClick={() => void saveCourse()} disabled={courseSaving || locked}>{courseSaving ? '座標を計算・保存中…' : '設定案を保存'}</button>
+            <button type="button" className="sheet-primary" onClick={() => void saveCourse()} disabled={courseSaving || locked}>{courseSaving ? '推奨位置を計算・保存中…' : useRecordedStartLine ? '③ スタートラインから推奨マーク位置を保存' : '③ 計画ラインから推奨マーク位置を保存'}</button>
           </aside>
         </div>
       )}

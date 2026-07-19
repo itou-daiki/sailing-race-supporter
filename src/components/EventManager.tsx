@@ -58,6 +58,7 @@ import {
 import { exportLocalEventData } from '../offlineStore'
 import { CoursePresetPicker } from './CoursePresetPicker'
 import { OwnerRecoveryKitPanel } from './OwnerRecoveryKitPanel'
+import { RaceAreaPicker } from './RaceAreaPicker'
 
 interface EventManagerProps {
   session: SessionState
@@ -848,17 +849,29 @@ export function EventManager({
               <CoursePresetPicker className={className} value={courseCode} onChange={setCourseCode} />
               <section className="event-center-editor" aria-labelledby="event-center-title">
                 <header>
-                  <span id="event-center-title">レース海面の初期中心</span>
-                  <small>WGS84・小数度</small>
+                  <span id="event-center-title">① レース海面をざっくり決める</span>
+                  <small>大会後も調整できます</small>
                 </header>
-                <div className="event-form-grid">
-                  <label className="event-field"><span>経度（東経は正）</span><input aria-label="レース海面の経度" type="number" inputMode="decimal" min="-180" max="180" step="0.0000001" value={centerLongitude} onChange={(event) => setCenterLongitude(event.target.value)} required /></label>
-                  <label className="event-field"><span>緯度（北緯は正）</span><input aria-label="レース海面の緯度" type="number" inputMode="decimal" min="-85" max="85" step="0.0000001" value={centerLatitude} onChange={(event) => setCenterLatitude(event.target.value)} required /></label>
-                </div>
-                <small className="event-center-editor__hint">例：経度 {DEFAULT_RACE_AREA_CENTER.longitude} ／ 緯度 {DEFAULT_RACE_AREA_CENTER.latitude}。大会発行後の海面Aと初期マーク配置の基準になります。</small>
+                <p className="event-center-editor__lead">海面のおおよその中央を選んでください。正確なマーク位置は、海上でスタートラインを決めた後に作成します。</p>
+                <RaceAreaPicker
+                  longitude={center?.longitude ?? DEFAULT_RACE_AREA_CENTER.longitude}
+                  latitude={center?.latitude ?? DEFAULT_RACE_AREA_CENTER.latitude}
+                  onChange={(next) => {
+                    setCenterLongitude(next.longitude.toFixed(7))
+                    setCenterLatitude(next.latitude.toFixed(7))
+                  }}
+                />
                 <button type="button" className={`event-location-button ${center ? 'is-set' : ''}`} onClick={useCurrentLocation}>
-                  <LocateFixed size={17} />現在地を入力値へ反映
+                  <LocateFixed size={17} />現在地付近を海面にする
                 </button>
+                <details className="event-coordinate-details">
+                  <summary>緯度・経度を直接入力する</summary>
+                  <div className="event-form-grid">
+                    <label className="event-field"><span>経度（東経は正）</span><input aria-label="レース海面の経度" type="number" inputMode="decimal" min="-180" max="180" step="0.0000001" value={centerLongitude} onChange={(event) => setCenterLongitude(event.target.value)} required /></label>
+                    <label className="event-field"><span>緯度（北緯は正）</span><input aria-label="レース海面の緯度" type="number" inputMode="decimal" min="-85" max="85" step="0.0000001" value={centerLatitude} onChange={(event) => setCenterLatitude(event.target.value)} required /></label>
+                  </div>
+                  <small className="event-center-editor__hint">WGS 84・小数度。例：経度 {DEFAULT_RACE_AREA_CENTER.longitude} ／ 緯度 {DEFAULT_RACE_AREA_CENTER.latitude}</small>
+                </details>
               </section>
               <div className="event-create-note"><CalendarDays size={17} /><p>大会内の1R〜{raceCount}R、海面A、標準マークと運営ボートを作成します。予備パスキーが2個未満の場合は、発行直後に一回限りのオーナー復旧キットを保存します。</p></div>
               <button type="submit" className="event-create-submit" disabled={creating || name.trim().length < 2 || !center}>

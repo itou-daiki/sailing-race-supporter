@@ -30,6 +30,28 @@ describe('course calculations', () => {
     expect(longRace.confidence).toBe('low')
   })
 
+  it('keeps a decided start line and recommends marks from its midpoint', () => {
+    const pin = [131.5201, 33.2781] as const
+    const signal = [131.5231, 33.2781] as const
+    const plan = generateCoursePlan({
+      center: [131.5, 33.2],
+      startLine: { pin, signal },
+      windDirection: 0,
+      totalLengthMetres: 5_400,
+      courseCode: 'O2',
+      className: '470',
+      lowerGate: true,
+      upperGate: false,
+    })
+
+    expect(plan.find((node) => node.key === 'start-pin')?.target).toEqual(pin)
+    expect(plan.find((node) => node.key === 'start-rc')?.target).toEqual(signal)
+    const mark1 = plan.find((node) => node.key === 'mark-1')
+    expect(mark1).toBeDefined()
+    expect(bearingDegrees(midpoint(pin, signal), mark1!.target)).toBeCloseTo(0, 1)
+    expect(distanceMetres(midpoint(pin, signal), mark1!.target)).toBeCloseTo(1_000, -1)
+  })
+
   it('creates separate upper and lower gate marks around the wind axis', () => {
     const plan = generateCoursePlan({
       center: [139.46, 35.28],

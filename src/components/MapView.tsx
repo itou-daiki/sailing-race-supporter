@@ -30,6 +30,7 @@ import {
   type CoordinateEntryMode,
 } from '../coordinateEntry'
 import { formatTrueBearing } from '../../shared/trueBearing'
+import { GSI_MAP_STYLE } from '../mapStyle'
 
 interface MapViewProps {
   marks: readonly CourseMark[]
@@ -58,25 +59,6 @@ interface MapViewProps {
   canEditFinalizedPosition: boolean
   passageLocked: boolean
   canAdoptLeadingPassage: boolean
-}
-
-const MAP_STYLE: maplibregl.StyleSpecification = {
-  version: 8,
-  glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
-  sources: {
-    gsi: {
-      type: 'raster',
-      tiles: ['https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png'],
-      tileSize: 256,
-      attribution:
-        '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">国土地理院</a>',
-      maxzoom: 18,
-    },
-  },
-  layers: [
-    { id: 'water-background', type: 'background', paint: { 'background-color': '#bfe7fb' } },
-    { id: 'gsi-map', type: 'raster', source: 'gsi', paint: { 'raster-opacity': 0.76 } },
-  ],
 }
 
 const DATUM_CONFIRMATION_ERROR = 'ハンディGPSの測地系がWGS 84であることを確認してください'
@@ -154,6 +136,7 @@ export function MapView({
   const features = useMemo(() => buildCourseFeatures(marks), [marks])
   const initialFeaturesRef = useRef(features)
   const selectedMark = marks.find((mark) => mark.id === selectedMarkId)
+  const selectedIsStartEndpoint = selectedMark?.label === 'スタート・ピン' || selectedMark?.label === 'シグナルボート'
   const markDetailsExpanded = Boolean(selectedMarkId && expandedMarkId === selectedMarkId)
   const canManageSelectedMark = Boolean(selectedMark && manageableMarkIds.includes(selectedMark.id))
   const selfBoat = boats.find((boat) => boat.isSelf)
@@ -201,7 +184,7 @@ export function MapView({
 
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: MAP_STYLE,
+      style: GSI_MAP_STYLE,
       center: [139.465, 35.2857],
       zoom: 13.4,
       minZoom: 6,
@@ -491,7 +474,7 @@ export function MapView({
         <div className="map-topbar__primary">
           <span className="eyebrow"><Radio size={13} /> {raceAreaName ?? 'レース海面'}・LIVE</span>
           <strong>{raceAreaName ?? 'レース海面'} コース設営</strong>
-          <small className="map-primary-guidance">① 下のマークを選ぶ → ②「マーク操作」</small>
+          <small className="map-primary-guidance">① 下の地点を選ぶ → ②「マーク／ライン操作」</small>
         </div>
         <div className="map-environment">
           <div className="map-weather">
@@ -528,7 +511,7 @@ export function MapView({
       </div>
 
       <div className="map-mark-strip" aria-label="マーク一覧">
-        {marks.filter((mark) => !mark.id.startsWith('start-')).map((mark) => (
+        {marks.map((mark) => (
           <button
             type="button"
             className={`mark-chip ${selectedMarkId === mark.id ? 'is-selected' : ''}`}
@@ -597,12 +580,14 @@ export function MapView({
               if (markDetailsExpanded) setManualEditorMarkId(undefined)
             }}
           >
-            <span>{markDetailsExpanded ? '地図へ戻る' : 'マーク操作'}</span>
+            <span>{markDetailsExpanded ? '地図へ戻る' : selectedIsStartEndpoint ? 'ライン操作' : 'マーク操作'}</span>
             <ChevronDown size={17} />
           </button>
           <div className="selected-mark__actions">
             <button type="button" onClick={() => onRecordDrop(selectedMark.id)} disabled={locked || !selfBoat || !canManageSelectedMark}>
-              <CircleCheckBig size={14} /> {selectedMark.actual ? '現在地へ再投下' : '現在地を投下地点に記録'}
+              <CircleCheckBig size={14} /> {selectedIsStartEndpoint
+                ? selectedMark.actual ? '現在地へライン位置を更新' : '現在地をライン位置に記録'
+                : selectedMark.actual ? '現在地へ再投下' : '現在地を投下地点に記録'}
             </button>
             <button type="button" onClick={openManualEditor} disabled={!canManageSelectedMark || locked && !canEditFinalizedPosition}>
               <PencilLine size={14} /> GPS数値を手入力
@@ -612,7 +597,7 @@ export function MapView({
                 <BadgeCheck size={14} /> 現在地から位置確認
               </button>
             )}
-            {(selectedMark.status === 'deployed' || selectedMark.status === 'confirmed') && (
+            {selectedMark.label !== 'シグナルボート' && (selectedMark.status === 'deployed' || selectedMark.status === 'confirmed') && (
               <button
                 type="button"
                 className="mark-action--recover"
@@ -624,15 +609,15 @@ export function MapView({
                 <Anchor size={14} /> 回収済みにする
               </button>
             )}
-            <button type="button" onClick={() => onRecordLeadingPassage(selectedMark.id)} disabled={passageLocked}>
+            {!selectedIsStartEndpoint && <button type="button" onClick={() => onRecordLeadingPassage(selectedMark.id)} disabled={passageLocked}>
               <Timer size={14} /> {selectedPassageObservations.length ? '別観測を追加' : '先頭通過を記録'}
-            </button>
+            </button>}
           </div>
           {manualEditorMarkId === selectedMark.id && manualReference && (
             <form ref={manualEditorRef} className="manual-position-editor" onSubmit={submitManualPosition}>
               <header>
                 <span>
-                  <strong>{selectedMark.label}：ハンディGPSの投下位置</strong>
+                  <strong>{selectedMark.label}：ハンディGPSの{selectedIsStartEndpoint ? 'ライン位置' : '投下位置'}</strong>
                   <small>{manualEntryMode === 'dmm-tail-4' ? '度＋10進分（DD°MM.mmmm′）' : '10進度（DD.dddddd°）'}・WGS 84</small>
                 </span>
                 <span className="manual-position-header-actions">
