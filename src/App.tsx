@@ -78,7 +78,7 @@ import type { CoordinateEntryMode } from './coordinateEntry'
 import { formatTrueBearing } from '../shared/trueBearing'
 import { coursePresetForClass, normalizeCoursePresetCode, type CoursePresetCode } from '../shared/coursePresets'
 
-const DETAIL_KEY = 'srs-board-detail'
+const DETAIL_KEY = 'srs-board-detail-v2'
 const SCALE_KEY = 'srs-board-scale'
 const SPLIT_KEY = 'srs-map-split'
 
@@ -278,7 +278,7 @@ export default function App() {
   const [boardScale, setBoardScale] = useState(() => storedNumber(SCALE_KEY, 100))
   const [boardDetail, setBoardDetail] = useState<BoardDetail>(() => {
     const stored = window.localStorage.getItem(DETAIL_KEY)
-    return stored === 'overview' || stored === 'detail' ? stored : 'standard'
+    return stored === 'standard' || stored === 'detail' ? stored : 'overview'
   })
   const [mapSplit, setMapSplit] = useState(() => storedNumber(SPLIT_KEY, 58))
   const [mobileMapPriority, setMobileMapPriority] = useState(true)

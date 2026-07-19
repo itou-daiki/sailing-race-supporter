@@ -491,6 +491,7 @@ export function MapView({
         <div className="map-topbar__primary">
           <span className="eyebrow"><Radio size={13} /> {raceAreaName ?? 'レース海面'}・LIVE</span>
           <strong>{raceAreaName ?? 'レース海面'} コース設営</strong>
+          <small className="map-primary-guidance">① 下のマークを選ぶ → ②「マーク操作」</small>
         </div>
         <div className="map-environment">
           <div className="map-weather">
@@ -531,6 +532,7 @@ export function MapView({
           <button
             type="button"
             className={`mark-chip ${selectedMarkId === mark.id ? 'is-selected' : ''}`}
+            aria-pressed={selectedMarkId === mark.id}
             key={mark.id}
             onClick={() => {
               setManualEditorMarkId(undefined)

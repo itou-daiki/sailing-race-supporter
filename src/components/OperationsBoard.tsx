@@ -81,7 +81,7 @@ const taskStatusLabel: Record<OperationalTask['status'], string> = {
 }
 
 const detailLabels: Record<BoardDetail, string> = {
-  overview: '全体',
+  overview: 'かんたん',
   standard: '標準',
   detail: '詳細',
 }
@@ -176,6 +176,7 @@ export function OperationsBoard({
               <button
                 type="button"
                 className={detail === value ? 'is-active' : ''}
+                aria-pressed={detail === value}
                 onClick={() => onDetailChange(value)}
                 key={value}
               >
@@ -187,7 +188,7 @@ export function OperationsBoard({
             <button type="button" onClick={() => setScale(scale - 25)} aria-label="縮小"><Minus size={15} /></button>
             <button type="button" className="zoom-value" onClick={() => setScale(100)}>{scale}%</button>
             <button type="button" onClick={() => setScale(scale + 25)} aria-label="拡大"><Plus size={15} /></button>
-            <button type="button" onClick={() => setScale(75)} aria-label="全体を表示"><Maximize2 size={15} /></button>
+            <button type="button" className="zoom-fit" onClick={() => setScale(75)} aria-label="全体を表示"><Maximize2 size={15} /><span>全体</span></button>
           </div>
         </div>
       </div>
@@ -242,32 +243,32 @@ export function OperationsBoard({
         </section>
 
         <div className="metric-grid">
-          <article className="metric-card">
+          <article className="metric-card metric-course">
             <span><Route size={16} /> コース</span>
             <strong>{race.courseCode.split(' / ')[0]}</strong>
             <small>{race.courseCode.split(' / ')[1]}</small>
           </article>
-          <article className="metric-card">
+          <article className="metric-card metric-marks">
             <span><CircleDot size={16} /> マーク</span>
             <strong>{confirmedMarks}<small> / {marks.length}</small></strong>
             <small>{marks.length - confirmedMarks}件の確認が必要</small>
           </article>
-          <article className="metric-card">
+          <article className="metric-card metric-boats">
             <span><ShipWheel size={16} /> 運営ボート</span>
             <strong>{liveBoats}<small> / {boats.length}</small></strong>
             <small>全艇と通信中</small>
           </article>
-          <article className="metric-card">
+          <article className="metric-card metric-wind">
             <span><Wind size={16} /> 5分平均風</span>
             <strong>{formatTrueBearing(wind.directionDegrees)} <small>{wind.speedKnots.toFixed(1)}kt</small></strong>
             <small>ガスト {wind.gustKnots.toFixed(1)}kt・安定</small>
           </article>
-          <article className="metric-card">
+          <article className="metric-card metric-current">
             <span><Waves size={16} /> 潮流（流向）</span>
             <strong>{formatTrueBearing(current.directionDegrees)} <small>{current.speedKnots.toFixed(1)}kt</small></strong>
             <small>{current.source}・信頼度 {current.confidence === 'high' ? '高' : current.confidence === 'medium' ? '中' : '低'}</small>
           </article>
-          <article className={`metric-card budget-stage-${runtimeBudget?.stage ?? freeTierBudget.stage}`}>
+          <article className={`metric-card metric-budget budget-stage-${runtimeBudget?.stage ?? freeTierBudget.stage}`}>
             <span><RadioTower size={16} /> 無料枠・稼働監視</span>
             <strong>{Math.ceil(runtimeBudget?.maxPercent ?? freeTierBudget.maxPercent)}<small>%</small></strong>
             <small>最大：{runtimeBudget?.limitingMetricLabel ?? `${freeTierBudget.limitingMetric.label}（標準負荷試算）`}</small>
@@ -278,12 +279,12 @@ export function OperationsBoard({
               位置更新 {runtimeBudget.policy.transientPositionMinIntervalMs / 1_000}秒以上へ縮退・重要イベントは維持
             </small>}
           </article>
-          <article className={`metric-card ${latestPassage?.hasConflict ? 'metric-card--warning' : ''}`}>
+          <article className={`metric-card metric-passage ${latestPassage?.hasConflict ? 'metric-card--warning' : ''}`}>
             <span><Clock3 size={16} /> 最新先頭通過</span>
             <strong>{latestPassage ? new Intl.DateTimeFormat('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(latestPassage.passedAt)) : '未記録'}</strong>
             <small>{latestPassage ? `${latestPassage.markLabel}・${latestPassage.lapNumber}周目・${latestPassage.adopted ? '採用済' : '観測候補'}${latestPassage.hasConflict ? '・時刻差あり' : ''}` : 'マーク通過時に記録'}</small>
           </article>
-          <button type="button" className={`metric-card metric-card--action ${unresolvedUrgent ? 'metric-card--urgent' : ''}`} onClick={onOpenMessages}>
+          <button type="button" className={`metric-card metric-urgent metric-card--action ${unresolvedUrgent ? 'metric-card--urgent' : ''}`} onClick={onOpenMessages}>
             <span><ShieldAlert size={16} /> 緊急連絡</span>
             <strong>{unresolvedUrgent}<small> 件未確認</small></strong>
             <small>{unresolvedUrgent ? 'タップして確認・応答' : '未確認なし'}</small>
