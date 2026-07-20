@@ -2004,6 +2004,7 @@ select:focus-visible {
 
 .status-banner-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: calc(8px * var(--board-scale));
 }
@@ -2054,6 +2055,12 @@ select:focus-visible {
   color: #50437a;
   background: #f0edfb;
   border-color: #cbc3ee;
+}
+
+.status-banner--solo {
+  color: #76520d;
+  background: #fff6dc;
+  border-color: #e7c96e;
 }
 
 .next-action-card,
@@ -5305,6 +5312,103 @@ select:focus-visible {
   line-height: 1.45;
 }
 
+.event-operation-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.event-operation-mode__label {
+  color: var(--navy);
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.event-operation-mode__options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.event-operation-mode__options > button {
+  min-width: 0;
+  min-height: 68px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px;
+  color: #547186;
+  text-align: left;
+  background: #f7fafc;
+  border: 1px solid #cadde8;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.event-operation-mode__options > button > span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.event-operation-mode__options strong {
+  color: var(--navy);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.event-operation-mode__options small {
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.event-operation-mode__options > button.is-selected {
+  color: #fff;
+  background: #e8f5ff;
+  border-color: var(--dodger-strong);
+  box-shadow: 0 0 0 1px var(--dodger-strong);
+}
+
+.event-operation-mode__options > button.is-selected > svg {
+  flex: 0 0 auto;
+  color: #fff;
+  padding: 3px;
+  background: var(--dodger-strong);
+  border-radius: 999px;
+}
+
+.event-operation-mode__safety {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  margin: 0;
+  padding: 10px;
+  color: #8a650d;
+  background: #fff7de;
+  border: 1px solid #ead184;
+  border-radius: 9px;
+}
+
+.event-operation-mode__safety > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.event-operation-mode__safety strong {
+  color: #624a0b;
+  font-size: 9px;
+}
+
+.event-operation-mode__safety small {
+  color: #725e28;
+  font-size: 8px;
+  line-height: 1.5;
+}
+
 .event-step-readiness {
   min-height: 38px;
   display: flex;
@@ -7095,6 +7199,14 @@ select:focus-visible {
 }
 
 @media (max-width: 520px) {
+  .event-operation-mode__options {
+    grid-template-columns: 1fr;
+  }
+
+  .event-operation-mode__options > button {
+    min-height: 58px;
+  }
+
   .event-manager-nav {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

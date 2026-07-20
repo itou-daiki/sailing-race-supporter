@@ -82,6 +82,7 @@ import { formatTrueBearing } from '../shared/trueBearing'
 import { coursePresetForClass, normalizeCoursePresetCode, type CoursePresetCode } from '../shared/coursePresets'
 import { assignWindReadingsToMarks, formatWindSpeedDual } from './markWind'
 import { canRecordOverallWind, isRaceOfficerRole, operationRoleLabel, roleCan } from '../shared/roles'
+import type { OperationMode } from '../shared/operationModes'
 
 const DETAIL_KEY = 'srs-board-detail-v2'
 const SCALE_KEY = 'srs-board-scale'
@@ -108,6 +109,7 @@ const operationLabels: Record<string, string> = {
 
 interface CachedAppState {
   eventName: string
+  operationMode?: OperationMode
   races: readonly RaceDefinition[]
   boats: readonly CommitteeBoat[]
   messages: readonly OperationalMessage[]
@@ -235,6 +237,7 @@ export default function App() {
   const [eventRoute] = useState(hasEventLocation)
   const [eventDatabaseId, setEventDatabaseId] = useState<string>()
   const [eventName, setEventName] = useState('2026 別府湾サマーレガッタ')
+  const [operationMode, setOperationMode] = useState<OperationMode>('team')
   const [memberId, setMemberId] = useState(localMemberId)
   const [activeRaceId, setActiveRaceId] = useState(DEMO_RACES[0].id)
   const [races, setRaces] = useState<readonly RaceDefinition[]>(DEMO_RACES)
@@ -819,6 +822,7 @@ export default function App() {
       const cached = await loadEventSnapshot<CachedAppState>(eventId)
       if (!active || !cached) return
       setEventName(cached.value.eventName)
+      setOperationMode(cached.value.operationMode ?? 'team')
       setRaces(cached.value.races)
       setActiveRaceId((current) => cached.value.races.some((race) => race.id === current) ? current : cached.value.races[0]?.id ?? current)
       setBoats(cached.value.boats)
@@ -845,6 +849,7 @@ export default function App() {
         if (!active) return
         setEventDatabaseId(bootstrap.event.id)
         setEventName(bootstrap.event.name)
+        setOperationMode(bootstrap.event.operationMode)
         setEventAccess(bootstrap.access)
         setEventResources(bootstrap.resources)
         setRevisionDrafts(Object.fromEntries(bootstrap.revisionDrafts.map((draft) => [draft.raceId, draft])))
@@ -883,6 +888,7 @@ export default function App() {
         savedAt: new Date().toISOString(),
         value: {
           eventName,
+          operationMode,
           races,
           boats,
           messages,
@@ -897,7 +903,7 @@ export default function App() {
       })
     }, 250)
     return () => window.clearTimeout(timeout)
-  }, [boats, eventId, eventName, finishes, leadingPassages, markWinds, memberCount, messages, races, realtime.lastSequence, seaCurrent, tasks, windDetails])
+  }, [boats, eventId, eventName, finishes, leadingPassages, markWinds, memberCount, messages, operationMode, races, realtime.lastSequence, seaCurrent, tasks, windDetails])
 
   useEffect(() => {
     const move = (event: PointerEvent) => {
@@ -1871,6 +1877,7 @@ export default function App() {
           socketStatus={realtime.status}
           pendingCount={realtime.pendingCount}
           memberCount={memberCount}
+          operationMode={operationMode}
           latestSignal={activeRace.latestSignal}
           firstFinish={firstFinish}
           latestPassage={latestPassage}

@@ -43,8 +43,11 @@ describe('EventManager free-only backup UI', () => {
     expect(screen.getByRole('option', { name: '記録員' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /新しい大会を作る/u }))
-    expect(screen.getByText('大会名と日程')).toBeInTheDocument()
+    expect(screen.getByText('大会情報と運営体制')).toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: '初期コース' })).not.toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /通常運営（複数メンバー）/u })).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(screen.getByRole('radio', { name: /ワンオペ（1人で兼務）/u }))
+    expect(screen.getByText('ワンオペ用に初期設定します')).toBeInTheDocument()
     fireEvent.change(screen.getByRole('textbox', { name: '大会名' }), { target: { value: '2026 別府湾サマーレガッタ' } })
     fireEvent.click(screen.getByRole('button', { name: '次へ：レース設定' }))
 
@@ -61,6 +64,8 @@ describe('EventManager free-only backup UI', () => {
     expect(screen.getByLabelText('レース海面の緯度')).toHaveValue(33.2786648)
     expect(screen.getByText('2026 別府湾サマーレガッタ')).toBeInTheDocument()
     expect(screen.getByText('3レース・470')).toBeInTheDocument()
+    expect(screen.getByText('ワンオペ（1人で兼務）')).toBeInTheDocument()
+    expect(screen.getByText(/ワンオペ運営艇1隻と兼務用タスク/u)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /この内容で大会URLを発行/u })).toBeEnabled()
   })
 

@@ -25,6 +25,7 @@ import { CLASS_PROFILES, type RaceDefinition, type SailingClass } from '../domai
 import { coursePresetForClass, normalizeCoursePresetCode } from '../../shared/coursePresets'
 import { DEFAULT_RACE_AREA_CENTER } from '../../shared/defaultRaceArea'
 import { INVITABLE_OPERATION_ROLES, operationRoleLabel } from '../../shared/roles'
+import { OPERATION_MODE_OPTIONS, operationModeOption, type OperationMode } from '../../shared/operationModes'
 import {
   assignRaceArea,
   createRaceArea,
@@ -140,6 +141,7 @@ export function EventManager({
   const [startsOn, setStartsOn] = useState(localDate(defaultEventDay))
   const [endsOn, setEndsOn] = useState(localDate(defaultEventDay))
   const [raceCount, setRaceCount] = useState(3)
+  const [operationMode, setOperationMode] = useState<OperationMode>('team')
   const [className, setClassName] = useState<SailingClass>('470')
   const [courseCode, setCourseCode] = useState('O2')
   const [firstWarningAt, setFirstWarningAt] = useState(localDateTime(defaultEventDay))
@@ -309,6 +311,7 @@ export function EventManager({
         startsOn,
         endsOn,
         raceCount,
+        operationMode,
         className,
         courseCode,
         firstWarningAt: new Date(firstWarningAt).toISOString(),
@@ -907,7 +910,7 @@ export function EventManager({
               </header>
               <nav className="event-create-steps" aria-label="大会作成の手順">
                 <button type="button" className={creationStep === 1 ? 'is-current' : creationStep > 1 ? 'is-complete' : ''} aria-current={creationStep === 1 ? 'step' : undefined} onClick={() => setCreationStep(1)}>
-                  <b>{creationStep > 1 ? <Check size={15} /> : '1'}</b><span>大会情報<small>名前・日程</small></span>
+                  <b>{creationStep > 1 ? <Check size={15} /> : '1'}</b><span>大会情報<small>名前・体制</small></span>
                 </button>
                 <button type="button" className={creationStep === 2 ? 'is-current' : creationStep > 2 ? 'is-complete' : ''} aria-current={creationStep === 2 ? 'step' : undefined} disabled={!basicDetailsReady} onClick={() => setCreationStep(2)}>
                   <b>{creationStep > 2 ? <Check size={15} /> : '2'}</b><span>レース設定<small>艇種・コース</small></span>
@@ -918,8 +921,20 @@ export function EventManager({
               </nav>
 
               {creationStep === 1 && <section className="event-create-step" aria-labelledby="create-step-basic">
-                <div className="event-create-step__title"><span><b>1</b><strong id="create-step-basic">大会名と日程</strong></span><small>まず、共有相手が識別できる名前を入力します</small></div>
+                <div className="event-create-step__title"><span><b>1</b><strong id="create-step-basic">大会情報と運営体制</strong></span><small>大会名と、複数人／ワンオペを選びます</small></div>
                 <label className="event-field event-field--wide"><span>大会名</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="例：2026 別府湾サマーレガッタ" minLength={2} maxLength={100} autoFocus required /></label>
+                <div className="event-operation-mode">
+                  <span className="event-operation-mode__label">運営体制</span>
+                  <div className="event-operation-mode__options" role="radiogroup" aria-label="運営体制">
+                    {OPERATION_MODE_OPTIONS.map((option) => (
+                      <button type="button" role="radio" aria-checked={operationMode === option.value} className={operationMode === option.value ? 'is-selected' : ''} onClick={() => setOperationMode(option.value)} key={option.value}>
+                        <span><strong>{option.label}</strong><small>{option.description}</small></span>
+                        {operationMode === option.value && <Check size={17} />}
+                      </button>
+                    ))}
+                  </div>
+                  {operationMode === 'solo' && <p className="event-operation-mode__safety"><ShieldCheck size={16} /><span><strong>ワンオペ用に初期設定します</strong><small>管理者を「全運営」にし、運営艇1隻と兼務用チェックリストを作ります。実際の安全要員や大会要件を緩和する設定ではありません。</small></span></p>}
+                </div>
                 <div className="event-form-grid">
                   <label className="event-field"><span>開始日</span><input type="date" value={startsOn} onChange={(event) => changeStartsOn(event.target.value)} required /></label>
                   <label className="event-field"><span>終了日</span><input type="date" min={startsOn} value={endsOn} onChange={(event) => setEndsOn(event.target.value)} required /></label>
@@ -970,12 +985,13 @@ export function EventManager({
                     <div><dt>大会</dt><dd>{name.trim()}</dd></div>
                     <div><dt>開催日</dt><dd>{startsOn === endsOn ? startsOn : `${startsOn}〜${endsOn}`}</dd></div>
                     <div><dt>レース</dt><dd>{raceCount}レース・{className}</dd></div>
+                    <div><dt>運営体制</dt><dd>{operationModeOption(operationMode).label}</dd></div>
                     <div><dt>初期コース</dt><dd>{selectedCoursePreset.optionLabel}</dd></div>
                     <div><dt>1R予告</dt><dd>{formatTimestamp(firstWarningAt)}</dd></div>
                     <div><dt>海面中心</dt><dd>{center ? `${center.latitude.toFixed(5)}, ${center.longitude.toFixed(5)}` : '未設定'}</dd></div>
                   </dl>
                 </section>
-                <div className="event-create-note"><CalendarDays size={17} /><p>固定共有URL、1R〜{raceCount}R、海面A、標準マーク、運営ボートをまとめて作成します。発行直後に管理者復旧キットの保存を案内する場合があります。</p></div>
+                <div className="event-create-note"><CalendarDays size={17} /><p>固定共有URL、1R〜{raceCount}R、海面A、標準マーク、{operationMode === 'solo' ? 'ワンオペ運営艇1隻と兼務用タスク' : '担当別の運営ボートとタスク'}をまとめて作成します。発行直後に管理者復旧キットの保存を案内する場合があります。</p></div>
                 <div className="event-wizard-actions"><button type="button" onClick={() => setCreationStep(2)}>戻る</button><button type="submit" className="event-create-submit" disabled={creating || !center}>{creating ? <LoaderCircle className="is-spinning" size={18} /> : <Clipboard size={18} />}{creating ? '大会URLを発行中…' : 'この内容で大会URLを発行'}</button></div>
               </section>}
             </form>}

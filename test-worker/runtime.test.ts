@@ -124,7 +124,7 @@ describe('Cloudflare Workers runtime integration', () => {
       "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
     ).first<{ count: number }>()
 
-    expect(migrations.results).toHaveLength(28)
+    expect(migrations.results).toHaveLength(29)
     expect(tableCount?.count).toBeGreaterThanOrEqual(50)
   })
 
@@ -209,6 +209,58 @@ describe('Cloudflare Workers runtime integration', () => {
       { label: '下ゲート 3S', node_type: 'gate' },
       { label: '下ゲート 3P', node_type: 'gate' },
     ])
+
+    const soloResponse = await exports.default.fetch('https://example.test/api/events', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        Cookie: `srs_session=${sessionToken}`,
+        Origin: 'https://example.test',
+      },
+      body: JSON.stringify({
+        name: '2026 ワンオペ運営テスト',
+        startsOn: '2026-07-19',
+        endsOn: '2026-07-19',
+        raceCount: 1,
+        className: '470',
+        courseCode: 'O2',
+        operationMode: 'solo',
+        firstWarningAt: '2026-07-19T03:00:00.000Z',
+      }),
+    })
+    const soloIssued = await soloResponse.json<{
+      event: { id: string; slug: string; operationMode: string }
+    }>()
+    expect(soloResponse.status).toBe(201)
+    expect(soloIssued.event.operationMode).toBe('solo')
+
+    const [soloSettings, soloBoats, soloOwner, soloTasks] = await Promise.all([
+      env.DB.prepare('SELECT operation_mode FROM regatta_settings WHERE regatta_id = ?')
+        .bind(soloIssued.event.id).first<{ operation_mode: string }>(),
+      env.DB.prepare('SELECT name, role, call_sign FROM committee_boats WHERE regatta_id = ?')
+        .bind(soloIssued.event.id).all<{ name: string; role: string; call_sign: string }>(),
+      env.DB.prepare('SELECT id, assignment FROM event_members WHERE regatta_id = ? AND user_id = ?')
+        .bind(soloIssued.event.id, ownerId).first<{ id: string; assignment: string }>(),
+      env.DB.prepare(
+        `SELECT task.title, task.assignee_member_id
+         FROM operational_tasks task JOIN races race ON race.id = task.race_id
+         WHERE race.regatta_id = ? ORDER BY task.title`,
+      ).bind(soloIssued.event.id).all<{ title: string; assignee_member_id: string | null }>(),
+    ])
+    expect(soloSettings?.operation_mode).toBe('solo')
+    expect(soloBoats.results).toEqual([{ name: 'ワンオペ運営艇', role: 'signal-boat', call_sign: '全運営' }])
+    expect(soloOwner?.assignment).toBe('全運営')
+    expect(soloTasks.results).toContainEqual(expect.objectContaining({ title: 'ワンオペの安全条件と中止基準を確認' }))
+    expect(soloTasks.results.every((task) => task.assignee_member_id === soloOwner?.id)).toBe(true)
+    expect(soloTasks.results.some((task) => task.title === '担当別最終確認を完了')).toBe(false)
+
+    const soloBootstrapResponse = await exports.default.fetch(
+      `https://example.test/api/events/${soloIssued.event.slug}/bootstrap`,
+      { headers: { Cookie: `srs_session=${sessionToken}` } },
+    )
+    const soloBootstrap = await soloBootstrapResponse.json<{ regatta: { operation_mode: string } }>()
+    expect(soloBootstrapResponse.status).toBe(200)
+    expect(soloBootstrap.regatta.operation_mode).toBe('solo')
 
     const incompatibleCourseResponse = await exports.default.fetch('https://example.test/api/events', {
       method: 'POST',

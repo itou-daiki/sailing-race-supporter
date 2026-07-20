@@ -15,6 +15,7 @@ import type {
 import type { OwnerRecoveryKit } from './authClient'
 import { makeRaceSignalEvent } from './signals'
 import type { GateGeometry } from '../shared/gates'
+import type { OperationMode } from '../shared/operationModes'
 
 export interface EventSummary {
   id: string
@@ -37,7 +38,7 @@ export interface EventAccessSummary {
 }
 
 export interface EventBootstrap {
-  event: { id: string; slug: string; name: string; startsOn: string; endsOn: string; status: string }
+  event: { id: string; slug: string; name: string; startsOn: string; endsOn: string; status: string; operationMode: OperationMode }
   access: EventAccessSummary
   races: RaceDefinition[]
   boats: CommitteeBoat[]
@@ -127,6 +128,7 @@ export interface CreateEventInput {
   className: SailingClass
   courseCode: string
   firstWarningAt: string
+  operationMode: OperationMode
   center?: { longitude: number; latitude: number }
 }
 
@@ -186,7 +188,7 @@ export interface RetentionPreview {
 
 export interface BootstrapResponse {
   access: EventAccessSummary
-  regatta: { id: string; slug: string; name: string; starts_on: string; ends_on: string; status: string }
+  regatta: { id: string; slug: string; name: string; starts_on: string; ends_on: string; status: string; operation_mode: OperationMode }
   races: Array<{
     id: string; race_area_id: string; race_number: string; class_name: SailingClass; course_code: string
     status: RaceDefinition['status']; warning_at: string; target_minutes: number
@@ -471,6 +473,7 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
       startsOn: response.regatta.starts_on,
       endsOn: response.regatta.ends_on,
       status: response.regatta.status,
+      operationMode: response.regatta.operation_mode,
     },
     access: response.access,
     races: response.races.map((race) => {

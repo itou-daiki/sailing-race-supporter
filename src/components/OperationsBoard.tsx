@@ -43,6 +43,7 @@ import { buildRaceTimeline, deriveRacePhases, type RacePhaseState } from '../rac
 import { formatTrueBearing } from '../../shared/trueBearing'
 import { assignWindReadingsToMarks, formatWindSpeedDual } from '../markWind'
 import { summarizeReadiness } from '../readiness'
+import type { OperationMode } from '../../shared/operationModes'
 
 interface OperationsBoardProps {
   race: RaceDefinition
@@ -64,6 +65,7 @@ interface OperationsBoardProps {
   socketStatus: 'connecting' | 'live' | 'offline'
   pendingCount: number
   memberCount: number
+  operationMode: OperationMode
   latestSignal?: RaceSignalEvent
   firstFinish?: FinishRecord
   latestPassage?: LatestPassageSummary
@@ -149,6 +151,7 @@ export function OperationsBoard({
   socketStatus,
   pendingCount,
   memberCount,
+  operationMode,
   latestSignal,
   firstFinish,
   latestPassage,
@@ -166,6 +169,7 @@ export function OperationsBoard({
   onRecordFinish,
   onAdoptFinish,
 }: OperationsBoardProps) {
+  const isSolo = operationMode === 'solo'
   const [freshnessNow, setFreshnessNow] = useState(() => Date.now())
   useEffect(() => {
     const interval = window.setInterval(() => setFreshnessNow(Date.now()), 15_000)
@@ -203,19 +207,30 @@ export function OperationsBoard({
         : primaryTask
         ? {
             title: primaryTask.title,
-            reason: `${primaryTask.owner}の${taskStatusLabel[primaryTask.status]}です。${primaryTask.dueLabel}。`,
-            label: primaryTask.markId ? '対象マークを地図で開く' : '担当者へ連絡',
-            action: primaryTask.markId ? () => onSelectMark(primaryTask.markId as string) : () => onOpenTaskMessage(primaryTask),
+            reason: isSolo
+              ? `自分で行う${taskStatusLabel[primaryTask.status]}の項目です。${primaryTask.dueLabel}。`
+              : `${primaryTask.owner}の${taskStatusLabel[primaryTask.status]}です。${primaryTask.dueLabel}。`,
+            label: primaryTask.markId ? '対象マークを地図で開く' : isSolo ? '状態を進める' : '担当者へ連絡',
+            action: primaryTask.markId
+              ? () => onSelectMark(primaryTask.markId as string)
+              : isSolo ? () => onTaskStatusChange(primaryTask.id) : () => onOpenTaskMessage(primaryTask),
           }
         : firstUnconfirmedMark
-          ? { title: `${firstUnconfirmedMark.label}の位置を確認`, reason: '計画位置・投下地点・別艇確認の順で記録すると、設営状況を全員が判断できます。', label: '地図で開く', action: () => onSelectMark(firstUnconfirmedMark.id) }
+          ? {
+              title: `${firstUnconfirmedMark.label}の位置を確認`,
+              reason: isSolo
+                ? '計画位置と投下地点を記録し、可能なら移動後にGPS差分を再確認します。'
+                : '計画位置・投下地点・別艇確認の順で記録すると、設営状況を全員が判断できます。',
+              label: '地図で開く',
+              action: () => onSelectMark(firstUnconfirmedMark.id),
+            }
           : { title: `${currentPhase.label}を進める`, reason: `現在は${phaseStateLabels[currentPhase.state]}です。次の完了条件：${currentPhase.progress}` }
 
   const setScale = (next: number) => onScaleChange(Math.min(200, Math.max(75, next)))
 
   return (
     <section
-      className={`operations-board detail-${detail}`}
+      className={`operations-board detail-${detail} ${isSolo ? 'mode-solo' : 'mode-team'}`}
       style={{ '--board-scale': `${scale / 100}` } as React.CSSProperties}
       aria-label="レース運用ボード"
     >
@@ -271,6 +286,12 @@ export function OperationsBoard({
               <div><strong>確定・編集ロック</strong><small>管理者のみ修正版を作成可能</small></div>
             </div>
           )}
+          {isSolo && (
+            <div className="status-banner status-banner--solo">
+              <Users size={18} />
+              <div><strong>ワンオペ運営</strong><small>全運営を自分で兼務・移動中は見張りと安全を優先</small></div>
+            </div>
+          )}
         </div>
 
         <section className="next-action-card" aria-label="次にやること">
@@ -317,10 +338,14 @@ export function OperationsBoard({
           <summary><HelpCircle size={16} /><span><strong>初めて使う方へ</strong><small>海上で迷わない5ステップと用語</small></span></summary>
           <div className="beginner-guide__body">
             <ol>
-              <li><b>担当を確認</b><span>自分の名前・艇・担当マークが「（自分）」になっているか確認します。</span></li>
+              {isSolo
+                ? <li><b>ワンオペ条件を確認</b><span>安全要員、見張り、通信、緊急時の中止基準を確認します。このモードは大会の人員要件を緩和しません。</span></li>
+                : <li><b>担当を確認</b><span>自分の名前・艇・担当マークが「（自分）」になっているか確認します。</span></li>}
               <li><b>位置共有を開始</b><span>スマホの位置情報を許可します。競技中のヨットではなく、運営ボートだけを共有します。</span></li>
               <li><b>計画位置へ移動</b><span>地図の番号をタップし、距離・目標方位・ETAを見て移動します。</span></li>
-              <li><b>投下と別艇確認</b><span>投下地点を記録し、可能なら別の運営艇が「位置確認」を行います。</span></li>
+              {isSolo
+                ? <li><b>投下と再確認</b><span>投下地点を記録し、安全に移動した後でGPS差分を再確認します。補助艇が来た場合は別艇確認も使えます。</span></li>
+                : <li><b>投下と別艇確認</b><span>投下地点を記録し、可能なら別の運営艇が「位置確認」を行います。</span></li>}
               <li><b>本部船の信号を優先</b><span>予定時刻より、延期・リコール・中止を含む本部船の信号を常に優先します。</span></li>
             </ol>
             <dl>
@@ -376,10 +401,10 @@ export function OperationsBoard({
             <strong>{formatTrueBearing(wind.directionDegrees)} <small>{formatWindSpeedDual(wind.speedKnots)}</small></strong>
             <small>ガスト {formatWindSpeedDual(wind.gustKnots)}・{windAgeSeconds > 300 ? `${Math.floor(windAgeSeconds / 60)}分更新なし` : `${Math.max(0, Math.floor(windAgeSeconds / 60))}分前`}</small>
           </article>
-          <article className={`metric-card metric-mark-wind ${freshMarkWindCount < Math.min(3, marks.length) ? 'metric-card--warning' : ''}`}>
+          <article className={`metric-card metric-mark-wind ${freshMarkWindCount < Math.min(isSolo ? 1 : 3, marks.length) ? 'metric-card--warning' : ''}`}>
             <span><Wind size={16} /> マーク別風</span>
             <strong>{freshMarkWindCount}<small> / {marks.length}</small></strong>
-            <small>5分以内の担当艇観測・地図に表示</small>
+            <small>{isSolo ? '全体風を優先・マーク別観測は可能な範囲' : '5分以内の担当艇観測・地図に表示'}</small>
           </article>
           <article className="metric-card metric-current">
             <span><Waves size={16} /> 潮流（流向）</span>
@@ -466,9 +491,9 @@ export function OperationsBoard({
                       <MapPin size={15} />
                     </button>
                   )}
-                  <button type="button" onClick={() => onOpenTaskMessage(task)} aria-label={`${task.title}について担当者へ連絡`} title="担当者へ連絡">
+                  {!isSolo && <button type="button" onClick={() => onOpenTaskMessage(task)} aria-label={`${task.title}について担当者へ連絡`} title="担当者へ連絡">
                     <MessageSquareText size={15} />
-                  </button>
+                  </button>}
                 </span>
               </div>
             ))}
@@ -552,7 +577,7 @@ export function OperationsBoard({
       </div>
 
       <footer className="board-footer">
-        <span><Users size={14} /> {memberCount}人参加中</span>
+        <span><Users size={14} /> {isSolo ? `ワンオペ・${memberCount}人` : `${memberCount}人参加中`}</span>
         <span><RadioTower size={14} /> {socketStatus === 'live' ? '同期済み' : `端末保存中${pendingCount ? `・未同期${pendingCount}` : ''}`}</span>
       </footer>
     </section>

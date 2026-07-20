@@ -942,7 +942,11 @@ export class EventRoom extends DurableObject<AppEnv> {
 async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAccess): Promise<Response> {
   try {
     const regatta = await env.DB.prepare(
-      'SELECT id, slug, name, starts_on, ends_on, status FROM regattas WHERE id = ? OR slug = ? LIMIT 1',
+      `SELECT regatta.id, regatta.slug, regatta.name, regatta.starts_on, regatta.ends_on, regatta.status,
+              COALESCE(settings.operation_mode, 'team') AS operation_mode
+       FROM regattas regatta
+       LEFT JOIN regatta_settings settings ON settings.regatta_id = regatta.id
+       WHERE regatta.id = ? OR regatta.slug = ? LIMIT 1`,
     ).bind(eventId, eventId).first()
     if (!regatta) return json({ error: 'Event not found' }, { status: 404 })
 

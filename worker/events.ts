@@ -8,6 +8,7 @@ import type { AppEnv } from './index.js'
 import { generateOwnerRecoveryCode, normalizeOwnerRecoveryCode } from '../shared/ownerRecovery.js'
 import { assertSameOrigin, hasRecentAuthentication, randomToken, requireSession, sha256Base64Url } from './security.js'
 import { STANDARD_MARK_DEFINITIONS } from './standardArea.js'
+import { normalizeOperationMode, type OperationMode } from '../shared/operationModes.js'
 
 const CLASSES = new Set(['OP', 'ILCA 4', 'ILCA 6', 'ILCA 7', '420', '470', 'スナイプ'])
 const COURSES = new Set(['O2', 'I2', 'L2', 'L3', 'W2', 'T2', 'トライアングル'])
@@ -31,6 +32,7 @@ interface CreateEventInput {
   className?: string
   courseCode?: string
   firstWarningAt?: string
+  operationMode?: OperationMode
   center?: { longitude?: number; latitude?: number }
 }
 
@@ -162,6 +164,7 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
   if (!coursePresetsForClass(className).some((preset) => preset.code === courseCode)) {
     return json({ error: '選択した競技ヨットクラスでは使用できない初期コースです' }, { status: 400 })
   }
+  const operationMode = normalizeOperationMode(body.operationMode)
 
   const center = [
     coordinate(body.center?.longitude, DEFAULT_RACE_AREA_CENTER.longitude, -180, 180),
@@ -184,13 +187,13 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
     ).bind(eventId, slug, name, session.userId, startsOn, endsOn, now, now),
     env.DB.prepare(
       `INSERT INTO regatta_settings
-       (regatta_id, retention_json, created_at, updated_at) VALUES (?, ?, ?, ?)`,
-    ).bind(eventId, JSON.stringify(RETENTION_DEFAULTS), now, now),
+       (regatta_id, retention_json, operation_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
+    ).bind(eventId, JSON.stringify(RETENTION_DEFAULTS), operationMode, now, now),
     env.DB.prepare(
       `INSERT INTO event_members
        (id, regatta_id, user_id, display_name, role, assignment, status, joined_at)
-       VALUES (?, ?, ?, ?, 'owner', '大会管理者', 'active', ?)`,
-    ).bind(ownerMemberId, eventId, session.userId, session.displayName, now),
+       VALUES (?, ?, ?, ?, 'owner', ?, 'active', ?)`,
+    ).bind(ownerMemberId, eventId, session.userId, session.displayName, operationMode === 'solo' ? '全運営' : '大会管理者', now),
     env.DB.prepare(
       `INSERT INTO race_areas (id, regatta_id, name, room_key, center_lng, center_lat)
        VALUES (?, ?, '海面A', 'area-a', ?, ?)`,
@@ -219,13 +222,15 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
     ).bind(id, eventId, areaId, label, type, now))
   }
 
-  const boats = [
-    ['マークボートA', 'mark-boat', '1マーク'],
-    ['マークボートB', 'mark-boat', '2マーク'],
-    ['マークボートC', 'mark-boat', '下ゲート'],
-    ['シグナルボート', 'signal-boat', 'スタート／フィニッシュ'],
-    ['プロテストボート', 'protest', 'プロテスト'],
-  ] as const
+  const boats = operationMode === 'solo'
+    ? [['ワンオペ運営艇', 'signal-boat', '全運営']] as const
+    : [
+        ['マークボートA', 'mark-boat', '1マーク'],
+        ['マークボートB', 'mark-boat', '2マーク'],
+        ['マークボートC', 'mark-boat', '下ゲート'],
+        ['シグナルボート', 'signal-boat', 'スタート／フィニッシュ'],
+        ['プロテストボート', 'protest', 'プロテスト'],
+      ] as const
   for (const [boatName, role, callSign] of boats) {
     statements.push(env.DB.prepare(
       `INSERT INTO committee_boats (id, regatta_id, name, role, call_sign, status)
@@ -285,26 +290,38 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).bind(crypto.randomUUID(), revisionId, markId, nodeIndex + 1, label, nodeType, nodeType === 'gate' ? 'gate' : 'port', target[0], target[1]))
     })
-    const taskDefinitions = [
-      ['全体運営準備を開始', 'waiting', 'required', -30],
-      ['担当別最終確認を完了', 'waiting', 'required', -15],
-      ['スタート要員の配置を最終確認', 'waiting', 'required', -5],
-      ['採用コースを承認', 'blocked', 'required', -20],
-      ['全必須マークを確認', 'blocked', 'required', -10],
-      ['5分平均風を更新', 'waiting', 'required', -7],
-      ['スタートライン方位を確認', 'waiting', 'required', -6],
-      ['公式音響端末を準備', 'waiting', 'required', -5],
-      ['予備マークと通信手段を確認', 'waiting', 'reference', -15],
-    ] as const
+    const taskDefinitions = operationMode === 'solo'
+      ? [
+          ['ワンオペの安全条件と中止基準を確認', 'waiting', 'required', -30],
+          ['使用端末・電源・通信を手元に準備', 'waiting', 'required', -20],
+          ['採用コースを承認', 'blocked', 'required', -20],
+          ['全必須マークを確認', 'blocked', 'required', -10],
+          ['5分平均風を更新', 'waiting', 'required', -7],
+          ['スタートライン方位を確認', 'waiting', 'required', -6],
+          ['信号・公式音響端末を準備', 'waiting', 'required', -5],
+          ['補助者不在時の緊急連絡手段を確認', 'waiting', 'reference', -15],
+        ] as const
+      : [
+          ['全体運営準備を開始', 'waiting', 'required', -30],
+          ['担当別最終確認を完了', 'waiting', 'required', -15],
+          ['スタート要員の配置を最終確認', 'waiting', 'required', -5],
+          ['採用コースを承認', 'blocked', 'required', -20],
+          ['全必須マークを確認', 'blocked', 'required', -10],
+          ['5分平均風を更新', 'waiting', 'required', -7],
+          ['スタートライン方位を確認', 'waiting', 'required', -6],
+          ['公式音響端末を準備', 'waiting', 'required', -5],
+          ['予備マークと通信手段を確認', 'waiting', 'reference', -15],
+        ] as const
     for (const [title, taskStatus, priority, dueOffsetMinutes] of taskDefinitions) {
       statements.push(env.DB.prepare(
         `INSERT INTO operational_tasks
-         (id, race_id, title, status, priority, due_at, revision)
-         VALUES (?, ?, ?, ?, ?, ?, 1)`,
+         (id, race_id, title, assignee_member_id, status, priority, due_at, revision)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
       ).bind(
         crypto.randomUUID(),
         raceId,
         title,
+        operationMode === 'solo' ? ownerMemberId : null,
         taskStatus,
         priority,
         new Date(Date.parse(raceWarning) + dueOffsetMinutes * 60_000).toISOString(),
@@ -330,13 +347,13 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
     entityType: 'regatta',
     entityId: eventId,
     after: {
-      name, slug, startsOn, endsOn, raceCount, className, courseCode,
+      name, slug, startsOn, endsOn, raceCount, className, courseCode, operationMode,
       ownerRecovery: ownerRecoveryId ? 'issued-pending-confirmation' : 'two-or-more-passkeys',
     },
   })
 
   return json({
-    event: { id: eventId, slug, name, startsOn, endsOn, status: 'draft' },
+    event: { id: eventId, slug, name, startsOn, endsOn, status: 'draft', operationMode },
     url: `/e/${encodeURIComponent(slug)}`,
     auditRecorded,
     ownerRecoveryKit: ownerRecoveryCode && ownerRecoveryId ? {
