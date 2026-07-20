@@ -19,10 +19,10 @@ import {
   UserPlus,
   X,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { OwnerRecoveryKit, SessionState } from '../authClient'
 import { CLASS_PROFILES, type RaceDefinition, type SailingClass } from '../domain'
-import { normalizeCoursePresetCode } from '../../shared/coursePresets'
+import { coursePresetForClass, normalizeCoursePresetCode } from '../../shared/coursePresets'
 import { DEFAULT_RACE_AREA_CENTER } from '../../shared/defaultRaceArea'
 import { INVITABLE_OPERATION_ROLES, operationRoleLabel } from '../../shared/roles'
 import {
@@ -122,18 +122,27 @@ export function EventManager({
   onClose,
 }: EventManagerProps) {
   const today = useMemo(() => new Date(), [])
+  const defaultEventDay = useMemo(() => {
+    const nextDay = new Date(today)
+    nextDay.setDate(nextDay.getDate() + 1)
+    nextDay.setHours(10, 0, 0, 0)
+    return nextDay
+  }, [today])
+  const managerRef = useRef<HTMLElement>(null)
+  const [managerView, setManagerView] = useState<'events' | 'create' | 'manage'>('events')
+  const [creationStep, setCreationStep] = useState<1 | 2 | 3>(1)
   const [events, setEvents] = useState<EventSummary[]>([])
   const [loading, setLoading] = useState(session.mode === 'authenticated')
   const [creating, setCreating] = useState(false)
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState<string>()
   const [name, setName] = useState('')
-  const [startsOn, setStartsOn] = useState(localDate(today))
-  const [endsOn, setEndsOn] = useState(localDate(today))
+  const [startsOn, setStartsOn] = useState(localDate(defaultEventDay))
+  const [endsOn, setEndsOn] = useState(localDate(defaultEventDay))
   const [raceCount, setRaceCount] = useState(3)
   const [className, setClassName] = useState<SailingClass>('470')
   const [courseCode, setCourseCode] = useState('O2')
-  const [firstWarningAt, setFirstWarningAt] = useState(localDateTime(new Date(today.getTime() + 60 * 60_000)))
+  const [firstWarningAt, setFirstWarningAt] = useState(localDateTime(defaultEventDay))
   const [centerLongitude, setCenterLongitude] = useState(String(DEFAULT_RACE_AREA_CENTER.longitude))
   const [centerLatitude, setCenterLatitude] = useState(String(DEFAULT_RACE_AREA_CENTER.latitude))
   const center = useMemo(() => {
@@ -145,6 +154,11 @@ export function EventManager({
       ? { longitude, latitude }
       : undefined
   }, [centerLatitude, centerLongitude])
+  const selectedCoursePreset = coursePresetForClass(className, courseCode)
+  const basicDetailsReady = name.trim().length >= 2 && Boolean(startsOn) && endsOn >= startsOn && raceCount >= 1 && raceCount <= 20
+  const warningTime = new Date(firstWarningAt)
+  const warningDay = firstWarningAt.slice(0, 10)
+  const racePlanReady = !Number.isNaN(warningTime.getTime()) && warningDay >= startsOn && warningDay <= endsOn
   const [invites, setInvites] = useState<InviteRecord[]>([])
   const [inviteRole, setInviteRole] = useState('mark-boat')
   const [inviteAreaId, setInviteAreaId] = useState('')
@@ -222,6 +236,16 @@ export function EventManager({
     return () => { active = false }
   }, [currentEventSlug, isCurrentEventOwner, session.mode])
 
+  useEffect(() => {
+    managerRef.current?.scrollTo?.({ top: 0, behavior: 'smooth' })
+  }, [creationStep, managerView])
+
+  const openManagerView = (view: 'events' | 'create' | 'manage') => {
+    setError(undefined)
+    setManagerView(view)
+    if (view === 'create') setCreationStep(1)
+  }
+
   const shareCurrent = async () => {
     const shareData = { title: currentEventName, text: `${currentEventName}の運営URL`, url: window.location.href }
     if (navigator.share) {
@@ -253,8 +277,30 @@ export function EventManager({
       : normalizeCoursePresetCode(nextClass, courseCode))
   }
 
+  const changeStartsOn = (nextDate: string) => {
+    setStartsOn(nextDate)
+    if (endsOn < nextDate) setEndsOn(nextDate)
+    const warningClock = firstWarningAt.includes('T') ? firstWarningAt.split('T')[1] : '10:00'
+    setFirstWarningAt(`${nextDate}T${warningClock}`)
+  }
+
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
+    if (!basicDetailsReady) {
+      setCreationStep(1)
+      setError('大会名、開催日、レース数を確認してください')
+      return
+    }
+    if (!racePlanReady) {
+      setCreationStep(2)
+      setError('1Rの予告予定は大会の開催期間内で指定してください')
+      return
+    }
+    if (!center) {
+      setCreationStep(3)
+      setError('レース海面のおおよその中心を指定してください')
+      return
+    }
     setCreating(true)
     setError(undefined)
     try {
@@ -589,18 +635,18 @@ export function EventManager({
   return (
     <>
     <div className="drawer-backdrop" role="presentation" onMouseDown={pendingOwnerRecovery ? undefined : onClose}>
-      <aside className="event-manager" aria-label="大会URLと大会作成" onMouseDown={(event) => event.stopPropagation()}>
+      <aside ref={managerRef} className="event-manager" aria-label="大会URLと大会作成" onMouseDown={(event) => event.stopPropagation()}>
         <header>
           <div><span className="eyebrow">固定共有URL</span><strong>大会を選択・作成</strong></div>
           <button type="button" onClick={onClose} aria-label="閉じる"><X size={20} /></button>
         </header>
 
-        <section className="event-current-card">
+        {managerView !== 'create' && <section className="event-current-card">
           <div><span className="eyebrow">現在の大会</span><strong>{currentEventName}</strong><small>/e/{currentEventSlug}</small></div>
           <button type="button" onClick={() => void shareCurrent()}>{copied ? <Check size={17} /> : <Share2 size={17} />}{copied ? 'コピー済み' : 'URLを共有'}</button>
-        </section>
+        </section>}
 
-        <button type="button" className="event-recovery-link" onClick={onRecoverParticipation}><KeyRound size={16} />参加復元カードから担当を復元</button>
+        {managerView !== 'create' && <button type="button" className="event-recovery-link" onClick={onRecoverParticipation}><KeyRound size={16} />参加復元カードから担当を復元</button>}
 
         {session.mode !== 'authenticated' ? (
           <section className="event-auth-required">
@@ -611,7 +657,19 @@ export function EventManager({
           </section>
         ) : (
           <>
-            <section className="event-list-section">
+            <nav className="event-manager-nav" aria-label="大会メニュー">
+              <button type="button" className={managerView === 'create' ? 'is-active is-primary' : 'is-primary'} aria-current={managerView === 'create' ? 'page' : undefined} onClick={() => openManagerView('create')}>
+                <Plus size={19} /><span><strong>新しい大会を作る</strong><small>3ステップで固定URLを発行</small></span>
+              </button>
+              <button type="button" className={managerView === 'events' ? 'is-active' : ''} aria-current={managerView === 'events' ? 'page' : undefined} onClick={() => openManagerView('events')}>
+                <Sailboat size={19} /><span><strong>大会を選ぶ</strong><small>作成・参加済みの一覧</small></span>
+              </button>
+              {isCurrentEventOwner && <button type="button" className={managerView === 'manage' ? 'is-active' : ''} aria-current={managerView === 'manage' ? 'page' : undefined} onClick={() => openManagerView('manage')}>
+                <ShieldCheck size={19} /><span><strong>現在の大会を管理</strong><small>招待・海面・保存設定</small></span>
+              </button>}
+            </nav>
+
+            {managerView === 'events' && <section className="event-list-section">
               <div className="event-section-title"><span><Sailboat size={17} />参加中の大会</span><small>{events.length}件</small></div>
               {loading ? <div className="event-loading"><LoaderCircle className="is-spinning" size={20} /> 読み込み中</div> : events.length ? (
                 <div className="event-list">
@@ -623,9 +681,14 @@ export function EventManager({
                   ))}
                 </div>
               ) : <p className="event-empty">作成・参加済みの大会はまだありません。</p>}
-            </section>
+            </section>}
 
-            {isCurrentEventOwner && (
+            {managerView === 'manage' && isCurrentEventOwner && <section className="event-manage-intro">
+              <ShieldCheck size={20} />
+              <span><strong>{currentEventName}を管理</strong><small>ここで行う変更は現在の大会だけに反映されます。新しい大会を作る場合は「新しい大会を作る」を選んでください。</small></span>
+            </section>}
+
+            {managerView === 'manage' && isCurrentEventOwner && (
               <section className="race-area-manager-section">
                 <div className="event-section-title"><span><LocateFixed size={17} />大会内のレースエリア</span><small>{resources.areas.length}/6海面</small></div>
                 <div className="race-area-list">
@@ -655,7 +718,7 @@ export function EventManager({
               </section>
             )}
 
-            {isCurrentEventOwner && (
+            {managerView === 'manage' && isCurrentEventOwner && (
               <section className="invite-manager-section">
                 <div className="event-section-title"><span><UserPlus size={17} />役割・担当別の招待URL</span><small>管理者のみ</small></div>
                 <form className="invite-create-form" onSubmit={(event) => void issueInvite(event)}>
@@ -693,7 +756,7 @@ export function EventManager({
               </section>
             )}
 
-            {isCurrentEventOwner && resources.members.some((member) => member.role !== 'owner') && (
+            {managerView === 'manage' && isCurrentEventOwner && resources.members.some((member) => member.role !== 'owner') && (
               <section className="member-assignment-section">
                 <div className="event-section-title"><span><UserPlus size={17} />参加者の現在担当</span><small>即時反映・追記監査</small></div>
                 <p>変更対象の旧接続を切り、最新の海面・運営ボート・マーク権限で自動再接続します。</p>
@@ -729,7 +792,7 @@ export function EventManager({
               </section>
             )}
 
-            {isCurrentEventOwner && (
+            {managerView === 'manage' && isCurrentEventOwner && (
               <section className="backup-manager-section">
                 <div className="event-section-title"><span><DatabaseBackup size={17} />暗号化ローカルバックアップ</span><small>AES-GCM</small></div>
                 <div className="backup-manager-card">
@@ -778,7 +841,7 @@ export function EventManager({
               </section>
             )}
 
-            {isCurrentEventOwner && (
+            {managerView === 'manage' && isCurrentEventOwner && (
               <section className="retention-manager-section">
                 <div className="event-section-title"><span><Archive size={17} />データ保存期間</span><small>大会終了日から</small></div>
                 <div className="retention-card">
@@ -837,49 +900,85 @@ export function EventManager({
               </section>
             )}
 
-            <form className="event-create-form" onSubmit={submit}>
-              <div className="event-section-title"><span><Plus size={17} />新しい大会URLを発行</span></div>
-              <label className="event-field event-field--wide"><span>大会名</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="例：2026 江の島サマーレガッタ" minLength={2} maxLength={100} required /></label>
-              <div className="event-form-grid">
-                <label className="event-field"><span>開始日</span><input type="date" value={startsOn} onChange={(event) => setStartsOn(event.target.value)} required /></label>
-                <label className="event-field"><span>終了日</span><input type="date" min={startsOn} value={endsOn} onChange={(event) => setEndsOn(event.target.value)} required /></label>
-                <label className="event-field"><span>レース数</span><input type="number" min="1" max="20" value={raceCount} onChange={(event) => setRaceCount(Number(event.target.value))} required /></label>
-                <label className="event-field"><span>競技ヨットクラス</span><select value={className} onChange={(event) => changeClass(event.target.value as SailingClass)}>{CLASS_PROFILES.map((profile) => <option key={profile.className}>{profile.className}</option>)}</select></label>
-                <label className="event-field"><span>1R 予告予定</span><input type="datetime-local" value={firstWarningAt} onChange={(event) => setFirstWarningAt(event.target.value)} required /></label>
-              </div>
-              <CoursePresetPicker className={className} value={courseCode} onChange={setCourseCode} />
-              <section className="event-center-editor" aria-labelledby="event-center-title">
-                <header>
-                  <span id="event-center-title">① レース海面をざっくり決める</span>
-                  <small>大会後も調整できます</small>
-                </header>
-                <p className="event-center-editor__lead">海面のおおよその中央を選んでください。正確なマーク位置は、海上でスタートラインを決めた後に作成します。</p>
-                <RaceAreaPicker
-                  longitude={center?.longitude ?? DEFAULT_RACE_AREA_CENTER.longitude}
-                  latitude={center?.latitude ?? DEFAULT_RACE_AREA_CENTER.latitude}
-                  onChange={(next) => {
-                    setCenterLongitude(next.longitude.toFixed(7))
-                    setCenterLatitude(next.latitude.toFixed(7))
-                  }}
-                />
-                <button type="button" className={`event-location-button ${center ? 'is-set' : ''}`} onClick={useCurrentLocation}>
-                  <LocateFixed size={17} />現在地付近を海面にする
+            {managerView === 'create' && <form className="event-create-form event-create-wizard" onSubmit={submit}>
+              <header className="event-create-wizard__header">
+                <span><Plus size={20} /><b>新しい大会を作る</b></span>
+                <small>約2分・発行後もコースや時刻を変更できます</small>
+              </header>
+              <nav className="event-create-steps" aria-label="大会作成の手順">
+                <button type="button" className={creationStep === 1 ? 'is-current' : creationStep > 1 ? 'is-complete' : ''} aria-current={creationStep === 1 ? 'step' : undefined} onClick={() => setCreationStep(1)}>
+                  <b>{creationStep > 1 ? <Check size={15} /> : '1'}</b><span>大会情報<small>名前・日程</small></span>
                 </button>
-                <details className="event-coordinate-details">
-                  <summary>緯度・経度を直接入力する</summary>
-                  <div className="event-form-grid">
-                    <label className="event-field"><span>経度（東経は正）</span><input aria-label="レース海面の経度" type="number" inputMode="decimal" min="-180" max="180" step="0.0000001" value={centerLongitude} onChange={(event) => setCenterLongitude(event.target.value)} required /></label>
-                    <label className="event-field"><span>緯度（北緯は正）</span><input aria-label="レース海面の緯度" type="number" inputMode="decimal" min="-85" max="85" step="0.0000001" value={centerLatitude} onChange={(event) => setCenterLatitude(event.target.value)} required /></label>
-                  </div>
-                  <small className="event-center-editor__hint">WGS 84・小数度。例：経度 {DEFAULT_RACE_AREA_CENTER.longitude} ／ 緯度 {DEFAULT_RACE_AREA_CENTER.latitude}</small>
-                </details>
-              </section>
-              <div className="event-create-note"><CalendarDays size={17} /><p>大会内の1R〜{raceCount}R、海面A、標準マークと運営ボートを作成します。予備パスキーが2個未満の場合は、発行直後に一回限りのオーナー復旧キットを保存します。</p></div>
-              <button type="submit" className="event-create-submit" disabled={creating || name.trim().length < 2 || !center}>
-                {creating ? <LoaderCircle className="is-spinning" size={18} /> : <Clipboard size={18} />}
-                {creating ? '大会URLを発行中…' : '大会URLを発行する'}
-              </button>
-            </form>
+                <button type="button" className={creationStep === 2 ? 'is-current' : creationStep > 2 ? 'is-complete' : ''} aria-current={creationStep === 2 ? 'step' : undefined} disabled={!basicDetailsReady} onClick={() => setCreationStep(2)}>
+                  <b>{creationStep > 2 ? <Check size={15} /> : '2'}</b><span>レース設定<small>艇種・コース</small></span>
+                </button>
+                <button type="button" className={creationStep === 3 ? 'is-current' : ''} aria-current={creationStep === 3 ? 'step' : undefined} disabled={!basicDetailsReady || !racePlanReady} onClick={() => setCreationStep(3)}>
+                  <b>3</b><span>海面・確認<small>地図・発行</small></span>
+                </button>
+              </nav>
+
+              {creationStep === 1 && <section className="event-create-step" aria-labelledby="create-step-basic">
+                <div className="event-create-step__title"><span><b>1</b><strong id="create-step-basic">大会名と日程</strong></span><small>まず、共有相手が識別できる名前を入力します</small></div>
+                <label className="event-field event-field--wide"><span>大会名</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="例：2026 別府湾サマーレガッタ" minLength={2} maxLength={100} autoFocus required /></label>
+                <div className="event-form-grid">
+                  <label className="event-field"><span>開始日</span><input type="date" value={startsOn} onChange={(event) => changeStartsOn(event.target.value)} required /></label>
+                  <label className="event-field"><span>終了日</span><input type="date" min={startsOn} value={endsOn} onChange={(event) => setEndsOn(event.target.value)} required /></label>
+                  <label className="event-field"><span>予定レース数</span><input type="number" min="1" max="20" value={raceCount} onChange={(event) => setRaceCount(Number(event.target.value))} required /><small>1R、2R…を自動作成します</small></label>
+                </div>
+                <div className={`event-step-readiness ${basicDetailsReady ? 'is-ready' : ''}`}>{basicDetailsReady ? <><Check size={16} />大会情報を入力できました</> : '大会名を2文字以上入力すると次へ進めます'}</div>
+                <div className="event-wizard-actions"><span /><button type="button" className="event-wizard-next" disabled={!basicDetailsReady} onClick={() => { setError(undefined); setCreationStep(2) }}>次へ：レース設定</button></div>
+              </section>}
+
+              {creationStep === 2 && <section className="event-create-step" aria-labelledby="create-step-race">
+                <div className="event-create-step__title"><span><b>2</b><strong id="create-step-race">艇種・初期コース・予告時刻</strong></span><small>発行後にレースごとに変更できます</small></div>
+                <div className="event-form-grid">
+                  <label className="event-field"><span>競技ヨットクラス</span><select value={className} onChange={(event) => changeClass(event.target.value as SailingClass)}>{CLASS_PROFILES.map((profile) => <option key={profile.className}>{profile.className}</option>)}</select></label>
+                  <label className="event-field"><span>1Rの予告信号予定</span><input type="datetime-local" min={`${startsOn}T00:00`} max={`${endsOn}T23:59`} value={firstWarningAt} onChange={(event) => setFirstWarningAt(event.target.value)} required /><small>5分前の予告信号を基準にタイマーを作ります</small></label>
+                </div>
+                <div className="event-course-guidance"><Sailboat size={17} /><span><strong>最初に全レースへ設定するコース</strong><small>迷った場合は「推奨」のコースを選んでください</small></span></div>
+                <CoursePresetPicker className={className} value={courseCode} onChange={setCourseCode} label="初期コース" />
+                {!racePlanReady && <div className="event-step-readiness is-warning">予告予定を大会の開催期間内にしてください</div>}
+                <div className="event-wizard-actions"><button type="button" onClick={() => setCreationStep(1)}>戻る</button><button type="button" className="event-wizard-next" disabled={!racePlanReady} onClick={() => { setError(undefined); setCreationStep(3) }}>次へ：海面と確認</button></div>
+              </section>}
+
+              {creationStep === 3 && <section className="event-create-step" aria-labelledby="create-step-area">
+                <div className="event-create-step__title"><span><b>3</b><strong id="create-step-area">レース海面を決めて確認</strong></span><small>正確なマーク位置は海上で後から決めます</small></div>
+                <section className="event-center-editor" aria-labelledby="event-center-title">
+                  <header><span id="event-center-title">レース海面のおおよその中央</span><small>地図をタップ</small></header>
+                  <p className="event-center-editor__lead">開催予定の海域を地図で選んでください。スマホの現在地、緯度・経度の直接入力も使えます。</p>
+                  <RaceAreaPicker
+                    longitude={center?.longitude ?? DEFAULT_RACE_AREA_CENTER.longitude}
+                    latitude={center?.latitude ?? DEFAULT_RACE_AREA_CENTER.latitude}
+                    onChange={(next) => {
+                      setCenterLongitude(next.longitude.toFixed(7))
+                      setCenterLatitude(next.latitude.toFixed(7))
+                    }}
+                  />
+                  <button type="button" className={`event-location-button ${center ? 'is-set' : ''}`} onClick={useCurrentLocation}><LocateFixed size={17} />現在地付近を海面にする</button>
+                  <details className="event-coordinate-details">
+                    <summary>緯度・経度を直接入力する</summary>
+                    <div className="event-form-grid">
+                      <label className="event-field"><span>経度（東経は正）</span><input aria-label="レース海面の経度" type="number" inputMode="decimal" min="-180" max="180" step="0.0000001" value={centerLongitude} onChange={(event) => setCenterLongitude(event.target.value)} required /></label>
+                      <label className="event-field"><span>緯度（北緯は正）</span><input aria-label="レース海面の緯度" type="number" inputMode="decimal" min="-85" max="85" step="0.0000001" value={centerLatitude} onChange={(event) => setCenterLatitude(event.target.value)} required /></label>
+                    </div>
+                    <small className="event-center-editor__hint">WGS 84・小数度。例：経度 {DEFAULT_RACE_AREA_CENTER.longitude} ／ 緯度 {DEFAULT_RACE_AREA_CENTER.latitude}</small>
+                  </details>
+                </section>
+                <section className="event-create-summary" aria-label="発行内容の確認">
+                  <header><Check size={18} /><strong>この内容で大会URLを発行します</strong></header>
+                  <dl>
+                    <div><dt>大会</dt><dd>{name.trim()}</dd></div>
+                    <div><dt>開催日</dt><dd>{startsOn === endsOn ? startsOn : `${startsOn}〜${endsOn}`}</dd></div>
+                    <div><dt>レース</dt><dd>{raceCount}レース・{className}</dd></div>
+                    <div><dt>初期コース</dt><dd>{selectedCoursePreset.optionLabel}</dd></div>
+                    <div><dt>1R予告</dt><dd>{formatTimestamp(firstWarningAt)}</dd></div>
+                    <div><dt>海面中心</dt><dd>{center ? `${center.latitude.toFixed(5)}, ${center.longitude.toFixed(5)}` : '未設定'}</dd></div>
+                  </dl>
+                </section>
+                <div className="event-create-note"><CalendarDays size={17} /><p>固定共有URL、1R〜{raceCount}R、海面A、標準マーク、運営ボートをまとめて作成します。発行直後に管理者復旧キットの保存を案内する場合があります。</p></div>
+                <div className="event-wizard-actions"><button type="button" onClick={() => setCreationStep(2)}>戻る</button><button type="submit" className="event-create-submit" disabled={creating || !center}>{creating ? <LoaderCircle className="is-spinning" size={18} /> : <Clipboard size={18} />}{creating ? '大会URLを発行中…' : 'この内容で大会URLを発行'}</button></div>
+              </section>}
+            </form>}
           </>
         )}
         {error && <div className="auth-error" role="alert">{error}</div>}

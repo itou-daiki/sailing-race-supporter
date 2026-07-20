@@ -7,7 +7,7 @@ describe('EventManager free-only backup UI', () => {
     vi.unstubAllGlobals()
   })
 
-  it('uses device backups without offering an R2 archive', () => {
+  it('separates event creation from management and uses device backups', () => {
     vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => undefined)))
 
     render(<EventManager
@@ -31,20 +31,37 @@ describe('EventManager free-only backup UI', () => {
       onClose={vi.fn()}
     />)
 
+    expect(screen.getByRole('button', { name: /新しい大会を作る/u })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /大会を選ぶ/u })).toHaveAttribute('aria-current', 'page')
+    expect(screen.queryByText('課金のない端末保存')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /現在の大会を管理/u }))
     expect(screen.getByText('課金のない端末保存')).toBeInTheDocument()
     expect(screen.getByText(/D1には無料のTime Travelが常時有効/u)).toBeInTheDocument()
     expect(screen.queryByText('R2暗号化バックアップ')).not.toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'タイムキーパー' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: '記録員' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /新しい大会を作る/u }))
+    expect(screen.getByText('大会名と日程')).toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: '初期コース' })).not.toBeInTheDocument()
+    fireEvent.change(screen.getByRole('textbox', { name: '大会名' }), { target: { value: '2026 別府湾サマーレガッタ' } })
+    fireEvent.click(screen.getByRole('button', { name: '次へ：レース設定' }))
+
     expect(screen.getByRole('combobox', { name: '初期コース' })).toHaveValue('O2')
     expect(screen.getByRole('radio', { name: /O2.*トラペゾイド・アウターループ/u })).toHaveAttribute('aria-checked', 'true')
     expect(screen.getByText('トラペゾイド（O2）— アウター・風上レグ2回')).toBeInTheDocument()
     expect(screen.getByLabelText('標準回航順序：Start、1、2、3S/3P、2、3P、Finish')).toBeInTheDocument()
-    expect(screen.getByText('① レース海面をざっくり決める')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '次へ：海面と確認' }))
+    expect(screen.getByText('レース海面を決めて確認')).toBeInTheDocument()
     expect(screen.getByText('地図をタップ、またはピンを移動')).toBeInTheDocument()
     expect(screen.getByText('緯度・経度を直接入力する')).toBeInTheDocument()
     expect(screen.getByLabelText('レース海面の経度')).toHaveValue(131.5221959)
     expect(screen.getByLabelText('レース海面の緯度')).toHaveValue(33.2786648)
-    expect(screen.getByRole('option', { name: 'タイムキーパー' })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: '記録員' })).toBeInTheDocument()
+    expect(screen.getByText('2026 別府湾サマーレガッタ')).toBeInTheDocument()
+    expect(screen.getByText('3レース・470')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /この内容で大会URLを発行/u })).toBeEnabled()
   })
 
   it('guides an anonymous organizer into authentication and back to event issuance', () => {
