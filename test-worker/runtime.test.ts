@@ -124,7 +124,7 @@ describe('Cloudflare Workers runtime integration', () => {
       "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
     ).first<{ count: number }>()
 
-    expect(migrations.results).toHaveLength(27)
+    expect(migrations.results).toHaveLength(28)
     expect(tableCount?.count).toBeGreaterThanOrEqual(50)
   })
 

@@ -47,6 +47,7 @@ import {
 } from './domain'
 import { OperationsBoard } from './components/OperationsBoard'
 import { CoursePresetPicker } from './components/CoursePresetPicker'
+import { WindEntrySheet, type MarkWindInput, type MarkWindSaveResult } from './components/WindEntrySheet'
 import { StartSequence } from './components/StartSequence'
 import { RaceTabs } from './components/RaceTabs'
 import {
@@ -79,7 +80,7 @@ import { normalizeBoatMotion } from './boatMotion'
 import type { CoordinateEntryMode } from './coordinateEntry'
 import { formatTrueBearing } from '../shared/trueBearing'
 import { coursePresetForClass, normalizeCoursePresetCode, type CoursePresetCode } from '../shared/coursePresets'
-import { formatWindSpeedDual } from './markWind'
+import { assignWindReadingsToMarks, formatWindSpeedDual } from './markWind'
 
 const DETAIL_KEY = 'srs-board-detail-v2'
 const SCALE_KEY = 'srs-board-scale'
@@ -255,6 +256,7 @@ export default function App() {
   const [messagesOpen, setMessagesOpen] = useState(false)
   const [logsOpen, setLogsOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [windEntryOpen, setWindEntryOpen] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
   const [resumeEventIssuanceAfterAuth, setResumeEventIssuanceAfterAuth] = useState(false)
   const [eventManagerOpen, setEventManagerOpen] = useState(false)
@@ -457,14 +459,17 @@ export default function App() {
           position: payload.position,
           raceId: event.raceId,
           committeeBoatId: payload.committeeBoatId,
+          markId: payload.markId,
         }
         setWindDetails(nextWind)
-        if (nextWind.committeeBoatId) {
+        if (nextWind.markId || nextWind.committeeBoatId) {
           setMarkWinds((current) => [
             nextWind,
-            ...current.filter((observation) => !(
-              observation.raceId === nextWind.raceId && observation.committeeBoatId === nextWind.committeeBoatId
-            )),
+            ...current.filter((observation) => {
+              if (observation.raceId !== nextWind.raceId) return true
+              if (nextWind.markId) return observation.markId !== nextWind.markId
+              return Boolean(observation.markId) || observation.committeeBoatId !== nextWind.committeeBoatId
+            }),
           ])
         }
       }
@@ -739,11 +744,31 @@ export default function App() {
   const canManageAllMarks = !eventAccess || eventAccess.isOwner || ['pro', 'ro', 'course-setter'].includes(eventAccess.role)
   const canVerifyMarks = !eventAccess || eventAccess.isOwner || ['pro', 'ro', 'course-setter', 'mark-boat'].includes(eventAccess.role)
   const ownMemberResource = eventResources.members.find((member) => member.id === eventAccess?.memberId)
+  const selfCommitteeBoat = boats.find((boat) => boat.isSelf)
   const assignedMarkId = ownMemberResource?.markId
     ?? marks.find((mark) => mark.label === eventAccess?.assignment || mark.shortLabel === eventAccess?.assignment)?.id
+    ?? marks.find((mark) => mark.assignedBoatId === selfCommitteeBoat?.id)?.id
   const manageableMarkIds = canManageAllMarks
     ? marks.map((mark) => mark.id)
     : assignedMarkId ? [assignedMarkId] : []
+  const windObservationMarks = marks.filter((mark) => mark.label !== 'スタート・ピン' && mark.label !== 'シグナルボート')
+  const ownWindMarkId = assignedMarkId && windObservationMarks.some((mark) => mark.id === assignedMarkId)
+    ? assignedMarkId
+    : undefined
+  const canChooseWindMark = canManageAllMarks
+  const allowOverallWind = canChooseWindMark || !eventAccess || ['signal-boat', 'safety-boat'].includes(eventAccess.role)
+  const selectedWindCandidate = selectedMarkId && windObservationMarks.some((mark) => mark.id === selectedMarkId)
+    ? selectedMarkId
+    : undefined
+  const defaultWindMarkId = ownWindMarkId
+    ?? (canChooseWindMark ? selectedWindCandidate ?? windObservationMarks[0]?.id : undefined)
+  const defaultWindMark = windObservationMarks.find((mark) => mark.id === defaultWindMarkId)
+  const windTargetLabel = defaultWindMark
+    ? `${defaultWindMark.label}${defaultWindMark.id === ownWindMarkId ? '（自分）' : ''}`
+    : allowOverallWind ? '本部船・全体風' : '担当未設定'
+  const initialWindForEntry = defaultWindMarkId
+    ? assignWindReadingsToMarks(marks, markWinds).get(defaultWindMarkId)?.observation ?? windDetails
+    : windDetails
   const canScheduleRace = !locked && ['planning', 'setup'].includes(activeRace.status) && Boolean(eventAccess) && (
     Boolean(eventAccess?.isOwner) || ['pro', 'ro'].includes(eventAccess?.role ?? '')
   )
@@ -1279,13 +1304,16 @@ export default function App() {
       position: selfBoat?.position ?? windDetails.position,
       raceId: activeRace.id,
       committeeBoatId: selfBoat?.id,
+      markId: undefined,
     }
     setWindDetails(nextWind)
     if (nextWind.committeeBoatId) {
       setMarkWinds((current) => [
         nextWind,
         ...current.filter((observation) => !(
-          observation.raceId === nextWind.raceId && observation.committeeBoatId === nextWind.committeeBoatId
+          observation.raceId === nextWind.raceId
+          && !observation.markId
+          && observation.committeeBoatId === nextWind.committeeBoatId
         )),
       ])
     }
@@ -1299,6 +1327,68 @@ export default function App() {
       position: selfBoat?.position,
       committeeBoatId: selfBoat?.id,
     }, activeRace.id)
+  }
+
+  const recordMarkWind = async (input: MarkWindInput): Promise<MarkWindSaveResult> => {
+    if (!canShareEnvironment) throw new Error('現在の担当では風向・風速を記録できません')
+    if (!input.markId && !allowOverallWind) throw new Error('担当マークが設定されていません')
+    const selfBoat = boats.find((boat) => boat.isSelf)
+    const observedAt = new Date().toISOString()
+    const target = input.markId ? marks.find((mark) => mark.id === input.markId) : undefined
+    if (input.markId && !target) throw new Error('対象マークが現在のコースにありません')
+    const targetLabel = target
+      ? `${target.label}${target.id === ownWindMarkId ? '（自分）' : ''}`
+      : '本部船・全体風'
+    const nextWind: WindObservation = {
+      directionDegrees: input.directionDegrees,
+      speedKnots: input.speedKnots,
+      gustKnots: input.gustKnots,
+      observedAt,
+      source: eventAccess?.displayName ?? windDetails.source,
+      trend: 'steady',
+      confidence: input.confidence,
+      position: selfBoat?.position,
+      raceId: activeRace.id,
+      committeeBoatId: selfBoat?.id,
+      markId: input.markId,
+    }
+    const payload = {
+      directionDegrees: input.directionDegrees,
+      speedKnots: input.speedKnots,
+      gustKnots: input.gustKnots,
+      averagingSeconds: input.averagingSeconds,
+      observedAt,
+      confidence: input.confidence,
+      position: selfBoat?.position,
+      committeeBoatId: selfBoat?.id,
+      markId: input.markId,
+    }
+    let state: MarkWindSaveResult['state'] = 'queued'
+    if (realtime.status === 'live' && realtime.connectedKey === sessionConnectionKey) {
+      try {
+        await realtime.sendConfirmed('wind', payload, activeRace.id)
+        state = 'shared'
+      } catch (reason) {
+        if (!(reason instanceof RealtimeOperationError) || !['LIVE_CONNECTION_REQUIRED', 'CONNECTION_CLOSED'].includes(reason.code)) throw reason
+        await sendRealtimeOperation('wind', payload, activeRace.id)
+      }
+    } else {
+      await sendRealtimeOperation('wind', payload, activeRace.id)
+    }
+    setWindDirection(input.directionDegrees)
+    setWindSpeed(input.speedKnots)
+    setWindDetails(nextWind)
+    if (nextWind.markId || nextWind.committeeBoatId) {
+      setMarkWinds((current) => [
+        nextWind,
+        ...current.filter((observation) => {
+          if (observation.raceId !== nextWind.raceId) return true
+          if (nextWind.markId) return observation.markId !== nextWind.markId
+          return Boolean(observation.markId) || observation.committeeBoatId !== nextWind.committeeBoatId
+        }),
+      ])
+    }
+    return { state, observedAt, targetLabel }
   }
 
   const shareCurrent = () => {
@@ -1746,6 +1836,14 @@ export default function App() {
               courseRoute={activeCoursePreset.route}
               canChangeCourse={canChangeCourse}
               onOpenCourseSettings={openCourseSettings}
+              canRecordWind={canShareEnvironment}
+              windTargetLabel={windTargetLabel}
+              onOpenWindEntry={() => {
+                setMessagesOpen(false)
+                setLogsOpen(false)
+                setSettingsOpen(false)
+                setWindEntryOpen(true)
+              }}
               markWinds={markWinds.filter((observation) => !observation.raceId || observation.raceId === activeRace.id)}
               locked={locked}
               canVerifyMarks={canVerifyMarks}
@@ -1861,6 +1959,22 @@ export default function App() {
           </button>
         )}
       </div>
+
+      {windEntryOpen && (
+        <WindEntrySheet
+          raceNumber={activeRace.number}
+          marks={windObservationMarks}
+          ownMarkId={ownWindMarkId}
+          defaultMarkId={defaultWindMarkId}
+          canChooseMark={canChooseWindMark}
+          allowOverallWind={allowOverallWind}
+          initialWind={initialWindForEntry}
+          selfBoat={boats.find((boat) => boat.isSelf)}
+          realtimeLive={realtime.status === 'live' && realtime.connectedKey === sessionConnectionKey}
+          onClose={() => setWindEntryOpen(false)}
+          onSubmit={recordMarkWind}
+        />
+      )}
 
       {messagesOpen && (
         <div className="drawer-backdrop drawer-backdrop--map-visible" role="presentation" onMouseDown={() => setMessagesOpen(false)}>

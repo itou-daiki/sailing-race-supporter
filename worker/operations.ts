@@ -180,17 +180,35 @@ async function persistWind(env: AppEnv, access: EventAccess, operation: Realtime
   const committeeBoatId = typeof payload.committeeBoatId === 'string' ? payload.committeeBoatId : null
   if (committeeBoatId) await authorizeCommitteeBoat(env, access, committeeBoatId)
   const memberId = await requireMemberId(env, access)
+  const markId = optionalString(payload.markId, 160)
+  if (markId) {
+    const mark = await env.DB.prepare(
+      `SELECT mark.id FROM marks mark
+       JOIN races race ON race.id = ? AND race.regatta_id = mark.regatta_id
+       WHERE mark.id = ? AND mark.regatta_id = ? AND mark.race_area_id = race.race_area_id
+       LIMIT 1`,
+    ).bind(operation.raceId ?? '', markId, access.eventId).first()
+    if (!mark) throw new Response('Wind observation mark not found in this race area', { status: 404 })
+    if (!access.isOwner && !['pro', 'ro', 'course-setter'].includes(access.role)) {
+      const scoped = await env.DB.prepare(
+        `SELECT 1 AS allowed FROM event_member_scopes
+         WHERE event_member_id = ? AND mark_id = ? LIMIT 1`,
+      ).bind(memberId, markId).first<{ allowed: number }>()
+      if (!scoped) throw new Response('Wind observations may only target your assigned mark', { status: 403 })
+    }
+  }
   await env.DB.prepare(
     `INSERT INTO wind_observations
-     (id, regatta_id, race_id, committee_boat_id, member_id, direction_degrees,
+     (id, regatta_id, race_id, committee_boat_id, member_id, mark_id, direction_degrees,
       speed_knots, gust_knots, averaging_seconds, lng, lat, observed_at, source, confidence)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).bind(
     operation.id,
     access.eventId,
     operation.raceId ?? null,
     committeeBoatId,
     memberId,
+    markId,
     directionDegrees,
     speedKnots,
     gustKnots,
@@ -208,6 +226,7 @@ async function persistWind(env: AppEnv, access: EventAccess, operation: Realtime
     observedAt,
     position: coordinates,
     committeeBoatId,
+    markId,
     source: access.displayName,
     confidence: payload.confidence === 'high' || payload.confidence === 'medium' ? payload.confidence : 'low',
   }

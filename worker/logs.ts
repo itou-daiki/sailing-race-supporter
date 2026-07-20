@@ -193,9 +193,11 @@ async function collectLogs(env: AppEnv, access: EventAccess, raceId: string | nu
                ORDER BY event.server_time DESC LIMIT ?`, values),
     rows(env, `SELECT observation.id, observation.race_id, race.race_number,
                       observation.observed_at AS occurred_at, observation.direction_degrees,
-                      observation.speed_knots, observation.gust_knots, observation.source AS actor
+                      observation.speed_knots, observation.gust_knots, observation.source AS actor,
+                      mark.label AS mark_label
                FROM wind_observations observation
                LEFT JOIN races race ON race.id = observation.race_id
+               LEFT JOIN marks mark ON mark.id = observation.mark_id
                WHERE observation.regatta_id = ? AND (? IS NULL OR observation.race_id = ?)
                ORDER BY observation.observed_at DESC LIMIT ?`, values),
     rows(env, `SELECT observation.id, observation.race_id, race.race_number,
@@ -313,7 +315,7 @@ async function collectLogs(env: AppEnv, access: EventAccess, raceId: string | nu
       id: text(row.id), raceId: nullableText(row.race_id), raceNumber: nullableText(row.race_number),
       sequence: null, occurredAt: text(row.occurred_at), category: 'wind' as const, title: '風向風速観測',
       actor: text(row.actor, '不明'),
-      detail: `風向 ${formatTrueBearing(Number(row.direction_degrees))}・${row.speed_knots}kt${row.gust_knots == null ? '' : `・ガスト${row.gust_knots}kt`}`,
+      detail: `${row.mark_label ? `${text(row.mark_label)}・` : ''}風向 ${formatTrueBearing(Number(row.direction_degrees))}・${row.speed_knots}kt${row.gust_knots == null ? '' : `・ガスト${row.gust_knots}kt`}`,
       eventHash: null,
     })),
     ...current.map((row) => ({

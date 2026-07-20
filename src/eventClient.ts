@@ -213,12 +213,12 @@ export interface BootstrapResponse {
     lng: number | null; lat: number | null; accuracy_metres: number | null; speed_knots: number | null; course_degrees: number | null; sampled_at: string | null
   }>
   wind: {
-    race_id: string | null; committee_boat_id: string | null
+    race_id: string | null; committee_boat_id: string | null; mark_id: string | null
     direction_degrees: number; speed_knots: number; gust_knots: number | null; lng: number | null; lat: number | null
     observed_at: string; source: string; confidence: WindObservation['confidence']
   } | null
   winds: Array<{
-    race_id: string | null; committee_boat_id: string | null
+    race_id: string | null; committee_boat_id: string | null; mark_id: string | null
     direction_degrees: number; speed_knots: number; gust_knots: number | null; lng: number | null; lat: number | null
     observed_at: string; source: string; confidence: WindObservation['confidence']
   }>
@@ -635,6 +635,7 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
         : undefined,
       raceId: response.wind.race_id ?? undefined,
       committeeBoatId: response.wind.committee_boat_id ?? undefined,
+      markId: response.wind.mark_id ?? undefined,
     } : undefined,
     winds: (response.winds ?? []).map((wind) => ({
       directionDegrees: wind.direction_degrees,
@@ -647,6 +648,7 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
       position: wind.lng != null && wind.lat != null ? [wind.lng, wind.lat] : undefined,
       raceId: wind.race_id ?? undefined,
       committeeBoatId: wind.committee_boat_id ?? undefined,
+      markId: wind.mark_id ?? undefined,
     })),
     current: response.current ? {
       directionDegrees: response.current.direction_degrees,

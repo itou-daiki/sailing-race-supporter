@@ -42,6 +42,8 @@ export interface WindObservation {
   position?: LngLat
   raceId?: string
   committeeBoatId?: string
+  /** Mark selected when the observation was recorded. Keeps readings stable after boat reassignments. */
+  markId?: string
 }
 
 export interface CurrentObservation {

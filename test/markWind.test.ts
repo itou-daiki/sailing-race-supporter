@@ -34,6 +34,15 @@ describe('mark wind readings', () => {
     expect(readings.get('m1')?.association).toBe('assigned-boat')
   })
 
+  it('keeps an explicitly selected mark even when the observing boat is reassigned', () => {
+    const readings = assignWindReadingsToMarks(marks, [
+      wind({ markId: 'm2', committeeBoatId: 'boat-1', speedKnots: 9.2 }),
+    ])
+    expect(readings.get('m2')?.observation.speedKnots).toBe(9.2)
+    expect(readings.get('m2')?.association).toBe('explicit-mark')
+    expect(readings.has('m1')).toBe(false)
+  })
+
   it('uses a nearby positioned observation when no boat assignment exists', () => {
     const readings = assignWindReadingsToMarks(marks, [
       wind({ committeeBoatId: 'boat-2', position: [131.5321, 33.2821] }),

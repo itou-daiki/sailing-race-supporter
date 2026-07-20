@@ -1038,23 +1038,28 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
     ))
 
     const wind = await env.DB.prepare(
-      `SELECT race_id, committee_boat_id, direction_degrees, speed_knots, gust_knots, lng, lat, observed_at, source, confidence
+      `SELECT race_id, committee_boat_id, mark_id, direction_degrees, speed_knots, gust_knots, lng, lat, observed_at, source, confidence
        FROM wind_observations WHERE regatta_id = ?
        ORDER BY observed_at DESC LIMIT 1`,
     ).bind(regatta.id).first()
 
     const winds = await env.DB.prepare(
-      `SELECT observation.race_id, observation.committee_boat_id,
+      `SELECT observation.race_id, observation.committee_boat_id, observation.mark_id,
               observation.direction_degrees, observation.speed_knots, observation.gust_knots,
               observation.lng, observation.lat, observation.observed_at,
               observation.source, observation.confidence
        FROM wind_observations observation
-       WHERE observation.regatta_id = ? AND observation.committee_boat_id IS NOT NULL
+       WHERE observation.regatta_id = ?
+         AND (observation.mark_id IS NOT NULL OR observation.committee_boat_id IS NOT NULL)
          AND observation.id = (
            SELECT latest.id FROM wind_observations latest
            WHERE latest.regatta_id = observation.regatta_id
              AND latest.race_id IS observation.race_id
-             AND latest.committee_boat_id = observation.committee_boat_id
+             AND (
+               (observation.mark_id IS NOT NULL AND latest.mark_id = observation.mark_id)
+               OR (observation.mark_id IS NULL AND latest.mark_id IS NULL
+                   AND latest.committee_boat_id = observation.committee_boat_id)
+             )
            ORDER BY latest.observed_at DESC, latest.id DESC LIMIT 1
          )
        ORDER BY observation.observed_at DESC`,

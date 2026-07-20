@@ -3,7 +3,7 @@ import type { CourseMark, WindObservation } from './domain'
 
 export interface MarkWindReading {
   observation: WindObservation
-  association: 'assigned-boat' | 'nearest-observation'
+  association: 'explicit-mark' | 'assigned-boat' | 'nearest-observation'
 }
 
 const NEAREST_OBSERVATION_LIMIT_METRES = 2_500
@@ -19,7 +19,9 @@ export function formatWindSpeedDual(knots: number): string {
 function latestObservations(observations: readonly WindObservation[]): WindObservation[] {
   const latest = new Map<string, WindObservation>()
   observations.forEach((observation, index) => {
-    const key = observation.committeeBoatId ?? `source:${observation.source}:${index}`
+    const key = observation.markId
+      ? `mark:${observation.markId}`
+      : observation.committeeBoatId ?? `source:${observation.source}:${index}`
     const existing = latest.get(key)
     if (!existing || Date.parse(observation.observedAt) > Date.parse(existing.observedAt)) latest.set(key, observation)
   })
@@ -33,13 +35,20 @@ export function assignWindReadingsToMarks(
   const readings = new Map<string, MarkWindReading>()
   const latest = latestObservations(observations)
 
+  latest.forEach((observation) => {
+    if (!observation.markId || !marks.some((mark) => mark.id === observation.markId)) return
+    readings.set(observation.markId, { observation, association: 'explicit-mark' })
+  })
+
   marks.forEach((mark) => {
+    if (readings.has(mark.id)) return
     if (!mark.assignedBoatId) return
-    const direct = latest.find((observation) => observation.committeeBoatId === mark.assignedBoatId)
+    const direct = latest.find((observation) => !observation.markId && observation.committeeBoatId === mark.assignedBoatId)
     if (direct) readings.set(mark.id, { observation: direct, association: 'assigned-boat' })
   })
 
   latest.forEach((observation) => {
+    if (observation.markId) return
     if (!observation.position) return
     if (marks.some((mark) => mark.assignedBoatId === observation.committeeBoatId)) return
     const nearest = marks
@@ -53,4 +62,3 @@ export function assignWindReadingsToMarks(
 
   return readings
 }
-

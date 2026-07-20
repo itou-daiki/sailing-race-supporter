@@ -62,6 +62,9 @@ interface MapViewProps {
   courseRoute: readonly string[]
   canChangeCourse: boolean
   onOpenCourseSettings: () => void
+  canRecordWind: boolean
+  windTargetLabel: string
+  onOpenWindEntry: () => void
   markWinds: readonly WindObservation[]
   locked: boolean
   canVerifyMarks: boolean
@@ -145,6 +148,9 @@ export function MapView({
   courseRoute,
   canChangeCourse,
   onOpenCourseSettings,
+  canRecordWind,
+  windTargetLabel,
+  onOpenWindEntry,
   markWinds,
   locked,
   canVerifyMarks,
@@ -662,6 +668,11 @@ export function MapView({
           <LocateFixed size={18} />
           <span>{tracking ? '共有停止' : '位置共有'}</span>
         </button>
+        {canRecordWind && <button type="button" className="map-action map-action--wind" onClick={onOpenWindEntry} title={`${windTargetLabel}の風向・風速を記録`}>
+          <Wind size={18} />
+          <span>風を記録</span>
+          <small>{windTargetLabel}</small>
+        </button>}
       </div>
 
       <div className="map-legend glass-panel" aria-label="地図凡例">
