@@ -35,6 +35,7 @@ describe('EventManager free-only backup UI', () => {
     expect(screen.getByText(/D1には無料のTime Travelが常時有効/u)).toBeInTheDocument()
     expect(screen.queryByText('R2暗号化バックアップ')).not.toBeInTheDocument()
     expect(screen.getByRole('combobox', { name: '初期コース' })).toHaveValue('O2')
+    expect(screen.getByRole('radio', { name: /O2.*トラペゾイド外回り/u })).toHaveAttribute('aria-checked', 'true')
     expect(screen.getByText('トラペゾイド（O2）— 外回り・2周')).toBeInTheDocument()
     expect(screen.getByLabelText('標準回航順序：Start、1、2、3S/3P、2、3P、Finish')).toBeInTheDocument()
     expect(screen.getByText('① レース海面をざっくり決める')).toBeInTheDocument()

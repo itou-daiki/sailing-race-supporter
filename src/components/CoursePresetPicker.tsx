@@ -5,9 +5,10 @@ interface CoursePresetPickerProps {
   value: string
   onChange: (courseCode: CoursePresetCode) => void
   label?: string
+  disabled?: boolean
 }
 
-export function CoursePresetPicker({ className, value, onChange, label = '初期コース' }: CoursePresetPickerProps) {
+export function CoursePresetPicker({ className, value, onChange, label = '初期コース', disabled = false }: CoursePresetPickerProps) {
   const presets = coursePresetsForClass(className)
   const selected = coursePresetForClass(className, value)
 
@@ -15,7 +16,7 @@ export function CoursePresetPicker({ className, value, onChange, label = '初期
     <div className="course-preset-picker">
       <label className="course-preset-select">
         <span>{label}</span>
-        <select value={selected.code} onChange={(event) => onChange(event.target.value as CoursePresetCode)}>
+        <select value={selected.code} disabled={disabled} onChange={(event) => onChange(event.target.value as CoursePresetCode)}>
           {presets.map((preset) => (
             <option value={preset.code} key={preset.code}>
               {preset.optionLabel}{preset.recommended ? '（推奨）' : ''}
@@ -23,6 +24,24 @@ export function CoursePresetPicker({ className, value, onChange, label = '初期
           ))}
         </select>
       </label>
+
+      <div className="course-preset-options" role="radiogroup" aria-label={`${label}の候補`}>
+        {presets.map((preset) => (
+          <button
+            type="button"
+            role="radio"
+            aria-checked={preset.code === selected.code}
+            className={preset.code === selected.code ? 'is-selected' : ''}
+            disabled={disabled}
+            onClick={() => onChange(preset.code)}
+            key={preset.code}
+          >
+            <strong>{preset.displayCode}</strong>
+            <span>{preset.name}<small>{preset.tags.slice(0, 2).join('・')}</small></span>
+            {preset.recommended && <em>推奨</em>}
+          </button>
+        ))}
+      </div>
 
       <section className="course-preset-preview" aria-live="polite">
         <header>

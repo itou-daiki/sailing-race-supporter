@@ -650,6 +650,10 @@ export default function App() {
     () => coursePresetForClass(activeRace.className, activeRace.courseCode.split('/')[0].trim()),
     [activeRace.className, activeRace.courseCode],
   )
+  const selectedCoursePreset = useMemo(
+    () => coursePresetForClass(selectedClass, courseTemplate),
+    [courseTemplate, selectedClass],
+  )
   const raceAreaCenter = useMemo<LngLat | undefined>(() => {
     const area = eventResources.areas.find((candidate) => candidate.id === activeRace.raceAreaId)
     return area?.centerLng !== undefined && area.centerLat !== undefined
@@ -1740,6 +1744,8 @@ export default function App() {
               courseCode={activeCoursePreset.displayCode}
               courseName={activeCoursePreset.name}
               courseRoute={activeCoursePreset.route}
+              canChangeCourse={canChangeCourse}
+              onOpenCourseSettings={openCourseSettings}
               markWinds={markWinds.filter((observation) => !observation.raceId || observation.raceId === activeRace.id)}
               locked={locked}
               canVerifyMarks={canVerifyMarks}
@@ -1927,21 +1933,24 @@ export default function App() {
       {settingsOpen && (
         <div className="drawer-backdrop drawer-backdrop--map-visible" role="presentation" onMouseDown={() => setSettingsOpen(false)}>
           <aside className="settings-sheet" aria-label="コース設定" onMouseDown={(event) => event.stopPropagation()}>
-            <header><div><span className="eyebrow">{activeRace.number}</span><strong>コース・表示設定</strong></div><button type="button" onClick={() => setSettingsOpen(false)}><X size={20} /></button></header>
-            <label><span>競技ヨットクラス</span><select value={selectedClass} onChange={(event) => changeSelectedClass(event.target.value as SailingClass)}>{CLASS_PROFILES.map((profile) => <option key={profile.className}>{profile.className}</option>)}</select></label>
-            <CoursePresetPicker className={selectedClass} value={courseTemplate} label="コーステンプレート" onChange={changeCourseTemplate} />
-            <div className="settings-subsection">
-              <span className="eyebrow">レース予告予定</span>
-              <small>変更時に未完了タスクとリマインドを同じ差分で再計算</small>
-            </div>
-            <label><span>予告信号の予定時刻</span><input type="datetime-local" value={scheduleWarningInput} onChange={(event) => setScheduleWarningDrafts((current) => ({ ...current, [activeRace.id]: event.target.value }))} disabled={!canScheduleRace} /></label>
-            <label><span>変更理由</span><textarea rows={2} maxLength={500} value={scheduleReason} onChange={(event) => setScheduleReason(event.target.value)} disabled={!canScheduleRace} /></label>
-            {!['planning', 'setup'].includes(activeRace.status) && !locked && <small className="settings-guidance">開始手順中の変更は、先に本部船が延期・ゼネラルリコール・中止を記録してください。</small>}
-            {scheduleError && <div className="auth-error" role="alert">{scheduleError}</div>}
-            <button type="button" className="sheet-secondary" onClick={() => void shareRaceSchedule()} disabled={!canScheduleRace || realtime.status !== 'live' || scheduleWorking}>
-              <BellRing size={17} /> {scheduleWorking ? '予告予定を共有中…' : '予告予定を全運営へ共有'}
-            </button>
-            <label><span>風向（真方位・°T）</span><input type="number" min="0" max="359" value={windDirection} onChange={(event) => setWindDirection(Number(event.target.value))} /></label>
+            <header><div><span className="eyebrow">{activeRace.number}</span><strong>コースを選ぶ・位置を作る</strong></div><button type="button" onClick={() => setSettingsOpen(false)} aria-label="コース設定を閉じる"><X size={20} /></button></header>
+            <nav className="course-setup-steps" aria-label="コース設定の手順">
+              <strong>この順番なら迷いません</strong>
+              <ol>
+                <li><b>1</b><span>コース</span></li>
+                <li><b>2</b><span>スタート</span></li>
+                <li><b>3</b><span>条件確認</span></li>
+                <li><b>4</b><span>保存・共有</span></li>
+              </ol>
+            </nav>
+            {!canChangeCourse && <div className="course-permission-note" role="status"><LockKeyhole size={16} /><span><strong>{locked ? 'このレースは確定済みです' : '現在は閲覧のみです'}</strong><small>{locked ? eventAccess?.isOwner ? '変更する場合は画面下の「管理者修正版を作成」から開始してください。' : '確定後の変更は大会管理者だけが管理者修正版として行えます。' : 'コース変更は未確定レースの管理者、PRO、RO、コースセッターが行えます。'}</small></span></div>}
+            <label><span>競技ヨットクラス</span><select value={selectedClass} disabled={!canChangeCourse} onChange={(event) => changeSelectedClass(event.target.value as SailingClass)}>{CLASS_PROFILES.map((profile) => <option key={profile.className}>{profile.className}</option>)}</select></label>
+            <CoursePresetPicker className={selectedClass} value={courseTemplate} label="① コースを選ぶ" disabled={!canChangeCourse} onChange={changeCourseTemplate} />
+            <section className={`course-selection-state ${selectedCoursePreset.code !== activeCoursePreset.code || selectedClass !== activeRace.className ? 'has-change' : ''}`} aria-live="polite">
+              <span><small>現在共有中</small><strong>{activeCoursePreset.displayCode}・{activeCoursePreset.name}</strong></span>
+              <span><small>今回の選択</small><strong>{selectedCoursePreset.displayCode}・{selectedCoursePreset.name}</strong></span>
+              <p>{selectedCoursePreset.code !== activeCoursePreset.code || selectedClass !== activeRace.className ? '未保存の変更があります。最後の「④ 保存・共有」で全員に反映します。' : '現在の共有コースと同じです。選んだだけではマーク位置は変わりません。'}</p>
+            </section>
             <section className={`start-line-basis ${useRecordedStartLine ? 'is-recorded' : ''}`} aria-label="推奨マーク位置の基準">
               <header>
                 <span><Anchor size={17} /><strong>② スタートラインを決める</strong></span>
@@ -1956,13 +1965,13 @@ export default function App() {
                 </div>
               )}
               <div className="start-line-basis__actions">
-                <button type="button" disabled={!startPinMark} onClick={() => {
+                <button type="button" disabled={!startPinMark || !canChangeCourse} onClick={() => {
                   if (!startPinMark) return
                   setSettingsOpen(false)
                   setSelectedMarkId(startPinMark.id)
                   setMobileMapPriority(true)
                 }}>PINを地図で決める</button>
-                <button type="button" disabled={!startSignalMark} onClick={() => {
+                <button type="button" disabled={!startSignalMark || !canChangeCourse} onClick={() => {
                   if (!startSignalMark) return
                   setSettingsOpen(false)
                   setSelectedMarkId(startSignalMark.id)
@@ -1970,21 +1979,37 @@ export default function App() {
                 }}>RCを地図で決める</button>
               </div>
             </section>
+            <div className="settings-subsection course-condition-heading">
+              <span className="eyebrow">③ 風・ゲート条件を確認</span>
+              <small>風向とゲート有無を確認してから推奨位置を作ります</small>
+            </div>
+            <label><span>風向（真方位・°T）</span><input type="number" min="0" max="359" value={windDirection} disabled={!canChangeCourse} onChange={(event) => setWindDirection(Number(event.target.value))} /></label>
             <div className="settings-subsection">
               <span className="eyebrow">潮流観測</span>
               <small>流向は海水が流れていく方向を真方位で入力</small>
             </div>
-            <label><span>流向（真方位・行き先・°T）</span><input type="number" min="0" max="359" value={seaCurrent.directionDegrees} onChange={(event) => setSeaCurrent((current) => ({ ...current, directionDegrees: Number(event.target.value) }))} /></label>
-            <label><span>流速（kt）</span><input type="number" min="0" max="20" step="0.1" value={seaCurrent.speedKnots} onChange={(event) => setSeaCurrent((current) => ({ ...current, speedKnots: Number(event.target.value) }))} /></label>
-            <label><span>信頼度</span><select value={seaCurrent.confidence} onChange={(event) => setSeaCurrent((current) => ({ ...current, confidence: event.target.value as CurrentObservation['confidence'] }))}><option value="low">低・目測</option><option value="medium">中・複数回確認</option><option value="high">高・機器観測</option></select></label>
+            <label><span>流向（真方位・行き先・°T）</span><input type="number" min="0" max="359" value={seaCurrent.directionDegrees} disabled={!canShareEnvironment} onChange={(event) => setSeaCurrent((current) => ({ ...current, directionDegrees: Number(event.target.value) }))} /></label>
+            <label><span>流速（kt）</span><input type="number" min="0" max="20" step="0.1" value={seaCurrent.speedKnots} disabled={!canShareEnvironment} onChange={(event) => setSeaCurrent((current) => ({ ...current, speedKnots: Number(event.target.value) }))} /></label>
+            <label><span>信頼度</span><select value={seaCurrent.confidence} disabled={!canShareEnvironment} onChange={(event) => setSeaCurrent((current) => ({ ...current, confidence: event.target.value as CurrentObservation['confidence'] }))}><option value="low">低・目測</option><option value="medium">中・複数回確認</option><option value="high">高・機器観測</option></select></label>
             <button type="button" className="sheet-secondary" onClick={shareEnvironment} disabled={!canShareEnvironment}>
               <Waves size={17} /> 風・潮流を現在地と共有
             </button>
-            <label><span>準備信号</span><select value={preparatoryFlag} onChange={(event) => setPreparatoryFlag(event.target.value)}><option>P旗</option><option>I旗</option><option>Z旗</option><option>Z旗 + I旗</option><option>U旗</option><option>黒旗</option></select></label>
-            <label className="switch-row"><span><strong>風下／内側ゲート</strong><small>{courseTemplate === 'I2' || courseTemplate === 'L2' || courseTemplate === 'L3' ? '4S / 4Pを使用' : '3S / 3Pを使用'}</small></span><input type="checkbox" checked={lowerGate} onChange={(event) => setLowerGate(event.target.checked)} /></label>
-            <label className="switch-row"><span><strong>上ゲート</strong><small>1S / 1Pを使用</small></span><input type="checkbox" checked={upperGate} onChange={(event) => setUpperGate(event.target.checked)} /></label>
-            {(courseTemplate === 'O2' || courseTemplate === 'I2' || courseTemplate === 'T2' || courseTemplate === 'トライアングル') && <label className="switch-row"><span><strong>中ゲート</strong><small>2マークを2S / 2Pへ切替</small></span><input type="checkbox" checked={secondGate} onChange={(event) => setSecondGate(event.target.checked)} /></label>}
-            {(lowerGate || upperGate || secondGate) && <label><span>計画ゲート幅（m・全ゲート共通）</span><input type="number" min="40" max="600" step="5" value={gateWidthMetres} onChange={(event) => setGateWidthMetres(Math.min(600, Math.max(40, Number(event.target.value) || 40)))} /></label>}
+            <label className="switch-row"><span><strong>風下／内側ゲート</strong><small>{courseTemplate === 'I2' || courseTemplate === 'L2' || courseTemplate === 'L3' ? '4S / 4Pを使用' : '3S / 3Pを使用'}</small></span><input type="checkbox" checked={lowerGate} disabled={!canChangeCourse} onChange={(event) => setLowerGate(event.target.checked)} /></label>
+            <label className="switch-row"><span><strong>上ゲート</strong><small>1S / 1Pを使用</small></span><input type="checkbox" checked={upperGate} disabled={!canChangeCourse} onChange={(event) => setUpperGate(event.target.checked)} /></label>
+            {(courseTemplate === 'O2' || courseTemplate === 'I2' || courseTemplate === 'T2' || courseTemplate === 'トライアングル') && <label className="switch-row"><span><strong>中ゲート</strong><small>2マークを2S / 2Pへ切替</small></span><input type="checkbox" checked={secondGate} disabled={!canChangeCourse} onChange={(event) => setSecondGate(event.target.checked)} /></label>}
+            {(lowerGate || upperGate || secondGate) && <label><span>計画ゲート幅（m・全ゲート共通）</span><input type="number" min="40" max="600" step="5" value={gateWidthMetres} disabled={!canChangeCourse} onChange={(event) => setGateWidthMetres(Math.min(600, Math.max(40, Number(event.target.value) || 40)))} /></label>}
+            <div className="settings-subsection course-condition-heading">
+              <span className="eyebrow">その他の運営設定（任意）</span>
+              <small>コース位置の保存とは別に、予告予定と準備信号を共有できます</small>
+            </div>
+            <label><span>予告信号の予定時刻</span><input type="datetime-local" value={scheduleWarningInput} onChange={(event) => setScheduleWarningDrafts((current) => ({ ...current, [activeRace.id]: event.target.value }))} disabled={!canScheduleRace} /></label>
+            <label><span>変更理由</span><textarea rows={2} maxLength={500} value={scheduleReason} onChange={(event) => setScheduleReason(event.target.value)} disabled={!canScheduleRace} /></label>
+            {!['planning', 'setup'].includes(activeRace.status) && !locked && <small className="settings-guidance">開始手順中の変更は、先に本部船が延期・ゼネラルリコール・中止を記録してください。</small>}
+            {scheduleError && <div className="auth-error" role="alert">{scheduleError}</div>}
+            <button type="button" className="sheet-secondary" onClick={() => void shareRaceSchedule()} disabled={!canScheduleRace || realtime.status !== 'live' || scheduleWorking}>
+              <BellRing size={17} /> {scheduleWorking ? '予告予定を共有中…' : '予告予定を全運営へ共有'}
+            </button>
+            <label><span>準備信号</span><select value={preparatoryFlag} disabled={!canControlSignals} onChange={(event) => setPreparatoryFlag(event.target.value)}><option>P旗</option><option>I旗</option><option>Z旗</option><option>Z旗 + I旗</option><option>U旗</option><option>黒旗</option></select></label>
             {canViewCourseHistory && <section className="course-history" aria-label="コース版履歴">
               <div className="settings-subsection">
                 <span className="eyebrow">コース版履歴</span>
@@ -2016,7 +2041,7 @@ export default function App() {
             <button type="button" className="sheet-secondary" onClick={() => { setSettingsOpen(false); setEventManagerOpen(true) }}><Anchor size={17} /> 大会を発行・選択・共有</button>
             {session.mode === 'authenticated' && <button type="button" className="sheet-secondary" onClick={() => { setSettingsOpen(false); setLogsOpen(true) }}><ScrollText size={17} /> 大会・レース別の運営ログ</button>}
             <button type="button" className="sheet-secondary" onClick={() => { setSettingsOpen(false); setResumeEventIssuanceAfterAuth(false); setAuthOpen(true) }}><ShieldCheck size={17} /> 本人確認・パスキー</button>
-            <button type="button" className="sheet-primary" onClick={() => void saveCourse()} disabled={courseSaving || locked}>{courseSaving ? '推奨位置を計算・保存中…' : useRecordedStartLine ? '③ スタートラインから推奨マーク位置を保存' : '③ 計画ラインから推奨マーク位置を保存'}</button>
+            <button type="button" className="sheet-primary" onClick={() => void saveCourse()} disabled={courseSaving || !canChangeCourse}>{courseSaving ? '推奨位置を計算・保存中…' : useRecordedStartLine ? '④ 推奨マーク位置を保存・全員へ共有' : '④ 計画ラインから保存・全員へ共有'}</button>
           </aside>
         </div>
       )}

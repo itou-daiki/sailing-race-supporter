@@ -60,6 +60,8 @@ interface MapViewProps {
   courseCode: string
   courseName: string
   courseRoute: readonly string[]
+  canChangeCourse: boolean
+  onOpenCourseSettings: () => void
   markWinds: readonly WindObservation[]
   locked: boolean
   canVerifyMarks: boolean
@@ -141,6 +143,8 @@ export function MapView({
   courseCode,
   courseName,
   courseRoute,
+  canChangeCourse,
+  onOpenCourseSettings,
   markWinds,
   locked,
   canVerifyMarks,
@@ -627,8 +631,13 @@ export function MapView({
       <div className="map-topbar glass-panel">
         <div className="map-topbar__primary">
           <span className="eyebrow"><Radio size={13} /> {raceAreaName ?? 'レース海面'}・LIVE</span>
-          <strong>{courseCode}・{courseName}</strong>
-          <small className="map-primary-guidance">{raceAreaName ?? 'レース海面'}｜① 地点を選ぶ → ②「マーク／ライン操作」</small>
+          <div className="map-course-heading">
+            <strong>{courseCode}・{courseName}</strong>
+            {canChangeCourse
+              ? <button type="button" onClick={onOpenCourseSettings}>コースを選ぶ <ChevronDown size={13} /></button>
+              : <span>{locked ? '確定済み' : '閲覧中'}</span>}
+          </div>
+          <small className="map-primary-guidance">①コース選択 → ②スタートライン → ③推奨位置 → ④投下・確認</small>
         </div>
         <div className="map-environment">
           <div className="map-weather">
