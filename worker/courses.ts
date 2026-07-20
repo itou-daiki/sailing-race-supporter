@@ -1,4 +1,4 @@
-import { eventAccess } from './authorization.js'
+import { can, eventAccess } from './authorization.js'
 import { appendAuditEvent, canonical } from './audit.js'
 import { buildGateConfiguration } from '../shared/gates.js'
 import { json, readJson } from './http.js'
@@ -202,7 +202,7 @@ export async function handleCourseRequest(request: Request, env: AppEnv): Promis
   const eventReference = decodeURIComponent(match[1])
   const raceId = decodeURIComponent(match[2])
   const access = await eventAccess(env, eventReference, session.userId, session.displayName)
-  if (!access || (!access.isOwner && !['pro', 'ro', 'course-setter'].includes(access.role))) {
+  if (!access || !can(access, 'course')) {
     return json({ error: 'コース案を作成する権限がありません' }, { status: 403 })
   }
   const race = await env.DB.prepare(

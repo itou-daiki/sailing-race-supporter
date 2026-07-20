@@ -2,6 +2,7 @@ import { eventAccess, type EventAccess } from './authorization.js'
 import { appendAuditEvent } from './audit.js'
 import { json, readJson } from './http.js'
 import type { AppEnv } from './index.js'
+import { isInvitableOperationRole, isRaceOfficerRole, normalizeOperationRole } from '../shared/roles.js'
 import {
   assertSameOrigin,
   createSession,
@@ -10,11 +11,6 @@ import {
   requireSession,
   sha256Base64Url,
 } from './security.js'
-
-const INVITE_ROLES = new Set([
-  'pro', 'ro', 'course-setter', 'signal-boat', 'mark-boat', 'safety-boat', 'jury', 'protest', 'viewer',
-])
-const PRIVILEGED_RECOVERY_ROLES = new Set(['owner', 'pro', 'ro'])
 
 interface InviteRow {
   id: string
@@ -112,8 +108,8 @@ async function createInvite(request: Request, env: AppEnv, eventReference: strin
     maxUses?: number | null
     expiresAt?: string | null
   }>(request, 16_384)
-  const role = stringValue(body.role, 'role')
-  if (!INVITE_ROLES.has(role)) return json({ error: '招待できない役割です' }, { status: 400 })
+  const role = normalizeOperationRole(stringValue(body.role, 'role'))
+  if (!isInvitableOperationRole(role)) return json({ error: '招待できない役割です' }, { status: 400 })
   const assigned = stringValue(body.assignment, 'assignment', 100)
   const maxUses = body.maxUses == null ? null : Math.trunc(body.maxUses)
   if (maxUses != null && (maxUses < 1 || maxUses > 500)) return json({ error: '使用回数は1〜500で指定してください' }, { status: 400 })
@@ -262,7 +258,7 @@ async function exchangeInvite(request: Request, env: AppEnv, inviteId: string): 
   const recoverySecret = stringValue(body.recoverySecret, 'recoverySecret', 300)
   if (recoverySecret.length < 22) return json({ error: '復元秘密が短すぎます' }, { status: 400 })
   const currentSession = await getSession(request, env)
-  if (invite.role === 'pro' || invite.role === 'ro') {
+  if (isRaceOfficerRole(invite.role)) {
     if (!currentSession) return json({ error: 'PRO/ROは先にパスキーでログインしてください' }, { status: 403 })
     const credential = await env.DB.prepare(
       'SELECT id FROM passkey_credentials WHERE user_id = ? AND revoked_at IS NULL LIMIT 1',
@@ -397,7 +393,7 @@ async function recoverMember(request: Request, env: AppEnv, eventReference: stri
     ).bind(crypto.randomUUID(), event.id, memberId, attemptedAt, networkHash).run()
     return json({ error: '復元情報を確認できません' }, { status: 400 })
   }
-  if (PRIVILEGED_RECOVERY_ROLES.has(credential.role)) {
+  if (credential.role === 'owner' || isRaceOfficerRole(credential.role)) {
     return json({ error: 'この役割の復旧にはパスキーと大会管理者の確認が必要です' }, { status: 403 })
   }
 

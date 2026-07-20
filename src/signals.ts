@@ -10,7 +10,7 @@ export interface SignalDefinition {
   group: 'sequence' | 'postponement' | 'recall' | 'course' | 'safety' | 'abandonment'
 }
 
-export const SIGNAL_DEFINITIONS: Record<RaceSignalAction, SignalDefinition> = {
+const SIGNAL_DEFINITIONS: Record<RaceSignalAction, SignalDefinition> = {
   warning: { action: 'warning', label: '予告信号', flag: 'クラス旗 掲揚', sound: '短音1回', soundCount: 1, group: 'sequence' },
   preparatory: { action: 'preparatory', label: '準備信号', flag: '準備旗 掲揚', sound: '短音1回', soundCount: 1, group: 'sequence' },
   'one-minute': { action: 'one-minute', label: '1分信号', flag: '準備旗 降下', sound: '長音1回', soundCount: 1, group: 'sequence' },

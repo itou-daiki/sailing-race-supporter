@@ -22,8 +22,8 @@ interface SignableBackup {
   }
 }
 
-export const BACKUP_SIGNING_KEY_ID = signingKeyConfiguration.activeKeyId
-export const BACKUP_SIGNING_PUBLIC_KEYS: Readonly<Record<string, string>> = signingKeyConfiguration.publicKeys
+const BACKUP_SIGNING_KEY_ID = signingKeyConfiguration.activeKeyId
+const BACKUP_SIGNING_PUBLIC_KEYS: Readonly<Record<string, string>> = signingKeyConfiguration.publicKeys
 
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical)

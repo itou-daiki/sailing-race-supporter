@@ -1,4 +1,4 @@
-export const RACE_REMINDER_MINUTES = [20, 10, 5, 1, 0] as const
+const RACE_REMINDER_MINUTES = [20, 10, 5, 1, 0] as const
 
 export interface RaceReminder {
   minutesBeforeWarning: number

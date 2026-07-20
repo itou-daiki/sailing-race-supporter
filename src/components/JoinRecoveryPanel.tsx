@@ -23,6 +23,7 @@ import {
 } from '../inviteClient'
 import { saveMemberProfile } from '../offlineStore'
 import { createMemberRecoveryQrPayload, decodeMemberRecoveryQrImage } from '../memberRecoveryCard'
+import { operationRoleLabel } from '../../shared/roles'
 
 type JoinMode = { kind: 'join'; inviteId: string; secret: string }
 type RecoverMode = { kind: 'recover' }
@@ -33,14 +34,6 @@ interface JoinRecoveryPanelProps {
   onSessionChange: (session: SessionState) => void
   onComplete: () => void
   onClose?: () => void
-}
-
-function roleLabel(role: string): string {
-  const labels: Record<string, string> = {
-    pro: 'PRO', ro: 'RO', 'course-setter': 'コースセッター', 'signal-boat': 'シグナルボート',
-    'mark-boat': 'マークボート', 'safety-boat': '安全ボート', jury: 'ジュリー', protest: 'プロテスト', viewer: '閲覧者',
-  }
-  return labels[role] ?? role
 }
 
 function RecoveryCard({
@@ -103,7 +96,7 @@ function RecoveryCard({
         <dl>
           <div><dt>大会</dt><dd>{result.event.name}</dd></div>
           <div><dt>名前</dt><dd>{result.member.displayName}</dd></div>
-          <div><dt>担当</dt><dd>{roleLabel(result.member.role)}／{result.member.assignment}</dd></div>
+          <div><dt>担当</dt><dd>{operationRoleLabel(result.member.role)}／{result.member.assignment}</dd></div>
           <div><dt>メンバーID</dt><dd>{result.member.id}</dd></div>
         </dl>
         {qrUrl ? <img src={qrUrl} alt="参加情報復元用QRコード" /> : <div className="recovery-qr-loading"><LoaderCircle className="is-spinning" /></div>}
@@ -225,7 +218,7 @@ export function JoinRecoveryPanel({ eventSlug, mode, onSessionChange, onComplete
             <h1>{preview?.event.name ?? '大会情報を確認中'}</h1>
             {working && !preview ? <div className="event-loading"><LoaderCircle className="is-spinning" size={19} />招待を確認しています</div> : preview && (
               <>
-                <div className="join-assignment"><span>許可された担当</span><strong>{roleLabel(preview.invite.role)}／{preview.invite.assignment}</strong><small>入力内容から権限が拡大されることはありません</small></div>
+                <div className="join-assignment"><span>許可された担当</span><strong>{operationRoleLabel(preview.invite.role)}／{preview.invite.assignment}</strong><small>入力内容から権限が拡大されることはありません</small></div>
                 <form onSubmit={(event) => void submitJoin(event)}>
                   <label><span>あなたの名前</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="運営メンバーの表示名" minLength={2} maxLength={80} autoComplete="name" required /></label>
                   <button type="submit" disabled={working || displayName.trim().length < 2}>{working ? <LoaderCircle className="is-spinning" size={18} /> : <ShieldCheck size={18} />}名前と担当を登録して参加</button>

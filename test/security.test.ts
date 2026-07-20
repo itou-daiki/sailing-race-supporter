@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { can, type EventAccess } from '../worker/authorization'
+import { canRecordOverallWind, isInvitableOperationRole, operationRoleLabel, roleCan } from '../shared/roles'
 import {
   assertSameOrigin,
   hasRecentAuthentication,
@@ -40,6 +41,7 @@ describe('authorization', () => {
 
   it('allows finish timing only for race committee recording roles', () => {
     expect(can(access('timekeeper'), 'finish')).toBe(true)
+    expect(can(access('timekeeper'), 'signal')).toBe(false)
     expect(can(access('record-keeper'), 'finish')).toBe(true)
     expect(can(access('signal-boat'), 'finish')).toBe(true)
     expect(can(access('viewer'), 'finish')).toBe(false)
@@ -50,6 +52,15 @@ describe('authorization', () => {
     expect(can(viewer, 'view')).toBe(true)
     expect(can(viewer, 'position')).toBe(false)
     expect(can(viewer, 'message')).toBe(false)
+  })
+
+  it('uses one role policy for invitations, labels and scoped wind observations', () => {
+    expect(isInvitableOperationRole('タイムキーパー')).toBe(true)
+    expect(isInvitableOperationRole('record-keeper')).toBe(true)
+    expect(operationRoleLabel('記録員')).toBe('記録員')
+    expect(roleCan('コースセッター', 'course')).toBe(true)
+    expect(canRecordOverallWind('safety-boat')).toBe(true)
+    expect(canRecordOverallWind('mark-boat')).toBe(false)
   })
 })
 

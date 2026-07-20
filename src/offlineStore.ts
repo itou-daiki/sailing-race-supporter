@@ -115,7 +115,7 @@ export async function saveMemberProfile(profile: LocalMemberProfile): Promise<vo
   await withStore(PROFILES, 'readwrite', (store) => store.put(profile))
 }
 
-export async function loadMemberProfile(eventId: string): Promise<LocalMemberProfile | undefined> {
+async function loadMemberProfile(eventId: string): Promise<LocalMemberProfile | undefined> {
   return withStore(PROFILES, 'readonly', (store) => store.get(eventId)) as Promise<LocalMemberProfile | undefined>
 }
 

@@ -64,11 +64,11 @@ export interface RuntimeBudgetStatus {
   policy: FreeTierProtectionPolicy
 }
 
-export const DURABLE_OBJECT_POSITION_SNAPSHOT_MS = 30_000
+const DURABLE_OBJECT_POSITION_SNAPSHOT_MS = 30_000
 export const ROOM_SEQUENCE_ALLOCATION_SIZE = 1_000
 
 /** Official Workers Free values rechecked against Cloudflare documentation in July 2026. */
-export const DEFAULT_CLOUDFLARE_FREE_LIMITS: CloudflareFreeTierLimits = {
+const DEFAULT_CLOUDFLARE_FREE_LIMITS: CloudflareFreeTierLimits = {
   workerRequestsPerDay: 100_000,
   durableObjectRequestsPerDay: 100_000,
   durableObjectDurationGbSecondsPerDay: 13_000,

@@ -105,7 +105,7 @@ export interface CoursePlanInput {
   startLineLengthMetres?: number
 }
 
-export function destinationPoint(origin: LngLat, distance: number, bearingDegreesValue: number): LngLat {
+function destinationPoint(origin: LngLat, distance: number, bearingDegreesValue: number): LngLat {
   const angularDistance = distance / EARTH_RADIUS_METRES
   const bearing = toRadians(bearingDegreesValue)
   const latitude = toRadians(origin[1])

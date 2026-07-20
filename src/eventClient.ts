@@ -848,10 +848,6 @@ export async function assignRaceArea(
   })
 }
 
-export async function loadRetentionPolicy(eventSlug: string): Promise<RetentionPolicy> {
-  return (await loadRetentionSettings(eventSlug)).policy
-}
-
 export async function loadRetentionSettings(eventSlug: string): Promise<RetentionSettings> {
   return apiJson<RetentionSettings>(
     `/api/events/${encodeURIComponent(eventSlug)}/settings/retention`,

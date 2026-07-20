@@ -1,21 +1,7 @@
 import type { AppEnv } from './index.js'
+import { normalizeOperationRole, roleCan, type OperationPermission } from '../shared/roles.js'
 
-export type OperationPermission =
-  | 'view'
-  | 'position'
-  | 'wind'
-  | 'current'
-  | 'mark'
-  | 'leading-passage'
-  | 'finish'
-  | 'task'
-  | 'message'
-  | 'signal'
-  | 'schedule'
-  | 'course'
-  | 'assignment'
-  | 'finalize'
-  | 'post-finalization-revision'
+export type { OperationPermission } from '../shared/roles.js'
 
 export interface EventAccess {
   eventId: string
@@ -39,57 +25,6 @@ interface AccessRow {
   role: string | null
   assignment: string | null
   member_status: string | null
-}
-
-const ALL_OPERATIONS = new Set<OperationPermission>([
-  'view',
-  'position',
-  'wind',
-  'current',
-  'mark',
-  'leading-passage',
-  'finish',
-  'task',
-  'message',
-  'signal',
-  'schedule',
-  'course',
-  'assignment',
-  'finalize',
-  'post-finalization-revision',
-])
-
-const ROLE_PERMISSIONS: Readonly<Record<string, ReadonlySet<OperationPermission>>> = {
-  pro: new Set(['view', 'position', 'wind', 'current', 'mark', 'leading-passage', 'finish', 'task', 'message', 'signal', 'schedule', 'course', 'finalize']),
-  ro: new Set(['view', 'position', 'wind', 'current', 'mark', 'leading-passage', 'finish', 'task', 'message', 'signal', 'schedule', 'course', 'finalize']),
-  'course-setter': new Set(['view', 'position', 'wind', 'current', 'mark', 'leading-passage', 'task', 'message', 'course']),
-  'signal-boat': new Set(['view', 'position', 'wind', 'current', 'leading-passage', 'finish', 'task', 'message', 'signal']),
-  'mark-boat': new Set(['view', 'position', 'wind', 'current', 'mark', 'leading-passage', 'task', 'message']),
-  timekeeper: new Set(['view', 'leading-passage', 'finish', 'task', 'message', 'signal']),
-  'record-keeper': new Set(['view', 'leading-passage', 'finish', 'task', 'message']),
-  'safety-boat': new Set(['view', 'position', 'wind', 'current', 'task', 'message']),
-  jury: new Set(['view', 'position', 'leading-passage', 'task', 'message']),
-  protest: new Set(['view', 'position', 'leading-passage', 'task', 'message']),
-  viewer: new Set(['view']),
-}
-
-function normalizeRole(role: string): string {
-  const value = role.trim().toLowerCase()
-  const aliases: Record<string, string> = {
-    '大会管理者': 'owner',
-    '管理者': 'owner',
-    'コースセッター': 'course-setter',
-    'シグナルボート': 'signal-boat',
-    '本部船': 'signal-boat',
-    'マークボート': 'mark-boat',
-    'タイムキーパー': 'timekeeper',
-    '記録員': 'record-keeper',
-    '安全ボート': 'safety-boat',
-    'ジュリー': 'jury',
-    'プロテスト': 'protest',
-    '閲覧': 'viewer',
-  }
-  return aliases[value] ?? value
 }
 
 export async function eventAccess(
@@ -126,15 +61,15 @@ export async function eventAccess(
     userId,
     memberId: isOwner ? row.member_id ?? `owner:${userId}` : row.member_id as string,
     displayName: row.member_name ?? displayName,
-    role: isOwner ? 'owner' : normalizeRole(row.role ?? 'viewer'),
+    role: isOwner ? 'owner' : normalizeOperationRole(row.role ?? 'viewer'),
     assignment: isOwner ? '大会管理者' : row.assignment ?? '',
     isOwner,
   }
 }
 
 export function can(access: EventAccess, permission: OperationPermission): boolean {
-  if (access.isOwner) return ALL_OPERATIONS.has(permission)
-  return ROLE_PERMISSIONS[normalizeRole(access.role)]?.has(permission) ?? false
+  if (access.isOwner) return true
+  return roleCan(access.role, permission)
 }
 
 export function requirePermission(access: EventAccess, permission: OperationPermission): void {

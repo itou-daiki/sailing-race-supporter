@@ -24,6 +24,7 @@ import type { OwnerRecoveryKit, SessionState } from '../authClient'
 import { CLASS_PROFILES, type RaceDefinition, type SailingClass } from '../domain'
 import { normalizeCoursePresetCode } from '../../shared/coursePresets'
 import { DEFAULT_RACE_AREA_CENTER } from '../../shared/defaultRaceArea'
+import { INVITABLE_OPERATION_ROLES, operationRoleLabel } from '../../shared/roles'
 import {
   assignRaceArea,
   createRaceArea,
@@ -659,7 +660,7 @@ export function EventManager({
                 <div className="event-section-title"><span><UserPlus size={17} />役割・担当別の招待URL</span><small>管理者のみ</small></div>
                 <form className="invite-create-form" onSubmit={(event) => void issueInvite(event)}>
                   <div className="event-form-grid">
-                    <label className="event-field"><span>役割</span><select value={inviteRole} onChange={(event) => setInviteRole(event.target.value)}><option value="mark-boat">マークボート</option><option value="signal-boat">シグナルボート</option><option value="course-setter">コースセッター</option><option value="safety-boat">安全ボート</option><option value="jury">ジュリー</option><option value="protest">プロテスト</option><option value="pro">PRO</option><option value="ro">RO</option><option value="viewer">閲覧者</option></select></label>
+                    <label className="event-field"><span>役割</span><select value={inviteRole} onChange={(event) => setInviteRole(event.target.value)}>{INVITABLE_OPERATION_ROLES.map((role) => <option value={role} key={role}>{operationRoleLabel(role)}</option>)}</select></label>
                     <label className="event-field"><span>表示する担当</span><input value={inviteAssignment} onChange={(event) => setInviteAssignment(event.target.value)} maxLength={100} required /></label>
                     <label className="event-field"><span>担当レースエリア</span><select value={inviteAreaId} onChange={(event) => { setInviteAreaId(event.target.value); setInviteMarkId('') }}><option value="">大会全体</option>{resources.areas.map((area) => <option value={area.id} key={area.id}>{area.name}</option>)}</select></label>
                     <label className="event-field"><span>担当運営ボート</span><select value={inviteBoatId} onChange={(event) => {

@@ -6,6 +6,7 @@ import { signalDefinition, signalFlagDescription } from '../src/signals.js'
 import type { RaceSignalAction } from '../src/domain.js'
 import { canManuallyRescheduleRace, shiftIncompleteTaskDueTimes } from '../shared/schedule.js'
 import { geodesicDistanceMetres } from '../shared/geo.js'
+import { canRecordOverallWind, isRaceOfficerRole, operationRoleLabel, roleCan } from '../shared/roles.js'
 
 export interface RealtimeOperation {
   id: string
@@ -115,7 +116,7 @@ export async function authorizeCommitteeBoat(
      WHERE id = ? AND regatta_id = ? AND status = 'active' LIMIT 1`,
   ).bind(committeeBoatId, access.eventId).first<{ id: string; name: string; call_sign: string | null }>()
   if (!boat) throw new Response('Operating boat not found', { status: 404 })
-  if (access.isOwner || access.role === 'pro' || access.role === 'ro') return
+  if (access.isOwner || isRaceOfficerRole(access.role)) return
 
   const scoped = await env.DB.prepare(
     `SELECT 1 AS allowed FROM event_member_scopes
@@ -189,13 +190,15 @@ async function persistWind(env: AppEnv, access: EventAccess, operation: Realtime
        LIMIT 1`,
     ).bind(operation.raceId ?? '', markId, access.eventId).first()
     if (!mark) throw new Response('Wind observation mark not found in this race area', { status: 404 })
-    if (!access.isOwner && !['pro', 'ro', 'course-setter'].includes(access.role)) {
+    if (!access.isOwner && !roleCan(access.role, 'course')) {
       const scoped = await env.DB.prepare(
         `SELECT 1 AS allowed FROM event_member_scopes
          WHERE event_member_id = ? AND mark_id = ? LIMIT 1`,
       ).bind(memberId, markId).first<{ allowed: number }>()
       if (!scoped) throw new Response('Wind observations may only target your assigned mark', { status: 403 })
     }
+  } else if (!access.isOwner && !canRecordOverallWind(access.role)) {
+    throw new Response('全体風を記録できるのはPRO・RO・コースセッター・シグナルボート・安全ボートです', { status: 403 })
   }
   await env.DB.prepare(
     `INSERT INTO wind_observations
@@ -292,7 +295,7 @@ async function markForRace(
   }>()
   if (!mark) throw new Response('Mark is not part of the active course', { status: 404 })
 
-  if (!allowUnscopedVerification && !access.isOwner && !['pro', 'ro', 'course-setter'].includes(access.role)) {
+  if (!allowUnscopedVerification && !access.isOwner && !roleCan(access.role, 'course')) {
     const scoped = await env.DB.prepare(
       `SELECT 1 AS allowed FROM event_member_scopes
        WHERE event_member_id = ? AND mark_id = ? LIMIT 1`,
@@ -329,7 +332,7 @@ async function persistMark(env: AppEnv, access: EventAccess, operation: Realtime
   }
   const eventType = eventTypes[requestedStatus]
   if (!eventType) throw new Response('Invalid mark state', { status: 400 })
-  const canVerifyWithoutAssignedBoat = access.isOwner || ['pro', 'ro', 'course-setter'].includes(access.role)
+  const canVerifyWithoutAssignedBoat = access.isOwner || roleCan(access.role, 'course')
   if (eventType === 'confirmed' && !canVerifyWithoutAssignedBoat && !committeeBoatId) {
     throw new Response('Committee boat assignment required for mark verification', { status: 400 })
   }
@@ -424,7 +427,7 @@ async function persistLeadingPassage(env: AppEnv, access: EventAccess, operation
   const action = payload.action === 'adopt' ? 'adopt' : 'observe'
 
   if (action === 'adopt') {
-    if (!access.isOwner && !['pro', 'ro', 'timekeeper', 'record-keeper', 'signal-boat'].includes(access.role)) {
+    if (!access.isOwner && !roleCan(access.role, 'finish')) {
       throw new Response('Passage adoption requires a record-keeper role', { status: 403 })
     }
     const observationId = stringValue(payload.observationId, 'observationId')
@@ -546,7 +549,7 @@ async function persistFinish(env: AppEnv, access: EventAccess, operation: Realti
   }
 
   if (action === 'adopt') {
-    if (!access.isOwner && !['pro', 'ro', 'timekeeper', 'record-keeper', 'signal-boat'].includes(access.role)) {
+    if (!access.isOwner && !roleCan(access.role, 'finish')) {
       throw new Response('Finish adoption requires a record-keeper role', { status: 403 })
     }
     const observationId = stringValue(payload.observationId, 'observationId')
@@ -656,15 +659,6 @@ interface ResolvedMessageTarget {
   label: string
   channelKey: string
   recipientIds: string[]
-}
-
-function messageRoleLabel(role: string): string {
-  const labels: Record<string, string> = {
-    owner: '大会管理者', pro: 'PRO', ro: 'RO', 'course-setter': 'コースセッター',
-    'signal-boat': 'シグナルボート', 'mark-boat': 'マークボート', 'safety-boat': '安全ボート',
-    timekeeper: 'タイムキーパー', 'record-keeper': '記録員', jury: 'ジュリー', protest: 'プロテスト', viewer: '閲覧者',
-  }
-  return labels[role] ?? role
 }
 
 async function messageReceiptSummary(env: AppEnv, messageId: string): Promise<{
@@ -796,7 +790,7 @@ async function resolveMessageTarget(
     ).bind(id, access.eventId, senderMemberId, mark.label, `${assignmentPrefix}%`).all<{ id: string }>()).results
   } else if (type === 'role') {
     if (!id) throw new Response('Role message target required', { status: 400 })
-    label = `${messageRoleLabel(id)}担当`
+    label = `${operationRoleLabel(id)}担当`
     channelKey = `role:${id}`
     rows = (await env.DB.prepare(
       `SELECT id FROM event_members
@@ -1028,7 +1022,7 @@ async function persistSignal(env: AppEnv, access: EventAccess, operation: Realti
   const targetSailNumbers = optionalString(payload.targetSailNumbers, 200)
   const finishAt = optionalString(payload.finishAt, 200)
   if (action === 'shorten' && !finishAt) throw new Response('Shortened finish location required', { status: 400 })
-  if (action === 'course-change' && !access.isOwner && !['pro', 'ro'].includes(access.role)) {
+  if (action === 'course-change' && !access.isOwner && !isRaceOfficerRole(access.role)) {
     throw new Response('Course change signal requires PRO or RO', { status: 403 })
   }
   if (['course-change', 'mark-missing'].includes(action)) {
