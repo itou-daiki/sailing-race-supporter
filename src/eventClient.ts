@@ -130,6 +130,21 @@ export interface CreateEventInput {
   firstWarningAt: string
   operationMode: OperationMode
   center?: { longitude: number; latitude: number }
+  signalBoatPosition?: { longitude: number; latitude: number }
+  windDirection?: number
+  windSpeed?: number
+  lowerGate?: boolean
+  targetLengthMetres?: number
+}
+
+export interface EventCreationPlan {
+  className: SailingClass
+  courseCode: string
+  signalBoatPosition: readonly [longitude: number, latitude: number]
+  windDirection: number
+  windSpeed: number
+  lowerGate: boolean
+  targetLengthMetres: number
 }
 
 export interface RetentionPolicy {

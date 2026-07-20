@@ -70,4 +70,26 @@ describe('course map geometry', () => {
       [131.522, 33.278],
     ])
   })
+
+  it('uses the single lower mark when a gate route is previewed with the gate disabled', () => {
+    const marks: CourseMark[] = [
+      { id: 'm1', label: '1マーク', shortLabel: '1', target: [131.522, 33.29], status: 'planned' },
+      { id: 'm2', label: '2マーク', shortLabel: '2', target: [131.532, 33.285], status: 'planned' },
+      { id: 'm3', label: '3マーク', shortLabel: '3', target: [131.522, 33.28], status: 'planned' },
+      { id: 'pin', label: 'スタート・ピン', shortLabel: 'PIN', target: [131.520, 33.278], status: 'planned' },
+      { id: 'rc', label: 'シグナルボート', shortLabel: 'RC', target: [131.524, 33.278], status: 'planned' },
+    ]
+
+    const features = buildCourseFeatures(marks, ['Start', '1', '2', '3S/3P', '2', '3P', 'Finish'])
+    expect(features.course.features[0].geometry.coordinates).toEqual([
+      [131.522, 33.278],
+      [131.522, 33.29],
+      [131.532, 33.285],
+      [131.522, 33.28],
+      [131.532, 33.285],
+      [131.522, 33.28],
+      [131.522, 33.278],
+    ])
+    expect(features.gates.features).toHaveLength(0)
+  })
 })

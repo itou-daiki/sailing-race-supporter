@@ -69,7 +69,7 @@ import {
   rollbackCourseRevision,
   saveCourseRevision,
 } from './eventClient'
-import type { CourseRevisionSummary, EventAccessSummary, EventResources, PostFinalizationRevisionDraft } from './eventClient'
+import type { CourseRevisionSummary, EventAccessSummary, EventCreationPlan, EventResources, PostFinalizationRevisionDraft } from './eventClient'
 import { loadEventSnapshot, saveEventSnapshot } from './offlineStore'
 import { RealtimeOperationError, useEventRoom, type SequencedOperation } from './realtime'
 import { useOfficialAudioDevice } from './audioDeviceClient'
@@ -130,6 +130,7 @@ const EventManager = lazy(() => import('./components/EventManager').then((module
 const JoinRecoveryPanel = lazy(() => import('./components/JoinRecoveryPanel').then((module) => ({ default: module.JoinRecoveryPanel })))
 const LogDrawer = lazy(() => import('./components/LogDrawer').then((module) => ({ default: module.LogDrawer })))
 const MapView = lazy(() => import('./components/MapView').then((module) => ({ default: module.MapView })))
+const PreEventCoursePlanner = lazy(() => import('./components/PreEventCoursePlanner').then((module) => ({ default: module.PreEventCoursePlanner })))
 
 function storedNumber(key: string, fallback: number): number {
   const value = Number(window.localStorage.getItem(key))
@@ -258,6 +259,7 @@ export default function App() {
   const [authOpen, setAuthOpen] = useState(false)
   const [resumeEventIssuanceAfterAuth, setResumeEventIssuanceAfterAuth] = useState(false)
   const [eventManagerOpen, setEventManagerOpen] = useState(false)
+  const [preEventPlan, setPreEventPlan] = useState<EventCreationPlan>()
   const [joinContext, setJoinContext] = useState(joinContextFromLocation)
   const [recoveryOpen, setRecoveryOpen] = useState(false)
   const [session, setSession] = useState<SessionState>({ mode: 'checking' })
@@ -899,6 +901,7 @@ export default function App() {
   }, [eventId, eventRefreshKey, eventRoute, session.mode, sessionUserId])
 
   useEffect(() => {
+    if (!eventRoute) return
     const timeout = window.setTimeout(() => {
       void saveEventSnapshot({
         eventId,
@@ -921,7 +924,7 @@ export default function App() {
       })
     }, 250)
     return () => window.clearTimeout(timeout)
-  }, [boats, eventId, eventName, finishes, leadingPassages, markWinds, memberCount, messages, operationMode, races, realtime.lastSequence, seaCurrent, tasks, windDetails])
+  }, [boats, eventId, eventName, eventRoute, finishes, leadingPassages, markWinds, memberCount, messages, operationMode, races, realtime.lastSequence, seaCurrent, tasks, windDetails])
 
   useEffect(() => {
     const move = (event: PointerEvent) => {
@@ -1730,6 +1733,80 @@ export default function App() {
     }
   }
 
+  const eventAccessPanels = (
+    <Suspense fallback={null}>
+      {authOpen && (
+        <AuthPanel
+          session={session}
+          onSessionChange={(nextSession) => {
+            setSession(nextSession)
+            if (nextSession.mode === 'authenticated' && resumeEventIssuanceAfterAuth) {
+              setResumeEventIssuanceAfterAuth(false)
+              setAuthOpen(false)
+              setEventManagerOpen(true)
+            }
+          }}
+          onClose={() => { setAuthOpen(false); setResumeEventIssuanceAfterAuth(false) }}
+        />
+      )}
+
+      {eventManagerOpen && (
+        <EventManager
+          session={session}
+          currentEventSlug={eventId}
+          currentEventId={eventDatabaseId}
+          currentEventName={eventRoute ? eventName : '未発行'}
+          hasCurrentEvent={eventRoute}
+          isCurrentEventOwner={eventRoute && (eventAccess?.isOwner ?? false)}
+          resources={eventResources}
+          races={races}
+          assignmentRealtimeAvailable={realtime.status === 'live'}
+          initialCreationPlan={preEventPlan}
+          onUpdateAssignment={async (input) => { await realtime.sendConfirmed('assignment', input) }}
+          onEventStructureChanged={(change) => {
+            setEventRefreshKey((current) => current + 1)
+            if (change) {
+              void sendRealtimeOperation('course', {
+                action: 'refresh', revisionId: change.revisionId, revision: change.revision,
+              }, change.raceId)
+            }
+          }}
+          onRequestAuthentication={() => {
+            setEventManagerOpen(false)
+            setResumeEventIssuanceAfterAuth(true)
+            setAuthOpen(true)
+          }}
+          onRecoverParticipation={() => { setEventManagerOpen(false); setRecoveryOpen(true) }}
+          onClose={() => setEventManagerOpen(false)}
+        />
+      )}
+    </Suspense>
+  )
+
+  if (!eventRoute) {
+    return (
+      <div className="pre-event-root">
+        <Suspense fallback={<main className="pre-event-loading" aria-live="polite">コース地図を準備しています…</main>}>
+          <PreEventCoursePlanner
+            onIssueEvent={(plan) => {
+              setPreEventPlan(plan)
+              if (session.mode === 'authenticated') setEventManagerOpen(true)
+              else {
+                setResumeEventIssuanceAfterAuth(true)
+                setAuthOpen(true)
+              }
+            }}
+            onOpenEvents={() => {
+              setPreEventPlan(undefined)
+              setEventManagerOpen(true)
+            }}
+          />
+        </Suspense>
+        {eventAccessPanels}
+      </div>
+    )
+  }
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -2293,51 +2370,9 @@ export default function App() {
         </div>
       )}
 
+      {eventAccessPanels}
+
       <Suspense fallback={null}>
-        {authOpen && (
-          <AuthPanel
-            session={session}
-            onSessionChange={(nextSession) => {
-              setSession(nextSession)
-              if (nextSession.mode === 'authenticated' && resumeEventIssuanceAfterAuth) {
-                setResumeEventIssuanceAfterAuth(false)
-                setAuthOpen(false)
-                setEventManagerOpen(true)
-              }
-            }}
-            onClose={() => { setAuthOpen(false); setResumeEventIssuanceAfterAuth(false) }}
-          />
-        )}
-
-        {eventManagerOpen && (
-          <EventManager
-            session={session}
-            currentEventSlug={eventId}
-            currentEventId={eventDatabaseId}
-            currentEventName={eventName}
-            isCurrentEventOwner={eventAccess?.isOwner ?? false}
-            resources={eventResources}
-            races={races}
-            assignmentRealtimeAvailable={realtime.status === 'live'}
-            onUpdateAssignment={async (input) => { await realtime.sendConfirmed('assignment', input) }}
-            onEventStructureChanged={(change) => {
-              setEventRefreshKey((current) => current + 1)
-              if (change) {
-                void sendRealtimeOperation('course', {
-                  action: 'refresh', revisionId: change.revisionId, revision: change.revision,
-                }, change.raceId)
-              }
-            }}
-            onRequestAuthentication={() => {
-              setEventManagerOpen(false)
-              setResumeEventIssuanceAfterAuth(true)
-              setAuthOpen(true)
-            }}
-            onRecoverParticipation={() => { setEventManagerOpen(false); setRecoveryOpen(true) }}
-            onClose={() => setEventManagerOpen(false)}
-          />
-        )}
-
         {joinContext && (
           <JoinRecoveryPanel
             eventSlug={eventId}

@@ -5,6 +5,7 @@ import { canonical } from '../worker/audit.js'
 import { EventRoom } from '../worker/index.js'
 import { runRetentionForEvent } from '../worker/retention.js'
 import { sha256Base64Url } from '../worker/security.js'
+import { recommendedCourseLength } from '../shared/classPerformance.js'
 
 function nextWebSocketMessage(socket: WebSocket): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
@@ -166,6 +167,10 @@ describe('Cloudflare Workers runtime integration', () => {
         courseCode: 'O2',
         firstWarningAt: '2026-07-19T03:00:00.000Z',
         center: { longitude: 139.4638, latitude: 35.283 },
+        signalBoatPosition: { longitude: 139.4651, latitude: 35.2817 },
+        windDirection: 310,
+        windSpeed: 6.5,
+        targetLengthMetres: 6_500,
       }),
     })
     const issued = await response.json<{
@@ -180,7 +185,7 @@ describe('Cloudflare Workers runtime integration', () => {
     expect(issued.ownerRecoveryKit).toMatchObject({ eventId: issued.event.id, eventSlug: issued.event.slug })
     expect(issued.ownerRecoveryKit?.recoveryCode).toMatch(/^SRSO-/u)
 
-    const [raceCount, markCount, boatCount, ownerMember, initialCourseNodes] = await Promise.all([
+    const [raceCount, markCount, boatCount, ownerMember, initialCourseRevision, signalBoatNode, initialCourseNodes] = await Promise.all([
       env.DB.prepare('SELECT COUNT(*) AS count FROM races WHERE regatta_id = ?').bind(issued.event.id).first<{ count: number }>(),
       env.DB.prepare('SELECT COUNT(*) AS count FROM marks WHERE regatta_id = ?').bind(issued.event.id).first<{ count: number }>(),
       env.DB.prepare('SELECT COUNT(*) AS count FROM committee_boats WHERE regatta_id = ?').bind(issued.event.id).first<{ count: number }>(),
@@ -188,6 +193,20 @@ describe('Cloudflare Workers runtime integration', () => {
         `SELECT display_name, role, assignment FROM event_members
          WHERE regatta_id = ? AND user_id = ? LIMIT 1`,
       ).bind(issued.event.id, ownerId).first<{ display_name: string; role: string; assignment: string }>(),
+      env.DB.prepare(
+        `SELECT revision.wind_direction, revision.wind_speed, revision.target_length_metres
+         FROM course_revisions revision
+         JOIN races race ON race.id = revision.race_id
+         WHERE race.regatta_id = ? AND race.race_order = 1 AND revision.revision = 1`,
+      ).bind(issued.event.id).first<{ wind_direction: number; wind_speed: number; target_length_metres: number }>(),
+      env.DB.prepare(
+        `SELECT node.target_lng, node.target_lat
+         FROM course_nodes node
+         JOIN course_revisions revision ON revision.id = node.course_revision_id
+         JOIN races race ON race.id = revision.race_id
+         WHERE race.regatta_id = ? AND race.race_order = 1 AND revision.revision = 1
+           AND node.label = 'シグナルボート'`,
+      ).bind(issued.event.id).first<{ target_lng: number; target_lat: number }>(),
       env.DB.prepare(
         `SELECT node.label, node.node_type
          FROM course_nodes node
@@ -201,6 +220,8 @@ describe('Cloudflare Workers runtime integration', () => {
     expect(markCount?.count).toBeGreaterThanOrEqual(8)
     expect(boatCount?.count).toBe(5)
     expect(ownerMember).toEqual({ display_name: '大会発行テスト管理者', role: 'owner', assignment: '大会管理者' })
+    expect(initialCourseRevision).toEqual({ wind_direction: 310, wind_speed: 6.5, target_length_metres: 6_500 })
+    expect(signalBoatNode).toEqual({ target_lng: 139.4651, target_lat: 35.2817 })
     expect(initialCourseNodes.results).toEqual([
       { label: 'スタート・ピン', node_type: 'start' },
       { label: 'シグナルボート', node_type: 'start' },
@@ -234,13 +255,19 @@ describe('Cloudflare Workers runtime integration', () => {
     expect(soloResponse.status).toBe(201)
     expect(soloIssued.event.operationMode).toBe('solo')
 
-    const [soloSettings, soloBoats, soloOwner, soloTasks] = await Promise.all([
+    const [soloSettings, soloBoats, soloOwner, soloRevision, soloTasks] = await Promise.all([
       env.DB.prepare('SELECT operation_mode FROM regatta_settings WHERE regatta_id = ?')
         .bind(soloIssued.event.id).first<{ operation_mode: string }>(),
       env.DB.prepare('SELECT name, role, call_sign FROM committee_boats WHERE regatta_id = ?')
         .bind(soloIssued.event.id).all<{ name: string; role: string; call_sign: string }>(),
       env.DB.prepare('SELECT id, assignment FROM event_members WHERE regatta_id = ? AND user_id = ?')
         .bind(soloIssued.event.id, ownerId).first<{ id: string; assignment: string }>(),
+      env.DB.prepare(
+        `SELECT revision.target_length_metres
+         FROM course_revisions revision
+         JOIN races race ON race.id = revision.race_id
+         WHERE race.regatta_id = ? AND race.race_order = 1 AND revision.revision = 1`,
+      ).bind(soloIssued.event.id).first<{ target_length_metres: number }>(),
       env.DB.prepare(
         `SELECT task.title, task.assignee_member_id
          FROM operational_tasks task JOIN races race ON race.id = task.race_id
@@ -250,6 +277,7 @@ describe('Cloudflare Workers runtime integration', () => {
     expect(soloSettings?.operation_mode).toBe('solo')
     expect(soloBoats.results).toEqual([{ name: 'ワンオペ運営艇', role: 'signal-boat', call_sign: '全運営' }])
     expect(soloOwner?.assignment).toBe('全運営')
+    expect(soloRevision?.target_length_metres).toBe(Math.round(recommendedCourseLength('470', 8).kilometres * 1_000))
     expect(soloTasks.results).toContainEqual(expect.objectContaining({ title: 'ワンオペの安全条件と中止基準を確認' }))
     expect(soloTasks.results.every((task) => task.assignee_member_id === soloOwner?.id)).toBe(true)
     expect(soloTasks.results.some((task) => task.title === '担当別最終確認を完了')).toBe(false)

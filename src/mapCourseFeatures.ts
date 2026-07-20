@@ -105,12 +105,15 @@ export function buildCourseFeatures(marks: readonly CourseMark[], route?: readon
     if (point === 'Start' || point === 'Finish') return startCenter ? [[...startCenter]] : []
     const exact = marks.find((mark) => mark.shortLabel === point)
     if (exact) return [[...(exact.actual ?? exact.target)]]
-    const gateNumber = point.match(/^(\d+)[SP]?\/(?:\1)?[SP]$/u)?.[1] ?? point.match(/^(\d+)$/u)?.[1]
+    const gateNumber = point.match(/^(\d+)[SP]?\/(?:\1)?[SP]$/u)?.[1]
+      ?? point.match(/^(\d+)[SP]?$/u)?.[1]
     if (!gateNumber) return []
     const gate = gates.find((candidate) => (
       candidate.starboard.shortLabel.startsWith(gateNumber) && candidate.port.shortLabel.startsWith(gateNumber)
     ))
-    return gate ? [[...gate.center]] : []
+    if (gate) return [[...gate.center]]
+    const single = marks.find((mark) => mark.shortLabel === gateNumber)
+    return single ? [[...(single.actual ?? single.target)]] : []
   })
   const ordered = routeOrder && routeOrder.length > 1 ? routeOrder : physicalOrder
   const course: FeatureCollection<LineString> = {

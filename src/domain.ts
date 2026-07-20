@@ -1,3 +1,9 @@
+import {
+  CLASS_PERFORMANCE_PROFILES,
+  type ClassPerformanceProfile as SharedClassPerformanceProfile,
+  type SupportedSailingClass,
+} from '../shared/classPerformance.js'
+
 export type LngLat = readonly [longitude: number, latitude: number]
 
 export type MarkStatus = 'planned' | 'en-route' | 'deployed' | 'confirmed' | 'recovered'
@@ -124,14 +130,7 @@ export interface RaceSignalEvent {
   actor?: string
 }
 
-export type SailingClass =
-  | 'OP'
-  | 'ILCA 4'
-  | 'ILCA 6'
-  | 'ILCA 7'
-  | '420'
-  | '470'
-  | 'スナイプ'
+export type SailingClass = SupportedSailingClass
 
 export type BoardDetail = 'overview' | 'standard' | 'detail'
 
@@ -216,23 +215,9 @@ export interface FinishRecord {
   hasConflict: boolean
 }
 
-export interface ClassPerformanceProfile {
-  className: SailingClass
-  targetMinutes: number
-  upwindKnotsAt8: number
-  downwindKnotsAt8: number
-  reachKnotsAt8: number
-}
+export type ClassPerformanceProfile = SharedClassPerformanceProfile
 
-export const CLASS_PROFILES: readonly ClassPerformanceProfile[] = [
-  { className: 'OP', targetMinutes: 50, upwindKnotsAt8: 3.1, downwindKnotsAt8: 3.5, reachKnotsAt8: 4.0 },
-  { className: 'ILCA 4', targetMinutes: 50, upwindKnotsAt8: 3.8, downwindKnotsAt8: 4.2, reachKnotsAt8: 4.8 },
-  { className: 'ILCA 6', targetMinutes: 50, upwindKnotsAt8: 4.1, downwindKnotsAt8: 4.6, reachKnotsAt8: 5.2 },
-  { className: 'ILCA 7', targetMinutes: 50, upwindKnotsAt8: 4.3, downwindKnotsAt8: 4.8, reachKnotsAt8: 5.4 },
-  { className: '420', targetMinutes: 45, upwindKnotsAt8: 4.6, downwindKnotsAt8: 5.8, reachKnotsAt8: 6.4 },
-  { className: '470', targetMinutes: 50, upwindKnotsAt8: 5.1, downwindKnotsAt8: 6.6, reachKnotsAt8: 7.3 },
-  { className: 'スナイプ', targetMinutes: 60, upwindKnotsAt8: 4.3, downwindKnotsAt8: 4.8, reachKnotsAt8: 5.1 },
-] as const
+export const CLASS_PROFILES: readonly ClassPerformanceProfile[] = CLASS_PERFORMANCE_PROFILES
 
 const warningAt = new Date(Date.now() + 4.5 * 60_000).toISOString()
 

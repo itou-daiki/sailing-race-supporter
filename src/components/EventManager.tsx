@@ -61,16 +61,20 @@ import { exportLocalEventData } from '../offlineStore'
 import { CoursePresetPicker } from './CoursePresetPicker'
 import { OwnerRecoveryKitPanel } from './OwnerRecoveryKitPanel'
 import { RaceAreaPicker } from './RaceAreaPicker'
+import { recommendedCourseLength } from '../course'
+import type { EventCreationPlan } from '../eventClient'
 
 interface EventManagerProps {
   session: SessionState
   currentEventSlug: string
   currentEventId?: string
   currentEventName: string
+  hasCurrentEvent?: boolean
   isCurrentEventOwner: boolean
   resources: EventResources
   races: readonly RaceDefinition[]
   assignmentRealtimeAvailable: boolean
+  initialCreationPlan?: EventCreationPlan
   onUpdateAssignment: (input: {
     memberId: string
     assignment: string
@@ -112,10 +116,12 @@ export function EventManager({
   currentEventSlug,
   currentEventId,
   currentEventName,
+  hasCurrentEvent = true,
   isCurrentEventOwner,
   resources,
   races,
   assignmentRealtimeAvailable,
+  initialCreationPlan,
   onUpdateAssignment,
   onRequestAuthentication,
   onEventStructureChanged,
@@ -130,7 +136,7 @@ export function EventManager({
     return nextDay
   }, [today])
   const managerRef = useRef<HTMLElement>(null)
-  const [managerView, setManagerView] = useState<'events' | 'create' | 'manage'>('events')
+  const [managerView, setManagerView] = useState<'events' | 'create' | 'manage'>(initialCreationPlan ? 'create' : 'events')
   const [creationStep, setCreationStep] = useState<1 | 2 | 3>(1)
   const [events, setEvents] = useState<EventSummary[]>([])
   const [loading, setLoading] = useState(session.mode === 'authenticated')
@@ -142,11 +148,17 @@ export function EventManager({
   const [endsOn, setEndsOn] = useState(localDate(defaultEventDay))
   const [raceCount, setRaceCount] = useState(3)
   const [operationMode, setOperationMode] = useState<OperationMode>('team')
-  const [className, setClassName] = useState<SailingClass>('470')
-  const [courseCode, setCourseCode] = useState('O2')
+  const [className, setClassName] = useState<SailingClass>(initialCreationPlan?.className ?? '470')
+  const [courseCode, setCourseCode] = useState(initialCreationPlan?.courseCode ?? 'O2')
+  const [lowerGate, setLowerGate] = useState(initialCreationPlan?.lowerGate ?? true)
+  const [windDirection, setWindDirection] = useState(initialCreationPlan?.windDirection ?? 350)
+  const [windSpeed, setWindSpeed] = useState(initialCreationPlan?.windSpeed ?? 8)
+  const [targetLengthKm, setTargetLengthKm] = useState(() => (
+    (initialCreationPlan?.targetLengthMetres ?? recommendedCourseLength('470', 8).kilometres * 1_000) / 1_000
+  ).toFixed(1))
   const [firstWarningAt, setFirstWarningAt] = useState(localDateTime(defaultEventDay))
-  const [centerLongitude, setCenterLongitude] = useState(String(DEFAULT_RACE_AREA_CENTER.longitude))
-  const [centerLatitude, setCenterLatitude] = useState(String(DEFAULT_RACE_AREA_CENTER.latitude))
+  const [centerLongitude, setCenterLongitude] = useState(String(initialCreationPlan?.signalBoatPosition[0] ?? DEFAULT_RACE_AREA_CENTER.longitude))
+  const [centerLatitude, setCenterLatitude] = useState(String(initialCreationPlan?.signalBoatPosition[1] ?? DEFAULT_RACE_AREA_CENTER.latitude))
   const center = useMemo(() => {
     const longitude = Number(centerLongitude)
     const latitude = Number(centerLatitude)
@@ -273,10 +285,24 @@ export function EventManager({
 
   const changeClass = (nextClass: SailingClass) => {
     const crossesSnipeBoundary = (className === 'スナイプ') !== (nextClass === 'スナイプ')
-    setClassName(nextClass)
-    setCourseCode(crossesSnipeBoundary
+    const nextCode = crossesSnipeBoundary
       ? nextClass === 'スナイプ' ? 'W2' : 'O2'
-      : normalizeCoursePresetCode(nextClass, courseCode))
+      : normalizeCoursePresetCode(nextClass, courseCode)
+    setClassName(nextClass)
+    setCourseCode(nextCode)
+    setLowerGate(coursePresetForClass(nextClass, nextCode).route.some((point) => point.includes('S/')))
+    setTargetLengthKm(recommendedCourseLength(nextClass, windSpeed).kilometres.toFixed(1))
+  }
+
+  const changeCourse = (nextCode: string) => {
+    setCourseCode(nextCode)
+    setLowerGate(coursePresetForClass(className, nextCode).route.some((point) => point.includes('S/')))
+  }
+
+  const changeWindSpeed = (nextSpeed: number) => {
+    const normalized = Math.min(40, Math.max(1, nextSpeed))
+    setWindSpeed(normalized)
+    setTargetLengthKm(recommendedCourseLength(className, normalized).kilometres.toFixed(1))
   }
 
   const changeStartsOn = (nextDate: string) => {
@@ -305,6 +331,10 @@ export function EventManager({
     }
     setCreating(true)
     setError(undefined)
+    const enteredTargetLengthKm = Number(targetLengthKm)
+    const targetLengthMetres = Number.isFinite(enteredTargetLengthKm) && enteredTargetLengthKm >= 0.5
+      ? enteredTargetLengthKm * 1_000
+      : recommendedCourseLength(className, windSpeed).kilometres * 1_000
     try {
       const created = await createEvent({
         name: name.trim(),
@@ -316,6 +346,11 @@ export function EventManager({
         courseCode,
         firstWarningAt: new Date(firstWarningAt).toISOString(),
         center,
+        signalBoatPosition: center,
+        windDirection,
+        windSpeed,
+        lowerGate,
+        targetLengthMetres,
       })
       if (created.ownerRecoveryKit) {
         setPendingOwnerRecovery({ kit: created.ownerRecoveryKit, url: created.url })
@@ -644,12 +679,12 @@ export function EventManager({
           <button type="button" onClick={onClose} aria-label="閉じる"><X size={20} /></button>
         </header>
 
-        {managerView !== 'create' && <section className="event-current-card">
+        {hasCurrentEvent && managerView !== 'create' && <section className="event-current-card">
           <div><span className="eyebrow">現在の大会</span><strong>{currentEventName}</strong><small>/e/{currentEventSlug}</small></div>
           <button type="button" onClick={() => void shareCurrent()}>{copied ? <Check size={17} /> : <Share2 size={17} />}{copied ? 'コピー済み' : 'URLを共有'}</button>
         </section>}
 
-        {managerView !== 'create' && <button type="button" className="event-recovery-link" onClick={onRecoverParticipation}><KeyRound size={16} />参加復元カードから担当を復元</button>}
+        {hasCurrentEvent && managerView !== 'create' && <button type="button" className="event-recovery-link" onClick={onRecoverParticipation}><KeyRound size={16} />参加復元カードから担当を復元</button>}
 
         {session.mode !== 'authenticated' ? (
           <section className="event-auth-required">
@@ -951,16 +986,28 @@ export function EventManager({
                   <label className="event-field"><span>1Rの予告信号予定</span><input type="datetime-local" min={`${startsOn}T00:00`} max={`${endsOn}T23:59`} value={firstWarningAt} onChange={(event) => setFirstWarningAt(event.target.value)} required /><small>5分前の予告信号を基準にタイマーを作ります</small></label>
                 </div>
                 <div className="event-course-guidance"><Sailboat size={17} /><span><strong>最初に全レースへ設定するコース</strong><small>迷った場合は「推奨」のコースを選んでください</small></span></div>
-                <CoursePresetPicker className={className} value={courseCode} onChange={setCourseCode} label="初期コース" />
+                <CoursePresetPicker className={className} value={courseCode} onChange={changeCourse} label="初期コース" />
+                <section className="event-initial-conditions" aria-label="初期ゲートと風の設定">
+                  <div className="event-initial-gate" role="radiogroup" aria-label="ゲートマークの有無">
+                    <span>ゲートマーク</span>
+                    <button type="button" role="radio" aria-checked={lowerGate} className={lowerGate ? 'is-selected' : ''} onClick={() => setLowerGate(true)}>あり（S・P）</button>
+                    <button type="button" role="radio" aria-checked={!lowerGate} className={!lowerGate ? 'is-selected' : ''} onClick={() => setLowerGate(false)}>なし（単一）</button>
+                  </div>
+                  <div className="event-form-grid">
+                    <label className="event-field"><span>初期風向（°T）</span><input type="number" min="0" max="359" value={windDirection} onChange={(event) => setWindDirection(Math.min(359, Math.max(0, Number(event.target.value))))} /></label>
+                    <label className="event-field"><span>初期風速（kt）</span><input type="number" min="1" max="40" step="0.1" value={windSpeed} onChange={(event) => changeWindSpeed(Number(event.target.value))} /></label>
+                    <label className="event-field"><span>初期コース長（km）</span><input type="number" min="0.5" max="30" step="0.1" value={targetLengthKm} onChange={(event) => setTargetLengthKm(event.target.value)} /><small>艇種と風速からの推奨値を初期入力</small></label>
+                  </div>
+                </section>
                 {!racePlanReady && <div className="event-step-readiness is-warning">予告予定を大会の開催期間内にしてください</div>}
                 <div className="event-wizard-actions"><button type="button" onClick={() => setCreationStep(1)}>戻る</button><button type="button" className="event-wizard-next" disabled={!racePlanReady} onClick={() => { setError(undefined); setCreationStep(3) }}>次へ：海面と確認</button></div>
               </section>}
 
               {creationStep === 3 && <section className="event-create-step" aria-labelledby="create-step-area">
-                <div className="event-create-step__title"><span><b>3</b><strong id="create-step-area">レース海面を決めて確認</strong></span><small>正確なマーク位置は海上で後から決めます</small></div>
+                <div className="event-create-step__title"><span><b>3</b><strong id="create-step-area">本部船の初期位置を決めて確認</strong></span><small>ここを基準に推奨マークを作成します</small></div>
                 <section className="event-center-editor" aria-labelledby="event-center-title">
-                  <header><span id="event-center-title">レース海面のおおよその中央</span><small>地図をタップ</small></header>
-                  <p className="event-center-editor__lead">開催予定の海域を地図で選んでください。スマホの現在地、緯度・経度の直接入力も使えます。</p>
+                  <header><span id="event-center-title">シグナルボート（RC）の予定位置</span><small>地図をタップ</small></header>
+                  <p className="event-center-editor__lead">本部船を置く予定位置を選んでください。スマホの現在地、緯度・経度の直接入力も使えます。</p>
                   <RaceAreaPicker
                     longitude={center?.longitude ?? DEFAULT_RACE_AREA_CENTER.longitude}
                     latitude={center?.latitude ?? DEFAULT_RACE_AREA_CENTER.latitude}
@@ -969,7 +1016,7 @@ export function EventManager({
                       setCenterLatitude(next.latitude.toFixed(7))
                     }}
                   />
-                  <button type="button" className={`event-location-button ${center ? 'is-set' : ''}`} onClick={useCurrentLocation}><LocateFixed size={17} />現在地付近を海面にする</button>
+                  <button type="button" className={`event-location-button ${center ? 'is-set' : ''}`} onClick={useCurrentLocation}><LocateFixed size={17} />現在地を本部船位置にする</button>
                   <details className="event-coordinate-details">
                     <summary>緯度・経度を直接入力する</summary>
                     <div className="event-form-grid">
@@ -987,8 +1034,11 @@ export function EventManager({
                     <div><dt>レース</dt><dd>{raceCount}レース・{className}</dd></div>
                     <div><dt>運営体制</dt><dd>{operationModeOption(operationMode).label}</dd></div>
                     <div><dt>初期コース</dt><dd>{selectedCoursePreset.optionLabel}</dd></div>
+                    <div><dt>ゲート</dt><dd>{lowerGate ? 'あり（S・P）' : 'なし（単一マーク）'}</dd></div>
+                    <div><dt>初期風</dt><dd>{windDirection}°T・{windSpeed.toFixed(1)} kt</dd></div>
+                    <div><dt>初期長</dt><dd>{Number(targetLengthKm).toFixed(1)} km</dd></div>
                     <div><dt>1R予告</dt><dd>{formatTimestamp(firstWarningAt)}</dd></div>
-                    <div><dt>海面中心</dt><dd>{center ? `${center.latitude.toFixed(5)}, ${center.longitude.toFixed(5)}` : '未設定'}</dd></div>
+                    <div><dt>本部船位置</dt><dd>{center ? `${center.latitude.toFixed(5)}, ${center.longitude.toFixed(5)}` : '未設定'}</dd></div>
                   </dl>
                 </section>
                 <div className="event-create-note"><CalendarDays size={17} /><p>固定共有URL、1R〜{raceCount}R、海面A、標準マーク、{operationMode === 'solo' ? 'ワンオペ運営艇1隻と兼務用タスク' : '担当別の運営ボートとタスク'}をまとめて作成します。発行直後に管理者復旧キットの保存を案内する場合があります。</p></div>

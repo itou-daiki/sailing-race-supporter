@@ -9,6 +9,13 @@ import { generateOwnerRecoveryCode, normalizeOwnerRecoveryCode } from '../shared
 import { assertSameOrigin, hasRecentAuthentication, randomToken, requireSession, sha256Base64Url } from './security.js'
 import { STANDARD_MARK_DEFINITIONS } from './standardArea.js'
 import { normalizeOperationMode, type OperationMode } from '../shared/operationModes.js'
+import {
+  destinationPoint,
+  generateCoursePlan,
+  recommendedStartLineLength,
+  type CourseTemplate,
+} from '../shared/courseGeometry.js'
+import { recommendedCourseLength, type SupportedSailingClass } from '../shared/classPerformance.js'
 
 const CLASSES = new Set(['OP', 'ILCA 4', 'ILCA 6', 'ILCA 7', '420', '470', 'スナイプ'])
 const COURSES = new Set(['O2', 'I2', 'L2', 'L3', 'W2', 'T2', 'トライアングル'])
@@ -34,6 +41,11 @@ interface CreateEventInput {
   firstWarningAt?: string
   operationMode?: OperationMode
   center?: { longitude?: number; latitude?: number }
+  signalBoatPosition?: { longitude?: number; latitude?: number }
+  windDirection?: number
+  windSpeed?: number
+  lowerGate?: boolean
+  targetLengthMetres?: number
 }
 
 interface EventListRow {
@@ -65,44 +77,6 @@ function isoDate(value: string | undefined, field: string): string {
 
 function coordinate(value: number | undefined, fallback: number, min: number, max: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max ? value : fallback
-}
-
-function pointAt(origin: readonly [number, number], distanceMetres: number, bearingDegrees: number): readonly [number, number] {
-  const radius = 6_371_008.8
-  const angularDistance = distanceMetres / radius
-  const bearing = bearingDegrees * Math.PI / 180
-  const lat1 = origin[1] * Math.PI / 180
-  const lng1 = origin[0] * Math.PI / 180
-  const lat2 = Math.asin(
-    Math.sin(lat1) * Math.cos(angularDistance) +
-    Math.cos(lat1) * Math.sin(angularDistance) * Math.cos(bearing),
-  )
-  const lng2 = lng1 + Math.atan2(
-    Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(lat1),
-    Math.cos(angularDistance) - Math.sin(lat1) * Math.sin(lat2),
-  )
-  return [lng2 * 180 / Math.PI, lat2 * 180 / Math.PI]
-}
-
-function initialTargets(center: readonly [number, number]): Record<string, readonly [number, number]> {
-  const gateCenter = pointAt(center, 150, 350)
-  const innerGateCenter = pointAt(center, 380, 350)
-  const mark1 = pointAt(center, 1_000, 350)
-  return {
-    'mark-1': mark1,
-    'mark-1s': pointAt(mark1, 60, 260),
-    'mark-1p': pointAt(mark1, 60, 80),
-    'mark-1a': pointAt(mark1, 180, 80),
-    'mark-2': pointAt(center, 780, 35),
-    'mark-3s': pointAt(gateCenter, 65, 260),
-    'mark-3p': pointAt(gateCenter, 65, 80),
-    'mark-3': gateCenter,
-    'mark-4s': pointAt(innerGateCenter, 65, 260),
-    'mark-4p': pointAt(innerGateCenter, 65, 80),
-    'mark-4': innerGateCenter,
-    'start-pin': pointAt(center, 240, 260),
-    'start-rc': pointAt(center, 240, 80),
-  }
 }
 
 function warningTime(value: string | undefined): Date {
@@ -170,6 +144,38 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
     coordinate(body.center?.longitude, DEFAULT_RACE_AREA_CENTER.longitude, -180, 180),
     coordinate(body.center?.latitude, DEFAULT_RACE_AREA_CENTER.latitude, -85, 85),
   ] as const
+  const signalBoatPosition = [
+    coordinate(body.signalBoatPosition?.longitude, center[0], -180, 180),
+    coordinate(body.signalBoatPosition?.latitude, center[1], -85, 85),
+  ] as const
+  const windDirection = typeof body.windDirection === 'number' && Number.isFinite(body.windDirection)
+    ? ((body.windDirection % 360) + 360) % 360
+    : 350
+  const windSpeed = typeof body.windSpeed === 'number' && Number.isFinite(body.windSpeed)
+    ? Math.min(40, Math.max(1, body.windSpeed))
+    : 8
+  const preset = coursePresetForClass(className, courseCode)
+  const lowerGate = body.lowerGate ?? preset.route.some((point) => point.includes('S/'))
+  const recommendedLengthMetres = Math.round(
+    recommendedCourseLength(className as SupportedSailingClass, windSpeed).kilometres * 1_000,
+  )
+  const targetLengthMetres = typeof body.targetLengthMetres === 'number' && Number.isFinite(body.targetLengthMetres)
+    ? Math.round(Math.min(30_000, Math.max(500, body.targetLengthMetres)))
+    : recommendedLengthMetres
+  const courseTemplate = courseCode as CourseTemplate
+  const startLineLength = recommendedStartLineLength(targetLengthMetres, courseTemplate)
+  const startPin = destinationPoint(signalBoatPosition, startLineLength, windDirection - 90)
+  const initialCoursePlan = generateCoursePlan({
+    center,
+    startLine: { pin: startPin, signal: signalBoatPosition },
+    windDirection,
+    totalLengthMetres: targetLengthMetres,
+    courseCode: courseTemplate,
+    className,
+    lowerGate,
+    upperGate: false,
+    secondGate: false,
+  })
   const now = new Date().toISOString()
   const eventId = crypto.randomUUID()
   const slug = `${slugBase(name)}-${randomToken(6).replace(/[^a-z0-9]/giu, '').toLowerCase()}`
@@ -177,7 +183,6 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
   const ownerMemberId = crypto.randomUUID()
   const ownerRecoveryCode = credentialCount.count < 2 ? generateOwnerRecoveryCode() : null
   const ownerRecoveryId = ownerRecoveryCode ? crypto.randomUUID() : null
-  const targets = initialTargets(center)
   const warning = warningTime(body.firstWarningAt)
   const statements: D1PreparedStatement[] = [
     env.DB.prepare(
@@ -238,30 +243,19 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
     ).bind(crypto.randomUUID(), eventId, boatName, role, callSign))
   }
 
-  const initialMarkKeys = coursePresetForClass(className, courseCode).initialMarkKeys
-  const initialMarkKeySet = new Set<string>(initialMarkKeys)
-  const nodeDefinitions = initialMarkKeys.map((key) => {
-    const definition = STANDARD_MARK_DEFINITIONS.find(([standardKey]) => standardKey === key)
-    if (!definition) throw new Error(`初期コース用の標準マーク ${key} が見つかりません`)
-    const [, label, markType] = definition
-    const counterpart = key.endsWith('s') ? `${key.slice(0, -1)}p` : key.endsWith('p') ? `${key.slice(0, -1)}s` : undefined
-    const nodeType = markType === 'pin' || markType === 'signal'
-      ? 'start'
-      : markType === 'offset'
-        ? 'offset'
-        : markType === 'gate' && counterpart && initialMarkKeySet.has(counterpart)
-          ? 'gate'
-          : 'single'
-    return [key, label, nodeType] as const
+  const nodeDefinitions = initialCoursePlan.map((node) => {
+    const definition = STANDARD_MARK_DEFINITIONS.find(([standardKey]) => standardKey === node.key)
+    if (!definition) throw new Error(`初期コース用の標準マーク ${node.key} が見つかりません`)
+    return [node.key, node.label, node.nodeType, node.target] as const
   })
   for (let index = 0; index < raceCount; index += 1) {
     const raceId = crypto.randomUUID()
     const revisionId = crypto.randomUUID()
     const raceWarning = new Date(warning.getTime() + index * 75 * 60_000).toISOString()
-    const initialCourseNodes = nodeDefinitions.map(([key, label, nodeType]) => {
+    const initialCourseNodes = nodeDefinitions.map(([key, label, nodeType, target]) => {
       const markId = markIds.get(key)
       if (!markId) throw new Error(`標準マーク ${key} が見つかりません`)
-      return { markId, label, nodeType, target: targets[key] }
+      return { markId, label, nodeType, target }
     })
     const gateConfiguration = buildGateConfiguration(
       {
@@ -281,8 +275,8 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
       `INSERT INTO course_revisions
        (id, race_id, revision, course_code, wind_direction, wind_speed, target_length_metres,
         gate_config_json, status, created_by, created_at)
-       VALUES (?, ?, 1, ?, 350, 8, 3000, ?, 'draft', ?, ?)`,
-    ).bind(revisionId, raceId, courseCode, JSON.stringify(gateConfiguration), session.userId, now))
+       VALUES (?, ?, 1, ?, ?, ?, ?, ?, 'draft', ?, ?)`,
+    ).bind(revisionId, raceId, courseCode, windDirection, windSpeed, targetLengthMetres, JSON.stringify(gateConfiguration), session.userId, now))
     initialCourseNodes.forEach(({ markId, label, nodeType, target }, nodeIndex) => {
       statements.push(env.DB.prepare(
         `INSERT INTO course_nodes
@@ -348,6 +342,7 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
     entityId: eventId,
     after: {
       name, slug, startsOn, endsOn, raceCount, className, courseCode, operationMode,
+      lowerGate, windDirection, windSpeed, targetLengthMetres, signalBoatPosition,
       ownerRecovery: ownerRecoveryId ? 'issued-pending-confirmation' : 'two-or-more-passkeys',
     },
   })

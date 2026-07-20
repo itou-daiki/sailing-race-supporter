@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { EventManager } from '../src/components/EventManager'
+import { recommendedCourseLength } from '../src/course'
 
 describe('EventManager free-only backup UI', () => {
   afterEach(() => {
@@ -55,9 +56,16 @@ describe('EventManager free-only backup UI', () => {
     expect(screen.getByRole('radio', { name: /O2.*トラペゾイド・アウターループ/u })).toHaveAttribute('aria-checked', 'true')
     expect(screen.getByText('トラペゾイド（O2）— アウター・風上レグ2回')).toBeInTheDocument()
     expect(screen.getByLabelText('標準回航順序：Start、1、2、3S/3P、2、3P、Finish')).toBeInTheDocument()
+    expect(screen.getByRole('spinbutton', { name: /^初期コース長（km）/u })).toHaveValue(
+      Number(recommendedCourseLength('470', 8).kilometres.toFixed(1)),
+    )
+    fireEvent.change(screen.getByRole('spinbutton', { name: '初期風速（kt）' }), { target: { value: '4' } })
+    expect(screen.getByRole('spinbutton', { name: /^初期コース長（km）/u })).toHaveValue(
+      Number(recommendedCourseLength('470', 4).kilometres.toFixed(1)),
+    )
 
     fireEvent.click(screen.getByRole('button', { name: '次へ：海面と確認' }))
-    expect(screen.getByText('レース海面を決めて確認')).toBeInTheDocument()
+    expect(screen.getByText('本部船の初期位置を決めて確認')).toBeInTheDocument()
     expect(screen.getByText('地図をタップ、またはピンを移動')).toBeInTheDocument()
     expect(screen.getByText('緯度・経度を直接入力する')).toBeInTheDocument()
     expect(screen.getByLabelText('レース海面の経度')).toHaveValue(131.5221959)
