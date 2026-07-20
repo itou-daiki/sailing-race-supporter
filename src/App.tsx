@@ -50,6 +50,8 @@ import { CoursePresetPicker } from './components/CoursePresetPicker'
 import { WindEntrySheet, type MarkWindInput, type MarkWindSaveResult } from './components/WindEntrySheet'
 import { StartSequence } from './components/StartSequence'
 import { RaceTabs } from './components/RaceTabs'
+import { OperationalCommandBar } from './components/OperationalCommandBar'
+import { MobileCommandDock } from './components/MobileCommandDock'
 import {
   authenticatePasskey,
   authErrorMessage,
@@ -83,6 +85,7 @@ import { coursePresetForClass, normalizeCoursePresetCode, type CoursePresetCode 
 import { assignWindReadingsToMarks, formatWindSpeedDual } from './markWind'
 import { canRecordOverallWind, isRaceOfficerRole, operationRoleLabel, roleCan } from '../shared/roles'
 import type { OperationMode } from '../shared/operationModes'
+import { deriveOperationalGuidance } from './operationalGuidance'
 
 const DETAIL_KEY = 'srs-board-detail-v2'
 const SCALE_KEY = 'srs-board-scale'
@@ -781,6 +784,21 @@ export default function App() {
     () => latestPassageSummary(leadingPassages, marks, activeRace.id),
     [activeRace.id, leadingPassages, marks],
   )
+  const guidance = useMemo(() => deriveOperationalGuidance({
+    race: activeRace,
+    marks,
+    tasks: activeTasks,
+    messages,
+    postponed,
+    locked,
+    operationMode,
+    latestPassage,
+    firstFinish,
+  }), [activeRace, activeTasks, firstFinish, latestPassage, locked, marks, messages, operationMode, postponed])
+  const messageAttentionCount = messages.filter((message) => (
+    (!message.raceId || message.raceId === activeRace.id)
+    && (message.ownReceipt === 'unread' || message.acknowledgement === 'pending')
+  )).length
   const messageRoles = useMemo(
     () => [...new Set(eventResources.members.map((member) => member.role))].sort((left, right) => left.localeCompare(right, 'ja')),
     [eventResources.members],
@@ -972,6 +990,45 @@ export default function App() {
     setMessagePriority(task.status === 'blocked' ? 'confirm' : 'normal')
     setMessageTarget('race')
     setMessagesOpen(true)
+  }
+
+  const focusMark = (markId: string) => {
+    setCourseAdvisorExpanded(false)
+    setSelectedMarkId(markId)
+    setMobileMapPriority(true)
+  }
+
+  const openWindEntry = () => {
+    if (!canShareEnvironment) return
+    setMessagesOpen(false)
+    setLogsOpen(false)
+    setSettingsOpen(false)
+    setWindEntryOpen(true)
+  }
+
+  const activateGuidance = () => {
+    const { intent } = guidance
+    if (intent.kind === 'messages') {
+      setMessagesOpen(true)
+      return
+    }
+    if (intent.kind === 'course') {
+      openCourseSettings()
+      return
+    }
+    if (intent.kind === 'mark') {
+      focusMark(intent.markId)
+      return
+    }
+    if (intent.kind === 'task') {
+      advanceTask(intent.taskId)
+      setMobileMapPriority(false)
+      return
+    }
+    if (intent.kind === 'task-message') {
+      const task = activeTasks.find((candidate) => candidate.id === intent.taskId)
+      if (task) openTaskMessage(task)
+    }
   }
 
   const recordMarkPosition = (
@@ -1749,6 +1806,13 @@ export default function App() {
         onAudioExecuted={recordSignalAudio}
       />
 
+      <OperationalCommandBar
+        raceLabel={activeRace.number}
+        courseLabel={`${activeCoursePreset.displayCode}・${activeRace.className}`}
+        guidance={guidance}
+        onActivate={activateGuidance}
+      />
+
       {operationError && (
         <div className="operation-error-toast" role="alert">
           <AlertTriangle size={18} />
@@ -1771,8 +1835,8 @@ export default function App() {
               current={seaCurrent}
               selectedMarkId={selectedMarkId}
               onSelectMark={(markId) => {
-                setCourseAdvisorExpanded(false)
-                setSelectedMarkId(markId)
+                if (markId) focusMark(markId)
+                else setSelectedMarkId(undefined)
               }}
               onUseCurrentLocation={updateSelfLocation}
               onRecordDrop={recordMarkDrop}
@@ -1792,12 +1856,7 @@ export default function App() {
               onOpenCourseSettings={openCourseSettings}
               canRecordWind={canShareEnvironment}
               windTargetLabel={windTargetLabel}
-              onOpenWindEntry={() => {
-                setMessagesOpen(false)
-                setLogsOpen(false)
-                setSettingsOpen(false)
-                setWindEntryOpen(true)
-              }}
+              onOpenWindEntry={openWindEntry}
               markWinds={markWinds.filter((observation) => !observation.raceId || observation.raceId === activeRace.id)}
               locked={locked}
               canVerifyMarks={canVerifyMarks}
@@ -1886,14 +1945,12 @@ export default function App() {
           onScaleChange={setBoardScale}
           onDetailChange={setBoardDetail}
           onSelectMark={(markId) => {
-            setCourseAdvisorExpanded(false)
-            setSelectedMarkId(markId)
+            focusMark(markId)
           }}
           onSelectRace={(raceId) => {
             setActiveRaceId(raceId)
             setSelectedMarkId(undefined)
           }}
-          onOpenCourseSettings={openCourseSettings}
           onAcknowledgeMessage={acknowledgeMessage}
           onOpenMessages={() => setMessagesOpen(true)}
           onOpenTaskMessage={openTaskMessage}
@@ -1902,6 +1959,17 @@ export default function App() {
           onAdoptFinish={adoptFirstFinish}
         />
       </main>
+
+      <MobileCommandDock
+        activeView={mobileMapPriority ? 'map' : 'operations'}
+        messageCount={messageAttentionCount}
+        windEnabled={canShareEnvironment}
+        onShowMap={() => setMobileMapPriority(true)}
+        onShowOperations={() => setMobileMapPriority(false)}
+        onOpenWind={openWindEntry}
+        onOpenMessages={() => setMessagesOpen(true)}
+        onOpenMenu={openCourseSettings}
+      />
 
       <div className="floating-owner-actions">
         {canFinalizeRace && (

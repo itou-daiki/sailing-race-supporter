@@ -43,7 +43,6 @@ describe('OperationsBoard solo mode', () => {
       onDetailChange={vi.fn()}
       onSelectMark={vi.fn()}
       onSelectRace={vi.fn()}
-      onOpenCourseSettings={vi.fn()}
       onAcknowledgeMessage={vi.fn()}
       onOpenMessages={vi.fn()}
       onOpenTaskMessage={vi.fn()}
@@ -56,7 +55,7 @@ describe('OperationsBoard solo mode', () => {
     expect(screen.getByText('ワンオペ・1人')).toBeInTheDocument()
     expect(screen.getByText('全体風を優先・マーク別観測は可能な範囲')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /担当者へ連絡/u })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '状態を進める' }))
+    fireEvent.click(screen.getByRole('button', { name: `${task.title}の状態を変更・現在確認待ち` }))
     expect(onTaskStatusChange).toHaveBeenCalledWith('solo-task')
   })
 })

@@ -4,7 +4,6 @@ import {
   Check,
   CircleDot,
   Clock3,
-  Compass,
   HelpCircle,
   LockKeyhole,
   MapPin,
@@ -75,7 +74,6 @@ interface OperationsBoardProps {
   onDetailChange: (detail: BoardDetail) => void
   onSelectMark: (markId: string) => void
   onSelectRace: (raceId: string) => void
-  onOpenCourseSettings: () => void
   onAcknowledgeMessage: (messageId: string) => void
   onOpenMessages: () => void
   onOpenTaskMessage: (task: OperationalTask) => void
@@ -161,7 +159,6 @@ export function OperationsBoard({
   onDetailChange,
   onSelectMark,
   onSelectRace,
-  onOpenCourseSettings,
   onAcknowledgeMessage,
   onOpenMessages,
   onOpenTaskMessage,
@@ -194,37 +191,6 @@ export function OperationsBoard({
     freshnessNow - Date.parse(reading.observation.observedAt) <= 5 * 60_000
   )).length
   const windAgeSeconds = Math.max(0, Math.round((freshnessNow - Date.parse(wind.observedAt)) / 1_000))
-  const primaryTask = readiness.blockers[0] ?? readiness.required.find((task) => task.status !== 'done')
-  const firstUnconfirmedMark = marks.find((mark) => mark.status !== 'confirmed')
-  const nextAction: { title: string; reason: string; label?: string; action?: () => void } = postponed
-    ? { title: '本部船の再開決定を待つ', reason: '延期中です。予定時刻ではなく、本部船が共有する信号を基準にしてください。', label: '運営連絡を確認', action: onOpenMessages }
-    : unresolvedUrgent > 0
-      ? { title: `緊急連絡 ${unresolvedUrgent}件を確認`, reason: '未確認の緊急連絡が最優先です。内容を確認し、了解を返してください。', label: '緊急連絡を開く', action: onOpenMessages }
-      : locked
-        ? { title: `${race.number}は確定済み`, reason: '通常編集はロックされています。訂正が必要な場合は大会管理者が修正版を発行します。' }
-        : race.status === 'planning'
-          ? { title: `${race.number}のコースとスタートラインを設定`, reason: 'レース海面、クラス、コース記号、ゲート有無を確認してから推奨位置を保存します。', label: 'コース設定を開く', action: onOpenCourseSettings }
-        : primaryTask
-        ? {
-            title: primaryTask.title,
-            reason: isSolo
-              ? `自分で行う${taskStatusLabel[primaryTask.status]}の項目です。${primaryTask.dueLabel}。`
-              : `${primaryTask.owner}の${taskStatusLabel[primaryTask.status]}です。${primaryTask.dueLabel}。`,
-            label: primaryTask.markId ? '対象マークを地図で開く' : isSolo ? '状態を進める' : '担当者へ連絡',
-            action: primaryTask.markId
-              ? () => onSelectMark(primaryTask.markId as string)
-              : isSolo ? () => onTaskStatusChange(primaryTask.id) : () => onOpenTaskMessage(primaryTask),
-          }
-        : firstUnconfirmedMark
-          ? {
-              title: `${firstUnconfirmedMark.label}の位置を確認`,
-              reason: isSolo
-                ? '計画位置と投下地点を記録し、可能なら移動後にGPS差分を再確認します。'
-                : '計画位置・投下地点・別艇確認の順で記録すると、設営状況を全員が判断できます。',
-              label: '地図で開く',
-              action: () => onSelectMark(firstUnconfirmedMark.id),
-            }
-          : { title: `${currentPhase.label}を進める`, reason: `現在は${phaseStateLabels[currentPhase.state]}です。次の完了条件：${currentPhase.progress}` }
 
   const setScale = (next: number) => onScaleChange(Math.min(200, Math.max(75, next)))
 
@@ -293,16 +259,6 @@ export function OperationsBoard({
             </div>
           )}
         </div>
-
-        <section className="next-action-card" aria-label="次にやること">
-          <span className="next-action-card__icon"><Compass size={20} /></span>
-          <div>
-            <span className="eyebrow">初めてでも迷わない・次にやること</span>
-            <strong>{nextAction.title}</strong>
-            <small>{nextAction.reason}</small>
-          </div>
-          {nextAction.action && <button type="button" onClick={nextAction.action}>{nextAction.label}</button>}
-        </section>
 
         <section className="regatta-overview-card" aria-label="大会全レースの状況">
           <header>
