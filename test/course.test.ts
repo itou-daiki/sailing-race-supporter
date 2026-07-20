@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { bearingDegrees, distanceMetres, estimateEtaSeconds, generateCoursePlan, headingDifferenceDegrees, midpoint, recommendedCourseLength } from '../src/course'
+import { DEMO_RACES } from '../src/domain'
 
 describe('course calculations', () => {
   it('calculates a short geodesic distance', () => {
@@ -50,6 +51,40 @@ describe('course calculations', () => {
     expect(mark1).toBeDefined()
     expect(bearingDegrees(midpoint(pin, signal), mark1!.target)).toBeCloseTo(0, 1)
     expect(distanceMetres(midpoint(pin, signal), mark1!.target)).toBeCloseTo(1_000, -1)
+  })
+
+  it('places the O2 lower gate below mark 2 so the map forms an outer trapezoid', () => {
+    const start = [131.5221959, 33.2786648] as const
+    const plan = generateCoursePlan({
+      center: start,
+      windDirection: 0,
+      totalLengthMetres: 5_400,
+      courseCode: 'O2',
+      className: '470',
+      lowerGate: true,
+      upperGate: false,
+    })
+    const mark1 = plan.find((node) => node.key === 'mark-1')!
+    const mark2 = plan.find((node) => node.key === 'mark-2')!
+    const gateMarks = plan.filter((node) => node.key === 'mark-3s' || node.key === 'mark-3p')
+    const gateCenter = midpoint(gateMarks[0].target, gateMarks[1].target)
+
+    expect(bearingDegrees(mark1.target, mark2.target)).toBeCloseTo(120, 1)
+    expect(bearingDegrees(mark2.target, gateCenter)).toBeCloseTo(180, 1)
+    expect(distanceMetres(mark2.target, gateCenter)).toBeGreaterThan(850)
+    expect(distanceMetres(start, gateCenter)).toBeGreaterThan(500)
+  })
+
+  it('keeps the default Beppu demo as the same O2 trapezoid shown after refresh', () => {
+    const marks = DEMO_RACES[0].marks
+    const start = midpoint(marks.find((mark) => mark.shortLabel === 'PIN')!.target, marks.find((mark) => mark.shortLabel === 'RC')!.target)
+    const mark2 = marks.find((mark) => mark.shortLabel === '2')!
+    const gateCenter = midpoint(marks.find((mark) => mark.shortLabel === '3S')!.target, marks.find((mark) => mark.shortLabel === '3P')!.target)
+
+    expect(start[0]).toBeCloseTo(131.5221959, 5)
+    expect(start[1]).toBeCloseTo(33.2786648, 5)
+    expect(bearingDegrees(mark2.target, gateCenter)).toBeCloseTo(170, 1)
+    expect(distanceMetres(start, gateCenter)).toBeGreaterThan(500)
   })
 
   it('creates separate upper and lower gate marks around the wind axis', () => {
@@ -121,6 +156,22 @@ describe('course calculations', () => {
     expect(plan.map((node) => node.key)).toEqual(expect.arrayContaining(['mark-4s', 'mark-4p', 'mark-2', 'mark-3p']))
     expect(plan.find((node) => node.key === 'mark-3p')?.nodeType).toBe('single')
     expect(plan.some((node) => node.key === 'mark-1a')).toBe(false)
+
+    const mark1 = plan.find((node) => node.key === 'mark-1')!
+    const mark2 = plan.find((node) => node.key === 'mark-2')!
+    const mark3 = plan.find((node) => node.key === 'mark-3p')!
+    const outer = generateCoursePlan({
+      center: [131.5221959, 33.2786648],
+      windDirection: 350,
+      totalLengthMetres: 5_000,
+      courseCode: 'O2',
+      className: '470',
+      lowerGate: true,
+      upperGate: false,
+    })
+    expect(bearingDegrees(mark1.target, mark2.target)).toBeCloseTo(110, 1)
+    expect(mark2.target).toEqual(outer.find((node) => node.key === 'mark-2')!.target)
+    expect(mark3.target).toEqual(outer.find((node) => node.key === 'mark-3p')!.target)
   })
 
   it('distinguishes Snipe W2 and O2 physical marks', () => {

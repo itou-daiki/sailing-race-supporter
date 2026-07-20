@@ -136,8 +136,14 @@ export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
   const gateWidth = input.gateWidthMetres ?? Math.min(180, Math.max(70, leg * 0.12))
   const lineLength = input.startLineLengthMetres ?? Math.min(600, Math.max(180, leg * 0.35))
   const upwind = destinationPoint(center, leg, wind)
-  let lowerRoundingCenter = destinationPoint(center, Math.min(160, leg * 0.14), wind)
-  const innerGateCenter = destinationPoint(center, Math.min(420, leg * 0.38), wind)
+  // World Sailing's trapezoid is formed by two parallel windward/leeward loops.
+  // Keep the inner leeward gate just to windward of the start, then place mark 3
+  // the same downwind distance from mark 2. Putting mark 3 on the start/mark-1
+  // axis collapses the course into a triangle on the map.
+  const innerGateOffset = Math.min(110, Math.max(70, leg * 0.09))
+  const innerGateCenter = destinationPoint(center, innerGateOffset, wind)
+  const trapezoidRunLength = leg - innerGateOffset
+  let lowerRoundingCenter = innerGateCenter
   const isSnipe = input.className === 'スナイプ'
   const nodes: CoursePlanNode[] = [
     { key: 'start-pin', label: 'スタート・ピン', nodeType: 'start', target: input.startLine?.pin ?? destinationPoint(center, lineLength / 2, wind - 90) },
@@ -173,6 +179,7 @@ export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
     nodes.push({ key: 'mark-1a', label: 'オフセット 1A', nodeType: 'offset', target: offset })
   } else if (!isSnipe && input.courseCode === 'O2') {
     const mark2 = destinationPoint(upwind, leg * 0.67, wind + 120)
+    lowerRoundingCenter = destinationPoint(mark2, trapezoidRunLength, wind + 180)
     if (input.secondGate) {
       nodes.push(
         { key: 'mark-2s', label: '中ゲート 2S', nodeType: 'gate', target: destinationPoint(mark2, gateWidth / 2, wind - 90) },
@@ -183,7 +190,9 @@ export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
     }
   } else if (!isSnipe && input.courseCode === 'I2') {
     pushGateOrSingle('mark-4', '内側ゲート 4', innerGateCenter)
-    const mark2 = destinationPoint(upwind, leg * 0.67, wind - 120)
+    // Inner and outer loops share the same reaching mark 2 and outer mark 3.
+    const mark2 = destinationPoint(upwind, leg * 0.67, wind + 120)
+    lowerRoundingCenter = destinationPoint(mark2, trapezoidRunLength, wind + 180)
     if (input.secondGate) {
       nodes.push(
         { key: 'mark-2s', label: '中ゲート 2S', nodeType: 'gate', target: destinationPoint(mark2, gateWidth / 2, wind - 90) },

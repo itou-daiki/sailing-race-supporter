@@ -241,7 +241,7 @@ export default function App() {
   const [eventId] = useState(eventSlugFromLocation)
   const [eventRoute] = useState(hasEventLocation)
   const [eventDatabaseId, setEventDatabaseId] = useState<string>()
-  const [eventName, setEventName] = useState('2026 江の島サマーレガッタ')
+  const [eventName, setEventName] = useState('2026 別府湾サマーレガッタ')
   const [memberId, setMemberId] = useState(localMemberId)
   const [activeRaceId, setActiveRaceId] = useState(DEMO_RACES[0].id)
   const [races, setRaces] = useState<readonly RaceDefinition[]>(DEMO_RACES)
@@ -1408,7 +1408,7 @@ export default function App() {
       : undefined
     const center: LngLat = startLine
       ? midpoint(startLine.pin, startLine.signal)
-      : marks[0]?.target ?? [139.4638, 35.283]
+      : marks[0]?.target ?? [131.5221959, 33.2786648]
     const plan = generateCoursePlan({
       center,
       startLine,
