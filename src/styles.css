@@ -673,6 +673,46 @@ select:focus-visible {
   background: #b9daf2;
 }
 
+.pre-event-map--loading {
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 72% 24%, rgba(255, 255, 255, 0.72), transparent 26%),
+    linear-gradient(145deg, #d9edfa 0%, #a9d3ee 100%);
+}
+
+.pre-event-map__loading {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  width: min(360px, 100%);
+  padding: 22px 18px;
+  color: var(--navy);
+  text-align: center;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(155, 194, 218, 0.9);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+
+.pre-event-map__loading svg {
+  color: var(--dodger-strong);
+}
+
+.pre-event-map__loading strong {
+  font-size: 15px;
+}
+
+.pre-event-map__loading small {
+  color: #476b81;
+  line-height: 1.55;
+}
+
+.pre-event-map__loading.is-error svg {
+  color: #c44134;
+}
+
 .pre-event-map__canvas {
   position: absolute;
   inset: 0;

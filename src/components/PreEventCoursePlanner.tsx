@@ -1,5 +1,5 @@
 import { AlertTriangle, Anchor, CheckCircle2, Compass, LocateFixed, LogIn, MapPinned, Route, Sailboat, Share2, ShieldCheck, Sparkles, Wind } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   CLASS_PROFILES,
   type LngLat,
@@ -10,7 +10,6 @@ import { coursePresetForClass, coursePresetsForClass, normalizeCoursePresetCode,
 import { DEFAULT_RACE_AREA_CENTER } from '../../shared/defaultRaceArea'
 import type { EventCreationPlan } from '../eventClient'
 import { formatWindSpeedDual } from '../markWind'
-import { CoursePreviewMap } from './CoursePreviewMap'
 import { buildPreEventCourseMarks } from '../preEventCoursePlan'
 import { buildCourseFeatures } from '../mapCourseFeatures'
 import { assessCoastClearance, findCoastClearSignalPosition, type CoastClearanceAssessment } from '../coastClearance'
@@ -18,6 +17,31 @@ import { buildSharedCourseUrl, sharedCourseFromHash, type SharedCoursePayload } 
 
 const MINIMUM_COAST_CLEARANCE_METRES = 300
 const LOCAL_MARK_POSITIONS_KEY = 'srs:pre-event-mark-positions'
+const CoursePreviewMap = lazy(() => import('./CoursePreviewMap').then((module) => ({ default: module.CoursePreviewMap })))
+
+class CourseMapBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+
+  render() {
+    if (this.state.failed) {
+      return (
+        <section className="pre-event-map pre-event-map--loading" role="alert">
+          <div className="pre-event-map__loading is-error">
+            <AlertTriangle size={26} />
+            <strong>地図を読み込めませんでした</strong>
+            <small>設定はそのまま利用できます。通信を確認してページを再読み込みしてください。</small>
+          </div>
+        </section>
+      )
+    }
+
+    return this.props.children
+  }
+}
 
 function storedMarkPositions(): Record<string, LngLat> {
   if (typeof window === 'undefined') return {}
@@ -464,27 +488,39 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
           </section>
         </aside>
 
-        <CoursePreviewMap
-          marks={marks}
-          route={selectedPreset.route}
-          signalBoatPosition={plan.signalBoatPosition}
-          windDirection={windDirection}
-          windSpeed={windSpeed}
-          finishLineMode={finishLineMode}
-          coastClearance={coastClearanceDisplay}
-          currentPosition={currentPosition}
-          currentPositionAccuracy={currentPositionAccuracy}
-          selectedMarkId={selectedMarkId}
-          navigationMarkId={navigationMarkId}
-          navigationDistanceMetres={navigationDistanceMetres}
-          onMarkSelect={(mark) => setSelectedMarkId(mark.id)}
-          onCloseMark={() => setSelectedMarkId(undefined)}
-          onNavigateToMark={(mark) => setNavigationMarkId(mark.id)}
-          onStopNavigation={() => setNavigationMarkId(undefined)}
-          onRecordMark={recordSelectedMarkAtCurrentPosition}
-          onClearRecordedMark={clearSelectedMarkPosition}
-          onSignalBoatPositionChange={setSignalPosition}
-        />
+        <CourseMapBoundary>
+          <Suspense fallback={(
+            <section className="pre-event-map pre-event-map--loading" aria-busy="true" aria-live="polite">
+              <div className="pre-event-map__loading">
+                <MapPinned size={26} />
+                <strong>コース地図を読み込んでいます</strong>
+                <small>コース・本船位置・風向風速の設定は先に操作できます。</small>
+              </div>
+            </section>
+          )}>
+            <CoursePreviewMap
+              marks={marks}
+              route={selectedPreset.route}
+              signalBoatPosition={plan.signalBoatPosition}
+              windDirection={windDirection}
+              windSpeed={windSpeed}
+              finishLineMode={finishLineMode}
+              coastClearance={coastClearanceDisplay}
+              currentPosition={currentPosition}
+              currentPositionAccuracy={currentPositionAccuracy}
+              selectedMarkId={selectedMarkId}
+              navigationMarkId={navigationMarkId}
+              navigationDistanceMetres={navigationDistanceMetres}
+              onMarkSelect={(mark) => setSelectedMarkId(mark.id)}
+              onCloseMark={() => setSelectedMarkId(undefined)}
+              onNavigateToMark={(mark) => setNavigationMarkId(mark.id)}
+              onStopNavigation={() => setNavigationMarkId(undefined)}
+              onRecordMark={recordSelectedMarkAtCurrentPosition}
+              onClearRecordedMark={clearSelectedMarkPosition}
+              onSignalBoatPositionChange={setSignalPosition}
+            />
+          </Suspense>
+        </CourseMapBoundary>
       </div>
 
       <footer className="pre-event-mobile-action">
