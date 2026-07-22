@@ -1,5 +1,5 @@
 import type { Feature, FeatureCollection, LineString, Point } from 'geojson'
-import { midpoint } from './course'
+import { bearingDegrees, distanceMetres, midpoint } from './course'
 import type { CourseMark, LngLat } from './domain'
 
 export interface GatePair {
@@ -35,9 +35,12 @@ export function buildCourseFeatures(marks: readonly CourseMark[], route?: readon
   points: FeatureCollection<Point>
   targetLinks: FeatureCollection<LineString>
   course: FeatureCollection<LineString>
+  courseSegments: FeatureCollection<LineString>
   gates: FeatureCollection<LineString>
   startLine: FeatureCollection<LineString>
   finishLine: FeatureCollection<LineString>
+  legLabels: FeatureCollection<Point>
+  turnLabels: FeatureCollection<Point>
 } {
   const gates = findGatePairs(marks)
   const pointFeatures: Feature<Point>[] = marks.flatMap((mark) => {
@@ -125,7 +128,9 @@ export function buildCourseFeatures(marks: readonly CourseMark[], route?: readon
   const finishMarkPosition = finishMark ? finishMark.actual ?? finishMark.target : undefined
   const finishCenter = finishBoatPosition && finishMarkPosition
     ? midpoint(finishBoatPosition, finishMarkPosition)
-    : finishBoatPosition ?? finishMarkPosition
+    : finishMarkPosition && signalMark
+      ? midpoint(finishMarkPosition, signalMark.actual ?? signalMark.target)
+      : finishBoatPosition ?? finishMarkPosition
   const finishLine: FeatureCollection<LineString> = {
     type: 'FeatureCollection',
     features: finishBoatMark && finishMark && finishBoatPosition && finishMarkPosition ? [{
@@ -135,13 +140,13 @@ export function buildCourseFeatures(marks: readonly CourseMark[], route?: readon
         type: 'LineString',
         coordinates: [[...finishMarkPosition], [...finishBoatPosition]],
       },
-    }] : pinMark && signalMark ? [{
+    }] : finishMark && finishMarkPosition && signalMark ? [{
       type: 'Feature',
-      properties: { kind: 'finish-line', mark: pinMark.id, boat: signalMark.id, shared: true },
+      properties: { kind: 'finish-line', mark: finishMark.id, boat: signalMark.id, shared: true },
       geometry: {
         type: 'LineString',
         coordinates: [
-          [...(pinMark.actual ?? pinMark.target)],
+          [...finishMarkPosition],
           [...(signalMark.actual ?? signalMark.target)],
         ],
       },
@@ -162,15 +167,86 @@ export function buildCourseFeatures(marks: readonly CourseMark[], route?: readon
     const single = marks.find((mark) => mark.shortLabel === gateNumber)
     return single ? [[...(single.actual ?? single.target)]] : []
   })
-  const ordered = routeOrder && routeOrder.length > 1 ? routeOrder : physicalOrder
+  const orderedSource = routeOrder && routeOrder.length > 1 ? routeOrder : physicalOrder
+  const ordered: LngLat[] = orderedSource.map((position) => [position[0], position[1]])
+  const coordinateKey = (position: readonly number[]) => `${position[0].toFixed(7)},${position[1].toFixed(7)}`
+  const segmentKey = (from: readonly number[], to: readonly number[]) => (
+    [coordinateKey(from), coordinateKey(to)].sort().join('|')
+  )
+  const formatLegDistance = (metres: number) => (
+    metres < 1_000
+      ? `${Math.round(metres)} m · ${(metres / 1_852).toFixed(2)} NM`
+      : `${(metres / 1_000).toFixed(2)} km · ${(metres / 1_852).toFixed(2)} NM`
+  )
+  const includedLegs = new Set<string>()
+  const segmentOccurrences = new Map<string, number>()
+  for (let index = 1; index < ordered.length; index += 1) {
+    const key = segmentKey(ordered[index - 1], ordered[index])
+    segmentOccurrences.set(key, (segmentOccurrences.get(key) ?? 0) + 1)
+  }
+  const segmentIndexes = new Map<string, number>()
+  const courseSegmentFeatures: Feature<LineString>[] = []
+  const legLabelFeatures: Feature<Point>[] = []
+  for (let index = 1; index < ordered.length; index += 1) {
+    const from = ordered[index - 1]
+    const to = ordered[index]
+    const key = segmentKey(from, to)
+    const metres = distanceMetres(from, to)
+    const repeatCount = segmentOccurrences.get(key) ?? 1
+    const repeatIndex = segmentIndexes.get(key) ?? 0
+    segmentIndexes.set(key, repeatIndex + 1)
+    const canonicalStart = [coordinateKey(from), coordinateKey(to)].sort()[0]
+    const directionFactor = coordinateKey(from) === canonicalStart ? 1 : -1
+    const canonicalOffset = (repeatIndex - (repeatCount - 1) / 2) * 9
+    const offset = canonicalOffset === 0 ? 0 : canonicalOffset * directionFactor
+    if (metres >= 1) courseSegmentFeatures.push({
+      type: 'Feature',
+      properties: {
+        kind: 'course-segment',
+        offset,
+        textOffset: [0, offset / 12],
+        repeatCount,
+        repeatIndex: repeatIndex + 1,
+      },
+      geometry: { type: 'LineString', coordinates: [[...from], [...to]] },
+    })
+    if (includedLegs.has(key) || metres < 1) continue
+    includedLegs.add(key)
+    legLabelFeatures.push({
+      type: 'Feature',
+      properties: { kind: 'leg-distance', label: formatLegDistance(metres), metres: Math.round(metres) },
+      geometry: { type: 'Point', coordinates: [...midpoint(from, to)] },
+    })
+  }
+  const includedTurns = new Set<string>()
+  const turnLabelFeatures: Feature<Point>[] = []
+  for (let index = 1; index < ordered.length - 1; index += 1) {
+    const previous = ordered[index - 1]
+    const current = ordered[index]
+    const next = ordered[index + 1]
+    if (coordinateKey(previous) === coordinateKey(next)) continue
+    const incomingRay = bearingDegrees(current, previous)
+    const outgoingRay = bearingDegrees(current, next)
+    const angle = Math.abs(((outgoingRay - incomingRay + 540) % 360) - 180)
+    if (angle < 5 || angle > 175) continue
+    const key = [segmentKey(current, previous), segmentKey(current, next)].sort().join('>')
+    if (includedTurns.has(key)) continue
+    includedTurns.add(key)
+    turnLabelFeatures.push({
+      type: 'Feature',
+      properties: { kind: 'turn-angle', label: `∠${Math.round(angle)}°`, angle: Math.round(angle) },
+      geometry: { type: 'Point', coordinates: [...current] },
+    })
+  }
   const course: FeatureCollection<LineString> = {
     type: 'FeatureCollection',
     features: ordered.length > 1 ? [{
       type: 'Feature',
       properties: {},
-      geometry: { type: 'LineString', coordinates: ordered },
+      geometry: { type: 'LineString', coordinates: ordered.map((position) => [...position]) },
     }] : [],
   }
+  const courseSegments: FeatureCollection<LineString> = { type: 'FeatureCollection', features: courseSegmentFeatures }
   const gateLines: FeatureCollection<LineString> = {
     type: 'FeatureCollection',
     features: gates.map((gate) => ({
@@ -179,5 +255,7 @@ export function buildCourseFeatures(marks: readonly CourseMark[], route?: readon
       geometry: { type: 'LineString', coordinates: gate.positions.map((position) => [...position]) },
     })),
   }
-  return { points, targetLinks, course, gates: gateLines, startLine, finishLine }
+  const legLabels: FeatureCollection<Point> = { type: 'FeatureCollection', features: legLabelFeatures }
+  const turnLabels: FeatureCollection<Point> = { type: 'FeatureCollection', features: turnLabelFeatures }
+  return { points, targetLinks, course, courseSegments, gates: gateLines, startLine, finishLine, legLabels, turnLabels }
 }

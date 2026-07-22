@@ -48,6 +48,7 @@ interface CreateEventInput {
   lowerGate?: boolean
   finishLineMode?: FinishLineMode
   targetLengthMetres?: number
+  targetMinutes?: number
 }
 
 interface EventListRow {
@@ -162,8 +163,12 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
     return json({ error: 'フィニッシュライン方式を確認してください' }, { status: 400 })
   }
   const finishLineMode: FinishLineMode = body.finishLineMode === 'shared-rc' ? 'shared-rc' : 'separate'
+  const defaultTargetMinutes = className === '420' ? 45 : className === 'スナイプ' ? 60 : 50
+  const targetMinutes = typeof body.targetMinutes === 'number' && Number.isFinite(body.targetMinutes)
+    ? Math.round(Math.min(180, Math.max(15, body.targetMinutes)))
+    : defaultTargetMinutes
   const recommendedLengthMetres = Math.round(
-    recommendedCourseLength(className as SupportedSailingClass, windSpeed, undefined, courseCode as CourseTemplate, finishLineMode).kilometres * 1_000,
+    recommendedCourseLength(className as SupportedSailingClass, windSpeed, targetMinutes, courseCode as CourseTemplate, finishLineMode).kilometres * 1_000,
   )
   const targetLengthMetres = typeof body.targetLengthMetres === 'number' && Number.isFinite(body.targetLengthMetres)
     ? Math.round(Math.min(30_000, Math.max(500, body.targetLengthMetres)))
@@ -281,7 +286,7 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
        (id, regatta_id, race_area_id, race_number, race_order, class_name, course_code,
         target_minutes, warning_at, status, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'planning', ?, ?)`,
-    ).bind(raceId, eventId, areaId, `${index + 1}R`, index + 1, className, courseCode, className === '420' ? 45 : className === 'スナイプ' ? 60 : 50, raceWarning, now, now))
+    ).bind(raceId, eventId, areaId, `${index + 1}R`, index + 1, className, courseCode, targetMinutes, raceWarning, now, now))
     statements.push(env.DB.prepare(
       `INSERT INTO course_revisions
        (id, race_id, revision, course_code, wind_direction, wind_speed, target_length_metres,

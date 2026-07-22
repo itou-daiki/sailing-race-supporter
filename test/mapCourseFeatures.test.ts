@@ -57,6 +57,7 @@ describe('course map geometry', () => {
       { id: 'm3p', label: '下ゲート 3P', shortLabel: '3P', target: [131.523, 33.28], status: 'planned', isGate: true, gateSide: 'P' },
       { id: 'pin', label: 'スタート・ピン', shortLabel: 'PIN', target: [131.520, 33.278], status: 'planned' },
       { id: 'rc', label: 'シグナルボート', shortLabel: 'RC', target: [131.524, 33.278], status: 'planned' },
+      { id: 'f', label: 'フィニッシュマーク', shortLabel: 'F', target: [131.524, 33.277], status: 'planned' },
     ]
 
     const features = buildCourseFeatures(marks, ['Start', '1', '2', '3S/3P', '2', '3P', 'Finish'])
@@ -65,7 +66,10 @@ describe('course map geometry', () => {
       [131.524, 33.278],
     ])
     expect(features.finishLine.features[0].properties?.shared).toBe(true)
-    expect(features.finishLine.features[0].geometry.coordinates).toEqual(features.startLine.features[0].geometry.coordinates)
+    expect(features.finishLine.features[0].geometry.coordinates).toEqual([
+      [131.524, 33.277],
+      [131.524, 33.278],
+    ])
     expect(features.course.features[0].geometry.coordinates).toEqual([
       [131.522, 33.278],
       [131.522, 33.29],
@@ -73,8 +77,11 @@ describe('course map geometry', () => {
       [131.522, 33.28],
       [131.532, 33.285],
       [131.523, 33.28],
-      [131.522, 33.278],
+      [131.524, 33.2775],
     ])
+    expect(features.legLabels.features.length).toBeGreaterThan(0)
+    expect(features.legLabels.features.every((feature) => String(feature.properties?.label).includes('NM'))).toBe(true)
+    expect(features.turnLabels.features.some((feature) => String(feature.properties?.label).startsWith('∠'))).toBe(true)
   })
 
   it('draws a separately placed finish line and routes to its midpoint', () => {
@@ -115,5 +122,18 @@ describe('course map geometry', () => {
       [131.522, 33.278],
     ])
     expect(features.gates.features).toHaveLength(0)
+  })
+
+  it('separates repeated loop segments while showing their distance only once', () => {
+    const marks: CourseMark[] = [
+      { id: 'm1', label: '1マーク', shortLabel: '1', target: [131.522, 33.29], status: 'planned' },
+      { id: 'm2', label: '2マーク', shortLabel: '2', target: [131.532, 33.285], status: 'planned' },
+    ]
+
+    const features = buildCourseFeatures(marks, ['1', '2', '1', '2'])
+
+    expect(features.courseSegments.features).toHaveLength(3)
+    expect(features.courseSegments.features.map((feature) => feature.properties?.offset)).toEqual([-9, 0, 9])
+    expect(features.legLabels.features).toHaveLength(1)
   })
 })

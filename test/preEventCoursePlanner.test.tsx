@@ -46,17 +46,36 @@ describe('PreEventCoursePlanner mobile navigation', () => {
     }))
   })
 
-  it('offers a practice finish that reuses RC and PIN without extra finish marks', async () => {
+  it('offers a practice finish that reuses RC with one F mark and no FIN boat', async () => {
     const onIssueEvent = vi.fn()
     const { container } = render(<PreEventCoursePlanner onIssueEvent={onIssueEvent} onOpenEvents={vi.fn()} />)
 
-    fireEvent.click(within(container).getByRole('radio', { name: '本船兼用（RC＋PIN）' }))
-    expect(within(container).getByText('練習向け・追加マーク不要')).toBeInTheDocument()
-    expect(within(container).queryByText('フィニッシュ艇')).not.toBeInTheDocument()
+    fireEvent.click(within(container).getByRole('radio', { name: '本船兼用（RC＋F）' }))
+    expect(within(container).getByText('練習向け・FIN艇不要')).toBeInTheDocument()
+    expect(within(container).getByText('RCから風下へFマークを置き、緑のフィニッシュラインを作ります。')).toBeInTheDocument()
 
     const issueButton = within(container).getAllByRole('button', { name: '大会URLを発行' }).at(-1)!
     await waitFor(() => expect(issueButton).toBeEnabled())
     fireEvent.click(issueButton)
     expect(onIssueEvent).toHaveBeenCalledWith(expect.objectContaining({ finishLineMode: 'shared-rc' }))
+  })
+
+  it('switches between a custom target time and the class wind-speed standard', async () => {
+    const onIssueEvent = vi.fn()
+    const { container } = render(<PreEventCoursePlanner onIssueEvent={onIssueEvent} onOpenEvents={vi.fn()} />)
+    const targetMinutes = within(container).getByRole('spinbutton', { name: '目標レース時間（分）' })
+
+    fireEvent.change(targetMinutes, { target: { value: '65' } })
+    expect(targetMinutes).toHaveValue(65)
+    expect(within(container).getByText(/目標時間 65分/u)).toBeInTheDocument()
+
+    fireEvent.click(within(container).getByRole('radio', { name: '風速から標準距離' }))
+    expect(targetMinutes).toBeDisabled()
+    expect(targetMinutes).toHaveValue(50)
+
+    const issueButton = within(container).getAllByRole('button', { name: '大会URLを発行' }).at(-1)!
+    await waitFor(() => expect(issueButton).toBeEnabled())
+    fireEvent.click(issueButton)
+    expect(onIssueEvent).toHaveBeenCalledWith(expect.objectContaining({ targetMinutes: 50 }))
   })
 })

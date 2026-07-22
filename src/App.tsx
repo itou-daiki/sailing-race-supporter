@@ -697,20 +697,24 @@ export default function App() {
         }
       })
     })()
-    const marksWithFinish: CourseMark[] = activeRace.finishLineMode === 'shared-rc'
-      ? sourceMarks.filter((mark) => mark.shortLabel !== 'FIN' && mark.shortLabel !== 'F')
-      : sourceMarks.some((mark) => mark.shortLabel === 'FIN' || mark.shortLabel === 'F')
-      ? sourceMarks
+    const usableSourceMarks = activeRace.finishLineMode === 'shared-rc'
+      ? sourceMarks.filter((mark) => mark.shortLabel !== 'FIN')
+      : sourceMarks
+    const requiredFinishLabels = activeRace.finishLineMode === 'shared-rc' ? ['F'] : ['F', 'FIN']
+    const marksWithFinish: CourseMark[] = requiredFinishLabels.every((label) => (
+      usableSourceMarks.some((mark) => mark.shortLabel === label)
+    ))
+      ? usableSourceMarks
       : (() => {
-          const startPin = sourceMarks.find((mark) => mark.shortLabel === 'PIN')
-          const startSignal = sourceMarks.find((mark) => mark.shortLabel === 'RC')
+          const startPin = usableSourceMarks.find((mark) => mark.shortLabel === 'PIN')
+          const startSignal = usableSourceMarks.find((mark) => mark.shortLabel === 'RC')
           const startLine = startPin && startSignal ? {
             pin: startPin.actual ?? startPin.target,
             signal: startSignal.actual ?? startSignal.target,
           } : undefined
           const center = startLine
             ? midpoint(startLine.pin, startLine.signal)
-            : raceAreaCenter ?? sourceMarks[0]?.target ?? [131.5221959, 33.2786648] as LngLat
+            : raceAreaCenter ?? usableSourceMarks[0]?.target ?? [131.5221959, 33.2786648] as LngLat
           const finishNodes = generateCoursePlan({
             center,
             startLine,
@@ -721,9 +725,11 @@ export default function App() {
             className: activeRace.className,
             lowerGate: activeCoursePreset.route.some((point) => point.includes('S/')),
             upperGate: false,
-            finishLineMode: 'separate',
-          }).filter((node) => node.nodeType === 'finish')
-          return [...sourceMarks, ...finishNodes.map((node) => {
+            finishLineMode: activeRace.finishLineMode ?? 'separate',
+          }).filter((node) => node.nodeType === 'finish' && !usableSourceMarks.some((mark) => (
+            mark.shortLabel === shortCourseMarkLabel(node.label)
+          )))
+          return [...usableSourceMarks, ...finishNodes.map((node) => {
             const physical = eventResources.marks.find((mark) => mark.label === node.label)
             return {
               id: physical?.id ?? `${activeRace.id}-${node.key}`,
@@ -2257,8 +2263,8 @@ export default function App() {
             <button type="button" className="sheet-secondary" onClick={shareCurrent} disabled={!canShareEnvironment}>
               <Waves size={17} /> 潮流を現在地と共有
             </button>
-            <label className="switch-row"><span><strong>風下／内側ゲート</strong><small>{courseTemplate === 'I2' || courseTemplate === 'L2' || courseTemplate === 'L3' ? '4S / 4Pを使用' : '3S / 3Pを使用'}</small></span><input type="checkbox" checked={lowerGate} disabled={!canChangeCourse} onChange={(event) => setLowerGate(event.target.checked)} /></label>
-            <label><span>フィニッシュライン</span><select value={finishLineMode} disabled={!canChangeCourse} onChange={(event) => setFinishLineMode(event.target.value as 'separate' | 'shared-rc')}><option value="separate">別に設置（FIN艇＋Fマーク）</option><option value="shared-rc">本船兼用（RC＋PIN・追加マーク不要）</option></select><small>{finishLineMode === 'separate' ? '最終レグに直角の緑ラインを別に作ります。' : 'スタートラインをフィニッシュにも使用します。練習やワンオペ向けです。'}</small></label>
+            <label className="switch-row"><span><strong>風下／内側ゲート</strong><small>{courseTemplate === 'I2' ? '4S / 4Pを使用' : courseTemplate === 'L2' || courseTemplate === 'L3' ? '2S / 2Pを使用' : '3S / 3Pを使用'}</small></span><input type="checkbox" checked={lowerGate} disabled={!canChangeCourse} onChange={(event) => setLowerGate(event.target.checked)} /></label>
+            <label><span>フィニッシュライン</span><select value={finishLineMode} disabled={!canChangeCourse} onChange={(event) => setFinishLineMode(event.target.value as 'separate' | 'shared-rc')}><option value="separate">別に設置（FIN艇＋Fマーク）</option><option value="shared-rc">本船兼用（RC＋Fマーク・FIN艇不要）</option></select><small>{finishLineMode === 'separate' ? 'トラペゾイドは3マークから0.15 NM先に、最終レグと直角の緑ラインを作ります。' : 'RCから風下方向へ50 mの緑ラインを作ります。練習やワンオペ向けです。'}</small></label>
             <label className="switch-row"><span><strong>上ゲート</strong><small>1S / 1Pを使用</small></span><input type="checkbox" checked={upperGate} disabled={!canChangeCourse} onChange={(event) => setUpperGate(event.target.checked)} /></label>
             {(courseTemplate === 'O2' || courseTemplate === 'I2' || courseTemplate === 'T2' || courseTemplate === 'トライアングル') && <label className="switch-row"><span><strong>中ゲート</strong><small>2マークを2S / 2Pへ切替</small></span><input type="checkbox" checked={secondGate} disabled={!canChangeCourse} onChange={(event) => setSecondGate(event.target.checked)} /></label>}
             {(lowerGate || upperGate || secondGate) && <label><span>計画ゲート幅（m・全ゲート共通）</span><input type="number" min="40" max="600" step="5" value={gateWidthMetres} disabled={!canChangeCourse} onChange={(event) => setGateWidthMetres(Math.min(600, Math.max(40, Number(event.target.value) || 40)))} /></label>}

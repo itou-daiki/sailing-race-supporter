@@ -14,6 +14,7 @@ function plan(overrides: Partial<EventCreationPlan> = {}): EventCreationPlan {
     windSpeed,
     lowerGate: true,
     targetLengthMetres: recommendedCourseLength(className, windSpeed).kilometres * 1_000,
+    targetMinutes: 50,
     ...overrides,
   }
 }
@@ -47,10 +48,14 @@ describe('pre-event course plan', () => {
     )
   })
 
-  it('does not create extra finish equipment in RC-shared practice mode', () => {
+  it('uses RC and one F mark without a separate finish boat in shared practice mode', () => {
     const marks = buildPreEventCourseMarks(plan({ finishLineMode: 'shared-rc' }))
 
-    expect(marks.some((mark) => mark.shortLabel === 'FIN' || mark.shortLabel === 'F')).toBe(false)
-    expect(marks.map((mark) => mark.shortLabel)).toEqual(expect.arrayContaining(['PIN', 'RC']))
+    expect(marks.some((mark) => mark.shortLabel === 'FIN')).toBe(false)
+    expect(marks.map((mark) => mark.shortLabel)).toEqual(expect.arrayContaining(['PIN', 'RC', 'F']))
+    expect(distanceMetres(
+      marks.find((mark) => mark.shortLabel === 'RC')!.target,
+      marks.find((mark) => mark.shortLabel === 'F')!.target,
+    )).toBeCloseTo(50, 0)
   })
 })

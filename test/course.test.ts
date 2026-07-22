@@ -102,7 +102,7 @@ describe('course calculations', () => {
     ))).toBeCloseTo(90, 1)
   })
 
-  it('reuses RC and PIN for a practice finish without adding finish equipment', () => {
+  it('reuses RC as the finish boat and puts one F mark 50 metres downwind', () => {
     const plan = generateCoursePlan({
       center: [131.5221959, 33.2786648],
       windDirection: 0,
@@ -114,8 +114,12 @@ describe('course calculations', () => {
       finishLineMode: 'shared-rc',
     })
 
-    expect(plan.some((node) => node.nodeType === 'finish')).toBe(false)
-    expect(plan.map((node) => node.key)).toEqual(expect.arrayContaining(['start-pin', 'start-rc']))
+    const signalBoat = plan.find((node) => node.key === 'start-rc')!
+    const finishMark = plan.find((node) => node.key === 'finish-mark')!
+
+    expect(plan.some((node) => node.key === 'finish-boat')).toBe(false)
+    expect(distanceMetres(signalBoat.target, finishMark.target)).toBeCloseTo(50, 0)
+    expect(bearingDegrees(signalBoat.target, finishMark.target)).toBeCloseTo(180, 1)
   })
 
   it('places the O2 lower gate below mark 2 so the map forms an outer trapezoid', () => {
@@ -240,6 +244,21 @@ describe('course calculations', () => {
     expect(bearingDegrees(mark1.target, mark2.target)).toBeCloseTo(230, 1)
     expect(mark2.target).toEqual(outer.find((node) => node.key === 'mark-2')!.target)
     expect(mark3.target).toEqual(outer.find((node) => node.key === 'mark-3p')!.target)
+  })
+
+  it('uses mark 2 instead of mark 4 for the windward-leeward lower gate', () => {
+    const plan = generateCoursePlan({
+      center: [131.5221959, 33.2786648],
+      windDirection: 350,
+      totalLengthMetres: 5_000,
+      courseCode: 'L2',
+      className: '470',
+      lowerGate: true,
+      upperGate: false,
+    })
+
+    expect(plan.map((node) => node.key)).toEqual(expect.arrayContaining(['mark-1', 'mark-2s', 'mark-2p']))
+    expect(plan.some((node) => node.key === 'mark-4s' || node.key === 'mark-4p')).toBe(false)
   })
 
   it('distinguishes Snipe W2 and O2 physical marks', () => {

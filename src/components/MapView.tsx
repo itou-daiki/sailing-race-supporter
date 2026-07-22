@@ -301,10 +301,12 @@ export function MapView({
     map.on('load', () => {
       map.addSource('course-points', { type: 'geojson', data: initialFeaturesRef.current.points })
       map.addSource('target-links', { type: 'geojson', data: initialFeaturesRef.current.targetLinks })
-      map.addSource('course-route', { type: 'geojson', data: initialFeaturesRef.current.course })
+      map.addSource('course-route', { type: 'geojson', data: initialFeaturesRef.current.courseSegments })
       map.addSource('gate-lines', { type: 'geojson', data: initialFeaturesRef.current.gates })
       map.addSource('start-line', { type: 'geojson', data: initialFeaturesRef.current.startLine })
       map.addSource('finish-line', { type: 'geojson', data: initialFeaturesRef.current.finishLine })
+      map.addSource('leg-labels', { type: 'geojson', data: initialFeaturesRef.current.legLabels })
+      map.addSource('turn-labels', { type: 'geojson', data: initialFeaturesRef.current.turnLabels })
       map.addLayer({
         id: 'start-line-casing',
         type: 'line',
@@ -325,7 +327,6 @@ export function MapView({
           'line-color': '#ffffff',
           'line-width': 8,
           'line-opacity': 0.95,
-          'line-offset': ['case', ['boolean', ['get', 'shared'], false], 5, 0],
         },
       })
       map.addLayer({
@@ -336,7 +337,6 @@ export function MapView({
           'line-color': '#13a66b',
           'line-width': 5,
           'line-opacity': 1,
-          'line-offset': ['case', ['boolean', ['get', 'shared'], false], 5, 0],
         },
       })
       map.addLayer({
@@ -354,7 +354,39 @@ export function MapView({
           'line-width': 3,
           'line-opacity': 0.72,
           'line-dasharray': [2, 1.2],
+          'line-offset': ['get', 'offset'],
         },
+      })
+      map.addLayer({
+        id: 'course-route-direction',
+        type: 'symbol',
+        source: 'course-route',
+        layout: {
+          'symbol-placement': 'line',
+          'symbol-spacing': 95,
+          'text-field': '▶',
+          'text-size': 12,
+          'text-rotation-alignment': 'map',
+          'text-keep-upright': false,
+          'text-allow-overlap': true,
+          'text-ignore-placement': true,
+          'text-offset': ['get', 'textOffset'],
+        },
+        paint: { 'text-color': '#087ee8', 'text-halo-color': '#ffffff', 'text-halo-width': 1.5 },
+      })
+      map.addLayer({
+        id: 'leg-distance-label',
+        type: 'symbol',
+        source: 'leg-labels',
+        layout: { 'text-field': ['get', 'label'], 'text-size': 12, 'text-allow-overlap': true, 'text-ignore-placement': true },
+        paint: { 'text-color': '#075f9f', 'text-halo-color': '#ffffff', 'text-halo-width': 3, 'text-halo-blur': 0.5 },
+      })
+      map.addLayer({
+        id: 'turn-angle-label',
+        type: 'symbol',
+        source: 'turn-labels',
+        layout: { 'text-field': ['get', 'label'], 'text-size': 12, 'text-offset': [0, 1.8], 'text-allow-overlap': true, 'text-ignore-placement': true },
+        paint: { 'text-color': '#5f36a0', 'text-halo-color': '#ffffff', 'text-halo-width': 3, 'text-halo-blur': 0.5 },
       })
       map.addLayer({
         id: 'gate-center-point',
@@ -443,10 +475,12 @@ export function MapView({
     if (!map || !mapReady) return
     ;(map.getSource('course-points') as GeoJSONSource | undefined)?.setData(features.points)
     ;(map.getSource('target-links') as GeoJSONSource | undefined)?.setData(features.targetLinks)
-    ;(map.getSource('course-route') as GeoJSONSource | undefined)?.setData(features.course)
+    ;(map.getSource('course-route') as GeoJSONSource | undefined)?.setData(features.courseSegments)
     ;(map.getSource('gate-lines') as GeoJSONSource | undefined)?.setData(features.gates)
     ;(map.getSource('start-line') as GeoJSONSource | undefined)?.setData(features.startLine)
     ;(map.getSource('finish-line') as GeoJSONSource | undefined)?.setData(features.finishLine)
+    ;(map.getSource('leg-labels') as GeoJSONSource | undefined)?.setData(features.legLabels)
+    ;(map.getSource('turn-labels') as GeoJSONSource | undefined)?.setData(features.turnLabels)
   }, [features, mapReady])
 
   useEffect(() => {

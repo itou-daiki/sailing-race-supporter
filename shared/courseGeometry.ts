@@ -135,8 +135,20 @@ export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
     { key: 'start-pin', label: 'スタート・ピン', nodeType: 'start', target: input.startLine?.pin ?? destinationPoint(center, lineLength / 2, wind - 90) },
     { key: 'start-rc', label: 'シグナルボート', nodeType: 'start', target: input.startLine?.signal ?? destinationPoint(center, lineLength / 2, wind + 90) },
   ]
+  const signalBoatTarget = nodes[1].target
+  let finishLineAppended = false
   const appendFinishLine = (origin: CoursePosition, bearing: number, distance: number) => {
-    if (finishLineMode === 'shared-rc') return
+    if (finishLineAppended) return
+    finishLineAppended = true
+    if (finishLineMode === 'shared-rc') {
+      nodes.push({
+        key: 'finish-mark',
+        label: 'フィニッシュマーク',
+        nodeType: 'finish',
+        target: destinationPoint(signalBoatTarget, 50, wind + 180),
+      })
+      return
+    }
     const finishCenter = destinationPoint(origin, distance, bearing)
     const lineBearing = bearing + 90
     nodes.push(
@@ -156,8 +168,8 @@ export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
   }
 
   const pushGateOrSingle = (
-    key: 'mark-3' | 'mark-4',
-    label: '下ゲート 3' | '内側ゲート 4',
+    key: 'mark-2' | 'mark-3' | 'mark-4',
+    label: '下ゲート 2' | '下ゲート 3' | '内側ゲート 4',
     roundingCenter: CoursePosition,
   ) => {
     if (input.lowerGate) {
@@ -166,7 +178,7 @@ export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
         { key: `${key}p`, label: `${label}P`, nodeType: 'gate', target: destinationPoint(roundingCenter, gateWidth / 2, wind + 90) },
       )
     } else {
-      nodes.push({ key, label: key === 'mark-3' ? '3マーク' : '4マーク', nodeType: 'single', target: roundingCenter })
+      nodes.push({ key, label: `${key.slice(-1)}マーク`, nodeType: 'single', target: roundingCenter })
     }
   }
 
@@ -200,7 +212,7 @@ export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
     appendFinishLine(lowerRoundingCenter, wind + 135, finishDistance)
     return nodes
   } else if (!isSnipe && (input.courseCode === 'L2' || input.courseCode === 'L3')) {
-    pushGateOrSingle('mark-4', '内側ゲート 4', innerGateCenter)
+    pushGateOrSingle('mark-2', '下ゲート 2', innerGateCenter)
     appendFinishLine(innerGateCenter, wind + 180, finishDistance)
     return nodes
   } else if ((isSnipe && (input.courseCode === 'O2' || input.courseCode === 'T2')) || input.courseCode === 'トライアングル') {

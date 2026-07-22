@@ -137,6 +137,7 @@ export interface CreateEventInput {
   lowerGate?: boolean
   finishLineMode?: FinishLineMode
   targetLengthMetres?: number
+  targetMinutes?: number
 }
 
 export interface EventCreationPlan {
@@ -148,6 +149,7 @@ export interface EventCreationPlan {
   lowerGate: boolean
   finishLineMode?: FinishLineMode
   targetLengthMetres: number
+  targetMinutes: number
 }
 
 export interface RetentionPolicy {

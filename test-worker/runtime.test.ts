@@ -249,6 +249,7 @@ describe('Cloudflare Workers runtime integration', () => {
         courseCode: 'O2',
         operationMode: 'solo',
         finishLineMode: 'shared-rc',
+        targetMinutes: 55,
         firstWarningAt: '2026-07-19T03:00:00.000Z',
       }),
     })
@@ -266,11 +267,11 @@ describe('Cloudflare Workers runtime integration', () => {
       env.DB.prepare('SELECT id, assignment FROM event_members WHERE regatta_id = ? AND user_id = ?')
         .bind(soloIssued.event.id, ownerId).first<{ id: string; assignment: string }>(),
       env.DB.prepare(
-        `SELECT revision.target_length_metres, revision.gate_config_json
+         `SELECT revision.target_length_metres, revision.gate_config_json, race.target_minutes
          FROM course_revisions revision
          JOIN races race ON race.id = revision.race_id
          WHERE race.regatta_id = ? AND race.race_order = 1 AND revision.revision = 1`,
-      ).bind(soloIssued.event.id).first<{ target_length_metres: number; gate_config_json: string }>(),
+      ).bind(soloIssued.event.id).first<{ target_length_metres: number; gate_config_json: string; target_minutes: number }>(),
       env.DB.prepare(
         `SELECT node.label FROM course_nodes node
          JOIN course_revisions revision ON revision.id = node.course_revision_id
@@ -287,9 +288,12 @@ describe('Cloudflare Workers runtime integration', () => {
     expect(soloSettings?.operation_mode).toBe('solo')
     expect(soloBoats.results).toEqual([{ name: 'ワンオペ運営艇', role: 'signal-boat', call_sign: '全運営' }])
     expect(soloOwner?.assignment).toBe('全運営')
-    expect(soloRevision?.target_length_metres).toBe(Math.round(recommendedCourseLength('470', 8, undefined, 'O2', 'shared-rc').kilometres * 1_000))
+    expect(soloRevision?.target_minutes).toBe(55)
+    expect(soloRevision?.target_length_metres).toBe(Math.round(recommendedCourseLength('470', 8, 55, 'O2', 'shared-rc').kilometres * 1_000))
     expect(JSON.parse(soloRevision?.gate_config_json ?? '{}')).toMatchObject({ finishLineMode: 'shared-rc' })
-    expect(soloCourseNodes.results.some((node) => node.label.startsWith('フィニッシュ'))).toBe(false)
+    expect(soloCourseNodes.results.filter((node) => node.label.startsWith('フィニッシュ'))).toEqual([
+      { label: 'フィニッシュマーク' },
+    ])
     expect(soloTasks.results).toContainEqual(expect.objectContaining({ title: 'ワンオペの安全条件と中止基準を確認' }))
     expect(soloTasks.results.every((task) => task.assignee_member_id === soloOwner?.id)).toBe(true)
     expect(soloTasks.results.some((task) => task.title === '担当別最終確認を完了')).toBe(false)

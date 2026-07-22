@@ -269,6 +269,13 @@ select:focus-visible {
   font-size: 9px;
 }
 
+.pre-event-share-status {
+  color: #087452;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 850;
+}
+
 .pre-event-workspace {
   min-width: 0;
   min-height: 0;
@@ -645,6 +652,14 @@ select:focus-visible {
   border: 1px solid #b2daf3;
 }
 
+.pre-event-result > button.pre-event-share-course {
+  min-height: 40px;
+  margin-top: 2px;
+  color: #087452;
+  background: #e8f8f2;
+  border: 1px solid #9bd5c1;
+}
+
 .pre-event-result > button:disabled {
   opacity: 0.45;
 }
@@ -735,6 +750,136 @@ select:focus-visible {
   font-size: 9px;
 }
 
+.pre-event-map__mark-card {
+  position: absolute;
+  z-index: 7;
+  right: 12px;
+  bottom: 12px;
+  left: 12px;
+  max-width: 560px;
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  color: var(--navy);
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid #9fcbe5;
+  border-radius: 12px;
+  box-shadow: 0 8px 25px rgba(9, 39, 62, 0.2);
+  backdrop-filter: blur(10px);
+}
+
+.pre-event-map__mark-card > header,
+.pre-event-map__mark-card > header > span,
+.pre-event-map__mark-actions,
+.pre-event-map__remaining {
+  display: flex;
+  align-items: center;
+}
+
+.pre-event-map__mark-card > header {
+  justify-content: space-between;
+}
+
+.pre-event-map__mark-card > header > span {
+  gap: 6px;
+}
+
+.pre-event-map__mark-card > header strong {
+  font-size: 13px;
+}
+
+.pre-event-map__mark-card > header small {
+  padding: 2px 6px;
+  color: #0b6f54;
+  background: #e2f6ef;
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.pre-event-map__mark-card > header > button,
+.pre-event-map__mark-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  cursor: pointer;
+}
+
+.pre-event-map__mark-card > header > button {
+  width: 30px;
+  height: 30px;
+  color: #577286;
+  background: #edf4f8;
+  border-radius: 8px;
+}
+
+.pre-event-map__mark-card > p {
+  display: flex;
+  gap: 12px;
+  margin: 0;
+  color: #355e76;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.pre-event-map__remaining {
+  gap: 7px;
+  padding: 7px 9px;
+  color: #075f9f;
+  background: #e9f6ff;
+  border-radius: 9px;
+}
+
+.pre-event-map__remaining > span {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+
+.pre-event-map__remaining small {
+  color: #56798e;
+  font-size: 8px;
+}
+
+.pre-event-map__remaining strong {
+  font-size: 15px;
+}
+
+.pre-event-map__mark-actions {
+  gap: 6px;
+}
+
+.pre-event-map__mark-actions button {
+  min-height: 36px;
+  gap: 5px;
+  padding: 0 10px;
+  color: #075f9f;
+  background: #e8f5ff;
+  border: 1px solid #a8d3ef;
+  border-radius: 9px;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.pre-event-map__mark-actions button.is-active {
+  color: #fff;
+  background: var(--dodger-strong);
+  border-color: var(--dodger-strong);
+}
+
+.pre-event-map__mark-actions button.is-danger {
+  color: #b13e2a;
+  background: #fff0ed;
+  border-color: #efb6ab;
+}
+
+.pre-event-map__mark-actions button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .pre-event-map__edit-toggle {
   position: absolute;
   z-index: 5;
@@ -762,6 +907,7 @@ select:focus-visible {
 }
 
 .pre-event-map-mark {
+  position: relative;
   min-width: 40px;
   min-height: 40px;
   display: grid;
@@ -773,7 +919,54 @@ select:focus-visible {
   border: 2px solid var(--dodger-strong);
   border-radius: 999px;
   box-shadow: 0 4px 12px rgba(9, 39, 62, 0.18);
-  cursor: default;
+  appearance: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.pre-event-map-mark.is-selected,
+.pre-event-map-mark.is-navigation-target {
+  outline: 5px solid rgba(8, 126, 232, 0.28);
+}
+
+.pre-event-map-mark.is-recorded::after {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 12px;
+  height: 12px;
+  background: #12a574;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  content: '';
+}
+
+.pre-event-current-position {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+}
+
+.pre-event-current-position span {
+  width: 15px;
+  height: 15px;
+  background: #087ee8;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 7px rgba(8, 126, 232, 0.22), 0 3px 8px rgba(9, 39, 62, 0.28);
+}
+
+.pre-event-current-position strong {
+  position: absolute;
+  top: 25px;
+  padding: 2px 5px;
+  color: #fff;
+  white-space: nowrap;
+  background: #075f9f;
+  border-radius: 5px;
+  font-size: 8px;
 }
 
 .pre-event-map-mark strong {
@@ -10038,7 +10231,7 @@ select:focus-visible {
   .pre-event-workspace {
     grid-template-areas: "map" "controls";
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(190px, 42%) minmax(0, 1fr);
+    grid-template-rows: minmax(300px, 52%) minmax(0, 1fr);
     gap: 0;
   }
 
@@ -10093,6 +10286,31 @@ select:focus-visible {
     min-height: 36px;
     padding: 0 9px;
     font-size: 8px;
+  }
+
+  .pre-event-map__mark-card {
+    right: 8px;
+    bottom: 8px;
+    left: 8px;
+    gap: 5px;
+    padding: 8px;
+  }
+
+  .pre-event-map__mark-card > p {
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    font-size: 9px;
+  }
+
+  .pre-event-map__mark-actions button {
+    flex: 1;
+    padding: 0 7px;
+    white-space: nowrap;
+  }
+
+  .pre-event-map__mark-actions button.is-danger {
+    flex: 0 0 38px;
+    padding: 0;
   }
 
   .pre-event-map-mark {

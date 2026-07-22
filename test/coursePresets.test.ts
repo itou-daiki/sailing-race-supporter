@@ -37,6 +37,14 @@ describe('class-aware course presets', () => {
     ])
   })
 
+  it('numbers the windward-leeward loop as marks 1 and 2', () => {
+    expect(coursePresetForClass('470', 'L2')).toMatchObject({
+      route: ['Start', '1', '2S/2P', '1', 'Finish'],
+      initialMarkKeys: ['start-pin', 'start-rc', 'mark-1', 'mark-2s', 'mark-2p', 'finish-mark', 'finish-boat'],
+    })
+    expect(coursePresetForClass('470', 'L3').route).toEqual(['Start', '1', '2S/2P', '1', '2S/2P', '1', 'Finish'])
+  })
+
   it('migrates legacy triangle values when switching between Snipe and other classes', () => {
     expect(normalizeCoursePresetCode('スナイプ', 'トライアングル')).toBe('T2')
     expect(normalizeCoursePresetCode('470', 'T2')).toBe('トライアングル')
