@@ -1,4 +1,5 @@
-const CACHE_NAME = 'sailing-race-supporter-v3'
+const BUILD_VERSION = new URL(self.location.href).searchParams.get('v') ?? 'static'
+const CACHE_NAME = `sailing-race-supporter-${BUILD_VERSION}`
 const APP_SHELL = ['/manifest.webmanifest', '/icon.svg', '/icon-180.png', '/icon-192.png', '/icon-512.png']
 
 async function cacheApplicationShell() {
