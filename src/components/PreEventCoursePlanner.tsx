@@ -1,17 +1,26 @@
-import { Anchor, Compass, LocateFixed, LogIn, MapPinned, Route, Sailboat, Sparkles, Wind } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { AlertTriangle, Anchor, CheckCircle2, Compass, LocateFixed, LogIn, MapPinned, Route, Sailboat, ShieldCheck, Sparkles, Wind } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CLASS_PROFILES,
   type LngLat,
   type SailingClass,
 } from '../domain'
-import { recommendedCourseLength } from '../course'
+import { courseLegDivisor, recommendedCourseLength, type CourseTemplate } from '../course'
 import { coursePresetForClass, coursePresetsForClass, normalizeCoursePresetCode, type CoursePresetCode } from '../../shared/coursePresets'
 import { DEFAULT_RACE_AREA_CENTER } from '../../shared/defaultRaceArea'
 import type { EventCreationPlan } from '../eventClient'
 import { formatWindSpeedDual } from '../markWind'
 import { CoursePreviewMap } from './CoursePreviewMap'
 import { buildPreEventCourseMarks } from '../preEventCoursePlan'
+import { buildCourseFeatures } from '../mapCourseFeatures'
+import { assessCoastClearance, findCoastClearSignalPosition, type CoastClearanceAssessment } from '../coastClearance'
+
+const MINIMUM_COAST_CLEARANCE_METRES = 300
+
+function coursePathForMarks(marks: ReturnType<typeof buildPreEventCourseMarks>, route: readonly string[]): LngLat[] {
+  const feature = buildCourseFeatures(marks, route).course.features[0]
+  return feature?.geometry.coordinates.map((coordinate) => [coordinate[0], coordinate[1]] as LngLat) ?? []
+}
 
 interface PreEventCoursePlannerProps {
   onIssueEvent: (plan: EventCreationPlan) => void
@@ -28,10 +37,21 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
   const [latitude, setLatitude] = useState(String(DEFAULT_RACE_AREA_CENTER.latitude))
   const [windDirection, setWindDirection] = useState(350)
   const [windSpeed, setWindSpeed] = useState(8)
-  const recommendation = useMemo(() => recommendedCourseLength(className, windSpeed), [className, windSpeed])
-  const [courseLengthKm, setCourseLengthKm] = useState(() => recommendedCourseLength('470', 8).kilometres.toFixed(1))
-  const [locationError, setLocationError] = useState<string>()
   const selectedPreset = coursePresetForClass(className, courseCode)
+  const recommendation = useMemo(
+    () => recommendedCourseLength(className, windSpeed, undefined, selectedPreset.code as CourseTemplate),
+    [className, selectedPreset.code, windSpeed],
+  )
+  const [courseLengthKm, setCourseLengthKm] = useState(() => recommendedCourseLength('470', 8, undefined, 'O2').kilometres.toFixed(1))
+  const [locationError, setLocationError] = useState<string>()
+  const [coastCheck, setCoastCheck] = useState<{ pathKey: string; assessment: CoastClearanceAssessment }>({
+    pathKey: '',
+    assessment: { status: 'unavailable' },
+  })
+  const [coastAdjustment, setCoastAdjustment] = useState<string>()
+  const [relocatingCourse, setRelocatingCourse] = useState(false)
+  const coastRequestRef = useRef(0)
+  const automaticAdjustmentKeyRef = useRef<string | undefined>(undefined)
   const parsedPosition = useMemo<LngLat | undefined>(() => {
     const lng = Number(longitude)
     const lat = Number(latitude)
@@ -49,6 +69,14 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
     targetLengthMetres: Math.max(500, Number(courseLengthKm) * 1_000 || recommendation.kilometres * 1_000),
   }), [className, courseLengthKm, lowerGate, parsedPosition, recommendation.kilometres, selectedPreset.code, windDirection, windSpeed])
   const marks = useMemo(() => buildPreEventCourseMarks(plan), [plan])
+  const coursePath = useMemo(() => coursePathForMarks(marks, selectedPreset.route), [marks, selectedPreset.route])
+  const coursePathKey = useMemo(() => coursePath.map((position) => position.join(',')).join('|'), [coursePath])
+  const coastClearance: CoastClearanceAssessment | { status: 'checking' } = coastCheck.pathKey === coursePathKey
+    ? coastCheck.assessment
+    : { status: 'checking' }
+  const enteredTotalKilometres = Math.max(0.5, Number(courseLengthKm) || recommendation.kilometres)
+  const plannedFirstLegKilometres = enteredTotalKilometres / courseLegDivisor(selectedPreset.code as CourseTemplate, className)
+  const canIssueEvent = Boolean(parsedPosition && coastClearance.status === 'safe' && !relocatingCourse)
 
   const changeClass = (nextClass: SailingClass) => {
     const nextCode = normalizeCoursePresetCode(nextClass, courseCode)
@@ -56,19 +84,20 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
     setClassName(nextClass)
     setCourseCode(nextCode)
     setLowerGate(preset.route.some((point) => point.includes('S/')))
-    setCourseLengthKm(recommendedCourseLength(nextClass, windSpeed).kilometres.toFixed(1))
+    setCourseLengthKm(recommendedCourseLength(nextClass, windSpeed, undefined, preset.code as CourseTemplate).kilometres.toFixed(1))
   }
 
   const changeCourse = (nextCode: CoursePresetCode) => {
     const preset = coursePresetForClass(className, nextCode)
     setCourseCode(nextCode)
     setLowerGate(preset.route.some((point) => point.includes('S/')))
+    setCourseLengthKm(recommendedCourseLength(className, windSpeed, undefined, preset.code as CourseTemplate).kilometres.toFixed(1))
   }
 
   const changeWindSpeed = (nextSpeed: number) => {
     const normalized = Math.min(40, Math.max(1, nextSpeed))
     setWindSpeed(normalized)
-    setCourseLengthKm(recommendedCourseLength(className, normalized).kilometres.toFixed(1))
+    setCourseLengthKm(recommendedCourseLength(className, normalized, undefined, selectedPreset.code as CourseTemplate).kilometres.toFixed(1))
   }
 
   const setSignalPosition = (position: LngLat) => {
@@ -91,6 +120,65 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
     if (controlsRef.current) controlsRef.current.scrollTop = 0
   }
 
+  const courseGeometryAtSignalPosition = useCallback((signalBoatPosition: LngLat) => {
+    const positionedMarks = buildPreEventCourseMarks({ ...plan, signalBoatPosition })
+    return {
+      path: coursePathForMarks(positionedMarks, selectedPreset.route),
+      additionalPoints: positionedMarks.map((mark) => mark.target),
+    }
+  }, [plan, selectedPreset.route])
+
+  const relocateCourseOffshore = useCallback(async () => {
+    if (!parsedPosition || relocatingCourse) return
+    setRelocatingCourse(true)
+    setCoastAdjustment(undefined)
+    const result = await findCoastClearSignalPosition(
+      parsedPosition,
+      courseGeometryAtSignalPosition,
+      MINIMUM_COAST_CLEARANCE_METRES,
+    )
+    setRelocatingCourse(false)
+    if (result.assessment.status === 'safe' && result.movedMetres > 0) {
+      setCoastAdjustment(`陸岸から300m以上確保するため、本船予定位置を沖へ約${Math.round(result.movedMetres)}m移動しました。`)
+      setSignalPosition(result.position)
+      return
+    }
+    setCoastCheck({ pathKey: coursePathKey, assessment: result.assessment })
+  }, [courseGeometryAtSignalPosition, coursePathKey, parsedPosition, relocatingCourse])
+
+  useEffect(() => {
+    const requestId = ++coastRequestRef.current
+    const timer = window.setTimeout(() => {
+      void assessCoastClearance(
+        coursePath,
+        MINIMUM_COAST_CLEARANCE_METRES,
+        fetch,
+        marks.map((mark) => mark.target),
+      ).then((assessment) => {
+        if (coastRequestRef.current === requestId) setCoastCheck({ pathKey: coursePathKey, assessment })
+      })
+    }, 220)
+    return () => window.clearTimeout(timer)
+  }, [coursePath, coursePathKey, marks])
+
+  useEffect(() => {
+    if (coastClearance.status !== 'unsafe' || !parsedPosition || relocatingCourse) return
+    const adjustmentKey = [parsedPosition.join(','), selectedPreset.code, windDirection, courseLengthKm, lowerGate].join('|')
+    if (automaticAdjustmentKeyRef.current === adjustmentKey) return
+    automaticAdjustmentKeyRef.current = adjustmentKey
+    void relocateCourseOffshore()
+  }, [coastClearance.status, courseLengthKm, lowerGate, parsedPosition, relocateCourseOffshore, relocatingCourse, selectedPreset.code, windDirection])
+
+  const coastClearanceDisplay = relocatingCourse
+    ? { status: 'checking' as const, label: '300m確保へ沖側に補正中' }
+    : coastClearance.status === 'safe'
+      ? { status: 'safe' as const, label: '陸岸から300m以上' }
+      : coastClearance.status === 'unsafe'
+        ? { status: 'unsafe' as const, label: `陸岸まで約${Math.round(coastClearance.minimumMetres)}m` }
+        : coastClearance.status === 'unavailable'
+          ? { status: 'unavailable' as const, label: '離岸距離を確認できません' }
+          : { status: 'checking' as const, label: '陸岸からの距離を確認中' }
+
   return (
     <main className="pre-event-shell">
       <header className="pre-event-header">
@@ -100,7 +188,7 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
         </div>
         <div className="pre-event-header__actions">
           <button type="button" aria-label="参加・作成済みの大会を開く" onClick={onOpenEvents}><LogIn size={17} />参加・作成済みの大会</button>
-          <button type="button" className="is-primary" aria-label="大会URLを発行" onClick={() => onIssueEvent(plan)}><Sailboat size={17} />大会URLを発行</button>
+          <button type="button" className="is-primary" aria-label="大会URLを発行" disabled={!canIssueEvent} onClick={() => onIssueEvent(plan)}><Sailboat size={17} />大会URLを発行</button>
         </div>
       </header>
 
@@ -114,7 +202,7 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
           <div className="pre-event-mobile-overview" aria-label="現在の設定概要">
             <span><small>艇種・コース</small><strong>{className}・{selectedPreset.displayCode}</strong></span>
             <span><small>風</small><strong>{windDirection}°T・{windSpeed.toFixed(1)}kt</strong></span>
-            <span><small>コース長</small><strong>{Number(courseLengthKm || recommendation.kilometres).toFixed(1)}km</strong></span>
+            <span><small>第1レグ</small><strong>{plannedFirstLegKilometres.toFixed(2)}km</strong></span>
           </div>
 
           <nav className="pre-event-mobile-tabs" aria-label="設定する項目">
@@ -138,13 +226,19 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
           </section>
 
           <section className={`pre-event-step-panel ${mobileStep === 'position' ? 'is-mobile-active' : ''}`} data-mobile-panel="position">
-            <header><b>2</b><span><strong>本部船の位置</strong><small>スタートラインのRC側です</small></span></header>
+            <header><b>2</b><span><strong>本部船の位置</strong><small>風上を向いて右側・スターボード端</small></span></header>
             <button type="button" className="pre-event-location" onClick={useCurrentLocation}><LocateFixed size={16} />スマホの現在地を使う</button>
             <div className="pre-event-field-grid">
               <label><span>経度</span><input aria-label="本部船の経度" type="number" inputMode="decimal" step="0.0000001" value={longitude} onChange={(event) => setLongitude(event.target.value)} /></label>
               <label><span>緯度</span><input aria-label="本部船の緯度" type="number" inputMode="decimal" step="0.0000001" value={latitude} onChange={(event) => setLatitude(event.target.value)} /></label>
             </div>
             {locationError && <p className="pre-event-error" role="alert">{locationError}</p>}
+            <div className={`pre-event-coast-safety is-${coastClearanceDisplay.status}`} role="status">
+              <span>{coastClearanceDisplay.status === 'safe' ? <CheckCircle2 size={17} /> : coastClearanceDisplay.status === 'unsafe' || coastClearanceDisplay.status === 'unavailable' ? <AlertTriangle size={17} /> : <ShieldCheck size={17} />}</span>
+              <div><strong>{coastClearanceDisplay.label}</strong><small>国土地理院データで全レグを確認・海図と現場確認は別途必須</small></div>
+              {coastClearance.status === 'unsafe' && !relocatingCourse && <button type="button" onClick={() => void relocateCourseOffshore()}>沖へ自動移動</button>}
+            </div>
+            {coastAdjustment && <p className="pre-event-coast-adjustment">{coastAdjustment}</p>}
           </section>
 
           <section className={`pre-event-step-panel ${mobileStep === 'wind' ? 'is-mobile-active' : ''}`} data-mobile-panel="wind">
@@ -157,12 +251,18 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
           </section>
 
           <section className={`pre-event-result pre-event-step-panel ${mobileStep === 'wind' ? 'is-mobile-active' : ''}`} data-mobile-panel="wind-result">
-            <span>艇種・風速からの推奨コース長</span>
-            <strong>{recommendation.kilometres.toFixed(1)} km</strong>
-            <small>{recommendation.nauticalMiles.toFixed(2)} NM・目標時間 {CLASS_PROFILES.find((profile) => profile.className === className)?.targetMinutes}分</small>
-            <label className="pre-event-length"><span>地図に使うコース長（km）</span><input type="number" min="0.5" max="30" step="0.1" value={courseLengthKm} onChange={(event) => setCourseLengthKm(event.target.value)} /></label>
-            <button type="button" className="pre-event-use-recommendation" onClick={() => setCourseLengthKm(recommendation.kilometres.toFixed(1))}>推奨 {recommendation.kilometres.toFixed(1)} km に戻す</button>
-            <button type="button" disabled={!parsedPosition} onClick={() => onIssueEvent(plan)}><Sailboat size={18} />この配置を引き継いで大会URLを発行</button>
+            <span>艇種・風速・コース別の推奨第1レグ</span>
+            <strong>{recommendation.firstLegKilometres.toFixed(2)} km</strong>
+            <small>{recommendation.firstLegNauticalMiles.toFixed(2)} NM・目標時間 {CLASS_PROFILES.find((profile) => profile.className === className)?.targetMinutes}分</small>
+            <dl className="pre-event-speed-breakdown" aria-label="推奨距離の計算内訳">
+              <div><dt>クローズVMG</dt><dd>{recommendation.legSpeedsKnots.closeHauledVmg.toFixed(1)} kt <small>{Math.round(recommendation.legDistanceShare.closeHauled * 100)}%</small></dd></div>
+              <div><dt>リーチ艇速</dt><dd>{recommendation.legSpeedsKnots.reach.toFixed(1)} kt <small>{Math.round(recommendation.legDistanceShare.reach * 100)}%</small></dd></div>
+              <div><dt>フリーVMG</dt><dd>{recommendation.legSpeedsKnots.downwindVmg.toFixed(1)} kt <small>{Math.round(recommendation.legDistanceShare.downwind * 100)}%</small></dd></div>
+            </dl>
+            <p className="pre-event-total-distance"><span>推定総航程</span><b>{recommendation.kilometres.toFixed(1)} km / {recommendation.nauticalMiles.toFixed(2)} NM</b><small>スタートからフィニッシュまで艇が帆走する概算距離</small></p>
+            <label className="pre-event-length"><span>地図に使う推定総航程（km）</span><input type="number" min="0.5" max="30" step="0.1" value={courseLengthKm} onChange={(event) => setCourseLengthKm(event.target.value)} /></label>
+            <button type="button" className="pre-event-use-recommendation" onClick={() => setCourseLengthKm(recommendation.kilometres.toFixed(1))}>推奨総航程 {recommendation.kilometres.toFixed(1)} km に戻す</button>
+            <button type="button" disabled={!canIssueEvent} onClick={() => onIssueEvent(plan)}><Sailboat size={18} />この配置を引き継いで大会URLを発行</button>
           </section>
         </aside>
 
@@ -172,13 +272,14 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
           signalBoatPosition={plan.signalBoatPosition}
           windDirection={windDirection}
           windSpeed={windSpeed}
+          coastClearance={coastClearanceDisplay}
           onSignalBoatPositionChange={setSignalPosition}
         />
       </div>
 
       <footer className="pre-event-mobile-action">
-        <span><small>{className}・{selectedPreset.displayCode}・{lowerGate ? 'ゲートあり' : 'ゲートなし'}</small><strong>{Number(courseLengthKm || recommendation.kilometres).toFixed(1)} km</strong></span>
-        <button type="button" disabled={!parsedPosition} onClick={() => onIssueEvent(plan)}><Sailboat size={18} />大会URLを発行</button>
+        <span><small>{className}・{selectedPreset.displayCode}・総航程{enteredTotalKilometres.toFixed(1)}km</small><strong>第1レグ {plannedFirstLegKilometres.toFixed(2)} km</strong></span>
+        <button type="button" disabled={!canIssueEvent} onClick={() => onIssueEvent(plan)}><Sailboat size={18} />大会URLを発行</button>
       </footer>
     </main>
   )

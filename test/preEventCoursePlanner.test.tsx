@@ -1,9 +1,15 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { PreEventCoursePlanner } from '../src/components/PreEventCoursePlanner'
+import { recommendedCourseLength } from '../src/course'
+
+vi.mock('../src/coastClearance', () => ({
+  assessCoastClearance: vi.fn().mockResolvedValue({ status: 'safe', minimumMetres: 300 }),
+  findCoastClearSignalPosition: vi.fn(),
+}))
 
 describe('PreEventCoursePlanner mobile navigation', () => {
-  it('separates the setup into course, position, and wind panels while keeping issuance available', () => {
+  it('separates the setup into course, position, and wind panels while keeping issuance available', async () => {
     const onIssueEvent = vi.fn()
     const { container } = render(
       <PreEventCoursePlanner onIssueEvent={onIssueEvent} onOpenEvents={vi.fn()} />,
@@ -26,14 +32,16 @@ describe('PreEventCoursePlanner mobile navigation', () => {
 
     fireEvent.change(screen.getByRole('spinbutton', { name: '風速（kt）' }), { target: { value: '4' } })
     expect(screen.getByLabelText('現在の設定概要')).toHaveTextContent('350°T・4.0kt')
-    expect(screen.getByLabelText('現在の設定概要')).toHaveTextContent('6.3km')
+    expect(screen.getByLabelText('現在の設定概要')).toHaveTextContent('第1レグ')
 
-    fireEvent.click(screen.getAllByRole('button', { name: '大会URLを発行' }).at(-1)!)
+    const issueButton = screen.getAllByRole('button', { name: '大会URLを発行' }).at(-1)!
+    await waitFor(() => expect(issueButton).toBeEnabled())
+    fireEvent.click(issueButton)
     expect(onIssueEvent).toHaveBeenCalledWith(expect.objectContaining({
       className: '470',
       courseCode: 'O2',
       windSpeed: 4,
-      targetLengthMetres: 6_300,
+      targetLengthMetres: Number(recommendedCourseLength('470', 4, undefined, 'O2').kilometres.toFixed(1)) * 1_000,
     }))
   })
 })

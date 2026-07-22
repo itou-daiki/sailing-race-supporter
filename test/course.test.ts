@@ -29,6 +29,23 @@ describe('course calculations', () => {
     const longRace = recommendedCourseLength('470', 8, 50)
     expect(longRace.nauticalMiles).toBeGreaterThan(shortRace.nauticalMiles)
     expect(longRace.confidence).toBe('low')
+    expect(longRace.firstLegKilometres).toBeCloseTo(longRace.kilometres / 5.03, 6)
+    expect(longRace.legSpeedsKnots.closeHauledVmg).toBeCloseTo(5.1, 6)
+    expect(longRace.legSpeedsKnots.reach).toBeCloseTo(7.3, 6)
+    expect(longRace.legSpeedsKnots.downwindVmg).toBeCloseTo(6.6, 6)
+    expect(
+      longRace.legDistanceShare.closeHauled + longRace.legDistanceShare.reach + longRace.legDistanceShare.downwind,
+    ).toBeCloseTo(1, 6)
+  })
+
+  it('uses the real point-of-sail mix for reach-heavy and windward-leeward routes', () => {
+    const triangle = recommendedCourseLength('スナイプ', 8, undefined, 'T2')
+    const windwardLeeward = recommendedCourseLength('スナイプ', 8, undefined, 'W2')
+
+    expect(triangle.legDistanceShare.reach).toBeGreaterThan(0.6)
+    expect(windwardLeeward.legDistanceShare.reach).toBeLessThan(0.1)
+    expect(triangle.firstLegKilometres).toBeCloseTo(triangle.kilometres / 5.44, 6)
+    expect(windwardLeeward.firstLegKilometres).toBeCloseTo(windwardLeeward.kilometres / 4.22, 6)
   })
 
   it('keeps a decided start line and recommends marks from its midpoint', () => {
@@ -50,7 +67,7 @@ describe('course calculations', () => {
     const mark1 = plan.find((node) => node.key === 'mark-1')
     expect(mark1).toBeDefined()
     expect(bearingDegrees(midpoint(pin, signal), mark1!.target)).toBeCloseTo(0, 1)
-    expect(distanceMetres(midpoint(pin, signal), mark1!.target)).toBeCloseTo(1_000, -1)
+    expect(distanceMetres(midpoint(pin, signal), mark1!.target)).toBeCloseTo(5_400 / 5.03, -1)
   })
 
   it('places the O2 lower gate below mark 2 so the map forms an outer trapezoid', () => {
@@ -66,10 +83,13 @@ describe('course calculations', () => {
     })
     const mark1 = plan.find((node) => node.key === 'mark-1')!
     const mark2 = plan.find((node) => node.key === 'mark-2')!
+    const startPin = plan.find((node) => node.key === 'start-pin')!
+    const startRc = plan.find((node) => node.key === 'start-rc')!
     const gateMarks = plan.filter((node) => node.key === 'mark-3s' || node.key === 'mark-3p')
     const gateCenter = midpoint(gateMarks[0].target, gateMarks[1].target)
 
-    expect(bearingDegrees(mark1.target, mark2.target)).toBeCloseTo(120, 1)
+    expect(bearingDegrees(mark1.target, mark2.target)).toBeCloseTo(240, 1)
+    expect(bearingDegrees(startPin.target, startRc.target)).toBeCloseTo(90, 1)
     expect(bearingDegrees(mark2.target, gateCenter)).toBeCloseTo(180, 1)
     expect(distanceMetres(mark2.target, gateCenter)).toBeGreaterThan(850)
     expect(distanceMetres(start, gateCenter)).toBeGreaterThan(500)
@@ -169,7 +189,7 @@ describe('course calculations', () => {
       lowerGate: true,
       upperGate: false,
     })
-    expect(bearingDegrees(mark1.target, mark2.target)).toBeCloseTo(110, 1)
+    expect(bearingDegrees(mark1.target, mark2.target)).toBeCloseTo(230, 1)
     expect(mark2.target).toEqual(outer.find((node) => node.key === 'mark-2')!.target)
     expect(mark3.target).toEqual(outer.find((node) => node.key === 'mark-3p')!.target)
   })

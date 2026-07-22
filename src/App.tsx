@@ -674,7 +674,7 @@ export default function App() {
       const preview = generateCoursePlan({
         center: fallbackCenter,
         windDirection: courseWindDirection,
-        totalLengthMetres: recommendedCourseLength(activeRace.className, courseWindSpeed, activeRace.targetMinutes).kilometres * 1_000,
+        totalLengthMetres: recommendedCourseLength(activeRace.className, courseWindSpeed, activeRace.targetMinutes, activeCoursePreset.code as CourseTemplate).kilometres * 1_000,
         courseCode: activeCoursePreset.code as CourseTemplate,
         className: activeRace.className,
         lowerGate: activeCoursePreset.route.some((point) => point.includes('S/')),
@@ -711,7 +711,7 @@ export default function App() {
     note: draftMarkCorrection.note,
     committeeBoatId: draftMarkCorrection.committeeBoatId,
   } : undefined)
-  const recommendation = recommendedCourseLength(selectedClass, courseWindSpeed)
+  const recommendation = recommendedCourseLength(selectedClass, courseWindSpeed, activeRace.targetMinutes, selectedCoursePreset.code as CourseTemplate)
   const startPinMark = marks.find((mark) => mark.label === 'スタート・ピン')
   const startSignalMark = marks.find((mark) => mark.label === 'シグナルボート')
   const recordedStartEndpoints = Number(Boolean(startPinMark?.actual)) + Number(Boolean(startSignalMark?.actual))
@@ -1952,12 +1952,12 @@ export default function App() {
               onClick={() => setCourseAdvisorExpanded((current) => !current)}
             >
               <SlidersHorizontal size={17} />
-              <span><small>推奨コース長</small><strong>{recommendation.kilometres.toFixed(1)} km <em>{selectedClass}・計算風 {formatWindSpeedDual(courseWindSpeed)}</em></strong></span>
+              <span><small>推奨第1レグ</small><strong>{recommendation.firstLegKilometres.toFixed(2)} km <em>{selectedClass}・計算風 {formatWindSpeedDual(courseWindSpeed)}</em></strong></span>
               <ChevronDown size={17} />
             </button>
             <div className="course-advisor__title">
               <SlidersHorizontal size={16} />
-              <span><small>目標時間から算出</small><strong>推奨コース長</strong></span>
+              <span><small>目標時間と選択コースから算出</small><strong>推奨第1レグ</strong></span>
             </div>
             <label>
               <span>クラス</span>
@@ -1971,8 +1971,8 @@ export default function App() {
               <small>実測共有は地図の「風を記録」から</small>
             </label>
             <div className="course-advisor__result">
-              <strong>{recommendation.kilometres.toFixed(1)} km</strong>
-              <span>{recommendation.nauticalMiles.toFixed(2)} NM・暫定/低信頼</span>
+              <strong>{recommendation.firstLegKilometres.toFixed(2)} km</strong>
+              <span>{recommendation.firstLegNauticalMiles.toFixed(2)} NM・総航程 {recommendation.kilometres.toFixed(1)} km・暫定/低信頼</span>
             </div>
             <button type="button" onClick={openCourseSettings}><Settings2 size={16} /> 詳細設定</button>
           </div>

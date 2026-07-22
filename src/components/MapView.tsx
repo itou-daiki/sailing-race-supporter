@@ -12,6 +12,7 @@ import {
   Navigation,
   PencilLine,
   Radio,
+  ShieldCheck,
   Timer,
   Waves,
   Wind,
@@ -34,6 +35,7 @@ import {
 import { formatTrueBearing } from '../../shared/trueBearing'
 import { GSI_MAP_STYLE } from '../mapStyle'
 import { assignWindReadingsToMarks, formatWindSpeedDual } from '../markWind'
+import { assessCoastClearance, type CoastClearanceAssessment } from '../coastClearance'
 
 interface MapViewProps {
   marks: readonly CourseMark[]
@@ -186,6 +188,26 @@ export function MapView({
   const [mapPlacementMarkId, setMapPlacementMarkId] = useState<string>()
   const [pendingMapPosition, setPendingMapPosition] = useState<LngLat>()
   const features = useMemo(() => buildCourseFeatures(marks, courseRoute), [courseRoute, marks])
+  const coastPath = useMemo(() => {
+    const feature = features.course.features[0]
+    return feature?.geometry.coordinates.map((coordinate) => [coordinate[0], coordinate[1]] as LngLat) ?? []
+  }, [features.course.features])
+  const coastAdditionalPoints = useMemo(
+    () => features.points.features.map((feature) => [feature.geometry.coordinates[0], feature.geometry.coordinates[1]] as LngLat),
+    [features.points.features],
+  )
+  const coastPathKey = useMemo(
+    () => [...coastPath, ...coastAdditionalPoints].map((position) => position.join(',')).join('|'),
+    [coastAdditionalPoints, coastPath],
+  )
+  const [coastCheck, setCoastCheck] = useState<{ pathKey: string; assessment: CoastClearanceAssessment }>({
+    pathKey: '',
+    assessment: { status: 'unavailable' },
+  })
+  const coastRequestRef = useRef(0)
+  const coastClearance: CoastClearanceAssessment | { status: 'checking' } = coastCheck.pathKey === coastPathKey
+    ? coastCheck.assessment
+    : { status: 'checking' }
   const markWindReadings = useMemo(() => assignWindReadingsToMarks(marks, markWinds), [markWinds, marks])
   const initialFeaturesRef = useRef(features)
   const initialCenterRef = useRef<LngLat>(raceAreaCenter ?? marks[0]?.actual ?? marks[0]?.target ?? [131.5221959, 33.2786648])
@@ -242,6 +264,16 @@ export function MapView({
   }, [])
 
   useEffect(() => {
+    const requestId = ++coastRequestRef.current
+    const timer = window.setTimeout(() => {
+      void assessCoastClearance(coastPath, 300, fetch, coastAdditionalPoints).then((assessment) => {
+        if (coastRequestRef.current === requestId) setCoastCheck({ pathKey: coastPathKey, assessment })
+      })
+    }, 250)
+    return () => window.clearTimeout(timer)
+  }, [coastAdditionalPoints, coastPath, coastPathKey])
+
+  useEffect(() => {
     if (!containerRef.current || mapRef.current) return
 
     const map = new maplibregl.Map({
@@ -271,6 +303,19 @@ export function MapView({
       map.addSource('target-links', { type: 'geojson', data: initialFeaturesRef.current.targetLinks })
       map.addSource('course-route', { type: 'geojson', data: initialFeaturesRef.current.course })
       map.addSource('gate-lines', { type: 'geojson', data: initialFeaturesRef.current.gates })
+      map.addSource('start-line', { type: 'geojson', data: initialFeaturesRef.current.startLine })
+      map.addLayer({
+        id: 'start-line-casing',
+        type: 'line',
+        source: 'start-line',
+        paint: { 'line-color': '#ffffff', 'line-width': 8, 'line-opacity': 0.95 },
+      })
+      map.addLayer({
+        id: 'start-line-main',
+        type: 'line',
+        source: 'start-line',
+        paint: { 'line-color': '#ff6b00', 'line-width': 5, 'line-opacity': 1 },
+      })
       map.addLayer({
         id: 'gate-width-line',
         type: 'line',
@@ -377,6 +422,7 @@ export function MapView({
     ;(map.getSource('target-links') as GeoJSONSource | undefined)?.setData(features.targetLinks)
     ;(map.getSource('course-route') as GeoJSONSource | undefined)?.setData(features.course)
     ;(map.getSource('gate-lines') as GeoJSONSource | undefined)?.setData(features.gates)
+    ;(map.getSource('start-line') as GeoJSONSource | undefined)?.setData(features.startLine)
   }, [features, mapReady])
 
   useEffect(() => {
@@ -681,7 +727,14 @@ export function MapView({
         <span><i className="legend-verification" /> 位置確認</span>
         <span><i className="legend-recovery" /> 回収地点</span>
         <span><i className="legend-gate-center" /> ゲート中央</span>
-        <span><Navigation size={13} /> 運営ボート</span>
+        <span className="map-legend-boats"><Navigation size={13} /> 運営ボート</span>
+        <span className={`map-coast-clearance is-${coastClearance.status}`}>
+          {coastClearance.status === 'safe' ? <ShieldCheck size={13} /> : <AlertTriangle size={13} />}
+          {coastClearance.status === 'safe'
+            ? '離岸300m以上'
+            : coastClearance.status === 'unsafe' ? `離岸 約${Math.round(coastClearance.minimumMetres)}m・要修正`
+              : coastClearance.status === 'unavailable' ? '離岸距離 未確認' : '離岸距離 確認中'}
+        </span>
       </div>
 
       <div className="map-mark-strip" aria-label="マーク一覧">

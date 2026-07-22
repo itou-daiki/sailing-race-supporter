@@ -449,6 +449,71 @@ select:focus-visible {
   font-size: 9px;
 }
 
+.pre-event-coast-safety {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  margin-top: 9px;
+  padding: 8px;
+  color: #2c607b;
+  background: #eef8fd;
+  border: 1px solid #bcd9e8;
+  border-radius: 9px;
+}
+
+.pre-event-coast-safety > span {
+  display: grid;
+  place-items: center;
+}
+
+.pre-event-coast-safety > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pre-event-coast-safety strong {
+  font-size: 9px;
+}
+
+.pre-event-coast-safety small {
+  color: var(--muted);
+  font-size: 7px;
+}
+
+.pre-event-coast-safety.is-safe {
+  color: #087452;
+  background: #ebfaf4;
+  border-color: #9edbc7;
+}
+
+.pre-event-coast-safety.is-unsafe,
+.pre-event-coast-safety.is-unavailable {
+  color: #9b4b00;
+  background: #fff6e8;
+  border-color: #edc583;
+}
+
+.pre-event-coast-safety button {
+  min-height: 32px;
+  padding: 0 8px;
+  color: #fff;
+  background: #c65c00;
+  border: 0;
+  border-radius: 7px;
+  font-size: 8px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.pre-event-coast-adjustment {
+  margin: 6px 0 0;
+  color: #087452;
+  font-size: 8px;
+  font-weight: 750;
+}
+
 .pre-event-wind-slider {
   display: flex;
   align-items: center;
@@ -493,9 +558,66 @@ select:focus-visible {
   font-size: 22px;
 }
 
+.pre-event-speed-breakdown {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  margin: 7px 0 0;
+}
+
+.pre-event-speed-breakdown div {
+  min-width: 0;
+  padding: 6px 7px;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid #c8e0ee;
+  border-radius: 8px;
+}
+
+.pre-event-speed-breakdown dt {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 7px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pre-event-speed-breakdown dd {
+  margin: 2px 0 0;
+  color: #124b6d;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.pre-event-speed-breakdown dd small {
+  color: var(--muted);
+  font-size: 7px;
+}
+
 .pre-event-result .pre-event-length {
   grid-column: 1 / -1;
   margin-top: 7px;
+}
+
+.pre-event-total-distance {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  margin: 7px 0 0;
+  padding: 7px 8px;
+  color: #315f78;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid #c8e0ee;
+  border-radius: 8px;
+  font-size: 9px;
+}
+
+.pre-event-total-distance small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 7px;
 }
 
 .pre-event-result > button {
@@ -570,6 +692,35 @@ select:focus-visible {
   border-left: 1px solid #cbdde8;
 }
 
+.pre-event-map__clearance {
+  position: absolute;
+  z-index: 4;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 9px;
+  color: #245f7e;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid #b7d4e4;
+  border-radius: 9px;
+  box-shadow: var(--shadow);
+  font-size: 9px;
+  backdrop-filter: blur(8px);
+}
+
+.pre-event-map__clearance.is-safe {
+  color: #087452;
+  border-color: #8fd1bb;
+}
+
+.pre-event-map__clearance.is-unsafe,
+.pre-event-map__clearance.is-unavailable {
+  color: #a54e00;
+  border-color: #e4b365;
+}
+
 .pre-event-map__hint {
   position: absolute;
   z-index: 4;
@@ -621,6 +772,10 @@ select:focus-visible {
   border-color: #fff;
   border-radius: 12px;
   cursor: grab;
+}
+
+.pre-event-map-mark.is-start-pin {
+  border-color: #ff6b00;
 }
 
 .pre-event-map-mark.is-signal-boat span {
@@ -1619,6 +1774,16 @@ select:focus-visible {
   font-size: 9px;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.map-legend .map-coast-clearance.is-safe {
+  color: #087452;
+}
+
+.map-legend .map-coast-clearance.is-unsafe,
+.map-legend .map-coast-clearance.is-unavailable {
+  color: #a54e00;
+  font-weight: 850;
 }
 
 .legend-target,
@@ -8860,7 +9025,7 @@ select:focus-visible {
 
   .map-weather .freshness,
   .map-topbar__primary .eyebrow,
-  .map-legend span:last-child {
+  .map-legend .map-legend-boats {
     display: none;
   }
 
@@ -9794,6 +9959,15 @@ select:focus-visible {
     border-left: 1px solid #cbdde8;
   }
 
+  .pre-event-map__clearance {
+    top: 46px;
+    right: auto;
+    left: 8px;
+    max-width: calc(100% - 16px);
+    padding: 5px 7px;
+    font-size: 8px;
+  }
+
   .pre-event-map__hint {
     right: 8px;
     bottom: 8px;
@@ -9956,6 +10130,19 @@ select:focus-visible {
   .pre-event-length input {
     min-height: 44px;
     font-size: 12px;
+  }
+
+  .pre-event-coast-safety {
+    padding: 9px;
+  }
+
+  .pre-event-coast-safety strong {
+    font-size: 10px;
+  }
+
+  .pre-event-coast-safety button {
+    min-height: 38px;
+    font-size: 9px;
   }
 
   .pre-event-course-summary span {

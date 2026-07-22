@@ -157,13 +157,13 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
   const preset = coursePresetForClass(className, courseCode)
   const lowerGate = body.lowerGate ?? preset.route.some((point) => point.includes('S/'))
   const recommendedLengthMetres = Math.round(
-    recommendedCourseLength(className as SupportedSailingClass, windSpeed).kilometres * 1_000,
+    recommendedCourseLength(className as SupportedSailingClass, windSpeed, undefined, courseCode as CourseTemplate).kilometres * 1_000,
   )
   const targetLengthMetres = typeof body.targetLengthMetres === 'number' && Number.isFinite(body.targetLengthMetres)
     ? Math.round(Math.min(30_000, Math.max(500, body.targetLengthMetres)))
     : recommendedLengthMetres
   const courseTemplate = courseCode as CourseTemplate
-  const startLineLength = recommendedStartLineLength(targetLengthMetres, courseTemplate)
+  const startLineLength = recommendedStartLineLength(targetLengthMetres, courseTemplate, className)
   const startPin = destinationPoint(signalBoatPosition, startLineLength, windDirection - 90)
   const initialCoursePlan = generateCoursePlan({
     center,

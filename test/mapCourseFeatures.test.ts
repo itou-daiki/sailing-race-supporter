@@ -60,6 +60,10 @@ describe('course map geometry', () => {
     ]
 
     const features = buildCourseFeatures(marks, ['Start', '1', '2', '3S/3P', '2', '3P', 'Finish'])
+    expect(features.startLine.features[0].geometry.coordinates).toEqual([
+      [131.520, 33.278],
+      [131.524, 33.278],
+    ])
     expect(features.course.features[0].geometry.coordinates).toEqual([
       [131.522, 33.278],
       [131.522, 33.29],

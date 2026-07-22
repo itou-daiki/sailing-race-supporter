@@ -44,22 +44,27 @@ export function destinationPoint(origin: CoursePosition, distance: number, beari
   return [toDegrees(targetLongitude), toDegrees(targetLatitude)]
 }
 
-export function courseLegDivisor(courseCode: CourseTemplate): number {
-  if (courseCode === 'O2' || courseCode === 'I2') return 5.4
-  if (courseCode === 'トライアングル') return 4.2
-  if (courseCode === 'T2' || courseCode === 'L3') return 6
-  return 4
+export function courseLegDivisor(courseCode: CourseTemplate, className?: string): number {
+  // These ratios follow the actual generated route. They convert the estimated
+  // start-to-finish sailing distance into the first windward-leg length.
+  if (courseCode === 'O2') return className === 'スナイプ' ? 4.58 : 5.03
+  if (courseCode === 'I2') return 5.03
+  if (courseCode === 'L2') return 3.82
+  if (courseCode === 'L3') return 5.64
+  if (courseCode === 'W2') return 4.22
+  if (courseCode === 'T2') return 5.44
+  return 2.86
 }
 
-export function recommendedStartLineLength(totalLengthMetres: number, courseCode: CourseTemplate): number {
-  const leg = totalLengthMetres / courseLegDivisor(courseCode)
+export function recommendedStartLineLength(totalLengthMetres: number, courseCode: CourseTemplate, className?: string): number {
+  const leg = totalLengthMetres / courseLegDivisor(courseCode, className)
   return Math.min(600, Math.max(180, leg * 0.35))
 }
 
 export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
   const wind = ((input.windDirection % 360) + 360) % 360
   const center = input.startLine ? geodesicMidpoint(input.startLine.pin, input.startLine.signal) : input.center
-  const leg = Math.min(3_000, Math.max(250, input.totalLengthMetres / courseLegDivisor(input.courseCode)))
+  const leg = Math.min(3_000, Math.max(250, input.totalLengthMetres / courseLegDivisor(input.courseCode, input.className)))
   const gateWidth = input.gateWidthMetres ?? Math.min(180, Math.max(70, leg * 0.12))
   const lineLength = input.startLineLengthMetres ?? Math.min(600, Math.max(180, leg * 0.35))
   const upwind = destinationPoint(center, leg, wind)
@@ -101,7 +106,7 @@ export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
     const offset = destinationPoint(upwind, Math.min(200, leg * 0.18), wind - 90)
     nodes.push({ key: 'mark-1a', label: 'オフセット 1A', nodeType: 'offset', target: offset })
   } else if (!isSnipe && input.courseCode === 'O2') {
-    const mark2 = destinationPoint(upwind, leg * 0.67, wind + 120)
+    const mark2 = destinationPoint(upwind, leg * 0.67, wind - 120)
     lowerRoundingCenter = destinationPoint(mark2, trapezoidRunLength, wind + 180)
     if (input.secondGate) {
       nodes.push(
@@ -113,7 +118,7 @@ export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
     }
   } else if (!isSnipe && input.courseCode === 'I2') {
     pushGateOrSingle('mark-4', '内側ゲート 4', innerGateCenter)
-    const mark2 = destinationPoint(upwind, leg * 0.67, wind + 120)
+    const mark2 = destinationPoint(upwind, leg * 0.67, wind - 120)
     lowerRoundingCenter = destinationPoint(mark2, trapezoidRunLength, wind + 180)
     if (input.secondGate) {
       nodes.push(
@@ -129,7 +134,7 @@ export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
     pushGateOrSingle('mark-4', '内側ゲート 4', innerGateCenter)
     return nodes
   } else if ((isSnipe && (input.courseCode === 'O2' || input.courseCode === 'T2')) || input.courseCode === 'トライアングル') {
-    const mark2 = destinationPoint(upwind, leg * 0.86, wind + 120)
+    const mark2 = destinationPoint(upwind, leg * 0.86, wind - 120)
     if (input.secondGate) {
       nodes.push(
         { key: 'mark-2s', label: '中ゲート 2S', nodeType: 'gate', target: destinationPoint(mark2, gateWidth / 2, wind - 90) },
@@ -138,7 +143,7 @@ export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
     } else {
       nodes.push({ key: 'mark-2', label: '2マーク', nodeType: 'single', target: mark2 })
     }
-    lowerRoundingCenter = destinationPoint(mark2, leg * 0.86, wind + 240)
+    lowerRoundingCenter = destinationPoint(mark2, leg * 0.86, wind + 120)
   }
 
   pushGateOrSingle('mark-3', '下ゲート 3', lowerRoundingCenter)

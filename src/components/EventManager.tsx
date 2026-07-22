@@ -61,7 +61,7 @@ import { exportLocalEventData } from '../offlineStore'
 import { CoursePresetPicker } from './CoursePresetPicker'
 import { OwnerRecoveryKitPanel } from './OwnerRecoveryKitPanel'
 import { RaceAreaPicker } from './RaceAreaPicker'
-import { recommendedCourseLength } from '../course'
+import { courseLegDivisor, recommendedCourseLength, type CourseTemplate } from '../course'
 import type { EventCreationPlan } from '../eventClient'
 
 interface EventManagerProps {
@@ -291,18 +291,19 @@ export function EventManager({
     setClassName(nextClass)
     setCourseCode(nextCode)
     setLowerGate(coursePresetForClass(nextClass, nextCode).route.some((point) => point.includes('S/')))
-    setTargetLengthKm(recommendedCourseLength(nextClass, windSpeed).kilometres.toFixed(1))
+    setTargetLengthKm(recommendedCourseLength(nextClass, windSpeed, undefined, nextCode as CourseTemplate).kilometres.toFixed(1))
   }
 
   const changeCourse = (nextCode: string) => {
     setCourseCode(nextCode)
     setLowerGate(coursePresetForClass(className, nextCode).route.some((point) => point.includes('S/')))
+    setTargetLengthKm(recommendedCourseLength(className, windSpeed, undefined, nextCode as CourseTemplate).kilometres.toFixed(1))
   }
 
   const changeWindSpeed = (nextSpeed: number) => {
     const normalized = Math.min(40, Math.max(1, nextSpeed))
     setWindSpeed(normalized)
-    setTargetLengthKm(recommendedCourseLength(className, normalized).kilometres.toFixed(1))
+    setTargetLengthKm(recommendedCourseLength(className, normalized, undefined, courseCode as CourseTemplate).kilometres.toFixed(1))
   }
 
   const changeStartsOn = (nextDate: string) => {
@@ -334,7 +335,7 @@ export function EventManager({
     const enteredTargetLengthKm = Number(targetLengthKm)
     const targetLengthMetres = Number.isFinite(enteredTargetLengthKm) && enteredTargetLengthKm >= 0.5
       ? enteredTargetLengthKm * 1_000
-      : recommendedCourseLength(className, windSpeed).kilometres * 1_000
+      : recommendedCourseLength(className, windSpeed, undefined, courseCode as CourseTemplate).kilometres * 1_000
     try {
       const created = await createEvent({
         name: name.trim(),
@@ -996,7 +997,7 @@ export function EventManager({
                   <div className="event-form-grid">
                     <label className="event-field"><span>初期風向（°T）</span><input type="number" min="0" max="359" value={windDirection} onChange={(event) => setWindDirection(Math.min(359, Math.max(0, Number(event.target.value))))} /></label>
                     <label className="event-field"><span>初期風速（kt）</span><input type="number" min="1" max="40" step="0.1" value={windSpeed} onChange={(event) => changeWindSpeed(Number(event.target.value))} /></label>
-                    <label className="event-field"><span>初期コース長（km）</span><input type="number" min="0.5" max="30" step="0.1" value={targetLengthKm} onChange={(event) => setTargetLengthKm(event.target.value)} /><small>艇種と風速からの推奨値を初期入力</small></label>
+                    <label className="event-field"><span>初期推定総航程（km）</span><input type="number" min="0.5" max="30" step="0.1" value={targetLengthKm} onChange={(event) => setTargetLengthKm(event.target.value)} /><small>第1レグ 約{(Number(targetLengthKm) / courseLegDivisor(selectedCoursePreset.code as CourseTemplate, className)).toFixed(2)} km・艇種、風速、コースから算出</small></label>
                   </div>
                 </section>
                 {!racePlanReady && <div className="event-step-readiness is-warning">予告予定を大会の開催期間内にしてください</div>}
@@ -1036,7 +1037,7 @@ export function EventManager({
                     <div><dt>初期コース</dt><dd>{selectedCoursePreset.optionLabel}</dd></div>
                     <div><dt>ゲート</dt><dd>{lowerGate ? 'あり（S・P）' : 'なし（単一マーク）'}</dd></div>
                     <div><dt>初期風</dt><dd>{windDirection}°T・{windSpeed.toFixed(1)} kt</dd></div>
-                    <div><dt>初期長</dt><dd>{Number(targetLengthKm).toFixed(1)} km</dd></div>
+                    <div><dt>推定総航程</dt><dd>{Number(targetLengthKm).toFixed(1)} km</dd></div>
                     <div><dt>1R予告</dt><dd>{formatTimestamp(firstWarningAt)}</dd></div>
                     <div><dt>本部船位置</dt><dd>{center ? `${center.latitude.toFixed(5)}, ${center.longitude.toFixed(5)}` : '未設定'}</dd></div>
                   </dl>

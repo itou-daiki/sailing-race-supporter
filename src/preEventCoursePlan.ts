@@ -22,7 +22,7 @@ function shortMarkLabel(label: string): string {
 
 export function buildPreEventCourseMarks(plan: EventCreationPlan): CourseMark[] {
   const courseCode = plan.courseCode as CourseTemplate
-  const lineLength = recommendedStartLineLength(plan.targetLengthMetres, courseCode)
+  const lineLength = recommendedStartLineLength(plan.targetLengthMetres, courseCode, plan.className)
   const pin = destinationPoint(plan.signalBoatPosition, lineLength, plan.windDirection - 90)
   return generateCoursePlan({
     center: plan.signalBoatPosition,

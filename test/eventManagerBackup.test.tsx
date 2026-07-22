@@ -56,11 +56,11 @@ describe('EventManager free-only backup UI', () => {
     expect(screen.getByRole('radio', { name: /O2.*トラペゾイド・アウターループ/u })).toHaveAttribute('aria-checked', 'true')
     expect(screen.getByText('トラペゾイド（O2）— アウター・風上レグ2回')).toBeInTheDocument()
     expect(screen.getByLabelText('標準回航順序：Start、1、2、3S/3P、2、3P、Finish')).toBeInTheDocument()
-    expect(screen.getByRole('spinbutton', { name: /^初期コース長（km）/u })).toHaveValue(
+    expect(screen.getByRole('spinbutton', { name: /^初期推定総航程（km）/u })).toHaveValue(
       Number(recommendedCourseLength('470', 8).kilometres.toFixed(1)),
     )
     fireEvent.change(screen.getByRole('spinbutton', { name: '初期風速（kt）' }), { target: { value: '4' } })
-    expect(screen.getByRole('spinbutton', { name: /^初期コース長（km）/u })).toHaveValue(
+    expect(screen.getByRole('spinbutton', { name: /^初期推定総航程（km）/u })).toHaveValue(
       Number(recommendedCourseLength('470', 4).kilometres.toFixed(1)),
     )
 

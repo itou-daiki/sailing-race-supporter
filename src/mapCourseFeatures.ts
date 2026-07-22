@@ -36,6 +36,7 @@ export function buildCourseFeatures(marks: readonly CourseMark[], route?: readon
   targetLinks: FeatureCollection<LineString>
   course: FeatureCollection<LineString>
   gates: FeatureCollection<LineString>
+  startLine: FeatureCollection<LineString>
 } {
   const gates = findGatePairs(marks)
   const pointFeatures: Feature<Point>[] = marks.flatMap((mark) => {
@@ -98,9 +99,25 @@ export function buildCourseFeatures(marks: readonly CourseMark[], route?: readon
     return [[...gate.center]]
   })
   const startMarks = marks.filter((mark) => mark.shortLabel === 'PIN' || mark.shortLabel === 'RC')
+  const pinMark = startMarks.find((mark) => mark.shortLabel === 'PIN')
+  const signalMark = startMarks.find((mark) => mark.shortLabel === 'RC')
   const startCenter = startMarks.length === 2
     ? midpoint(startMarks[0].actual ?? startMarks[0].target, startMarks[1].actual ?? startMarks[1].target)
     : undefined
+  const startLine: FeatureCollection<LineString> = {
+    type: 'FeatureCollection',
+    features: pinMark && signalMark ? [{
+      type: 'Feature',
+      properties: { kind: 'start-line', pin: pinMark.id, signal: signalMark.id },
+      geometry: {
+        type: 'LineString',
+        coordinates: [
+          [...(pinMark.actual ?? pinMark.target)],
+          [...(signalMark.actual ?? signalMark.target)],
+        ],
+      },
+    }] : [],
+  }
   const routeOrder = route?.flatMap((point) => {
     if (point === 'Start' || point === 'Finish') return startCenter ? [[...startCenter]] : []
     const exact = marks.find((mark) => mark.shortLabel === point)
@@ -132,5 +149,5 @@ export function buildCourseFeatures(marks: readonly CourseMark[], route?: readon
       geometry: { type: 'LineString', coordinates: gate.positions.map((position) => [...position]) },
     })),
   }
-  return { points, targetLinks, course, gates: gateLines }
+  return { points, targetLinks, course, gates: gateLines, startLine }
 }

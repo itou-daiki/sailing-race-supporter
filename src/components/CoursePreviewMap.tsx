@@ -1,5 +1,5 @@
 import maplibregl, { type GeoJSONSource, type Map as MapLibreMap, type Marker } from 'maplibre-gl'
-import { Crosshair, Wind } from 'lucide-react'
+import { AlertTriangle, Crosshair, ShieldCheck, Wind } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CourseMark, LngLat } from '../domain'
 import { buildCourseFeatures } from '../mapCourseFeatures'
@@ -13,6 +13,7 @@ interface CoursePreviewMapProps {
   signalBoatPosition: LngLat
   windDirection: number
   windSpeed: number
+  coastClearance: { status: 'checking' | 'safe' | 'unsafe' | 'unavailable'; label: string }
   onSignalBoatPositionChange: (position: LngLat) => void
 }
 
@@ -22,6 +23,7 @@ export function CoursePreviewMap({
   signalBoatPosition,
   windDirection,
   windSpeed,
+  coastClearance,
   onSignalBoatPositionChange,
 }: CoursePreviewMapProps) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -56,6 +58,19 @@ export function CoursePreviewMap({
     map.on('load', () => {
       map.addSource('preview-course', { type: 'geojson', data: initialFeaturesRef.current.course })
       map.addSource('preview-gates', { type: 'geojson', data: initialFeaturesRef.current.gates })
+      map.addSource('preview-start-line', { type: 'geojson', data: initialFeaturesRef.current.startLine })
+      map.addLayer({
+        id: 'preview-start-line-casing',
+        type: 'line',
+        source: 'preview-start-line',
+        paint: { 'line-color': '#ffffff', 'line-width': 8, 'line-opacity': 0.96 },
+      })
+      map.addLayer({
+        id: 'preview-start-line',
+        type: 'line',
+        source: 'preview-start-line',
+        paint: { 'line-color': '#ff6b00', 'line-width': 5, 'line-opacity': 1 },
+      })
       map.addLayer({
         id: 'preview-course-line',
         type: 'line',
@@ -83,12 +98,16 @@ export function CoursePreviewMap({
     if (!map || !mapReady) return
     ;(map.getSource('preview-course') as GeoJSONSource | undefined)?.setData(features.course)
     ;(map.getSource('preview-gates') as GeoJSONSource | undefined)?.setData(features.gates)
+    ;(map.getSource('preview-start-line') as GeoJSONSource | undefined)?.setData(features.startLine)
     markerRefs.current.forEach((marker) => marker.remove())
     markerRefs.current = marks.map((mark) => {
       const element = document.createElement('div')
-      element.className = `pre-event-map-mark ${mark.shortLabel === 'RC' ? 'is-signal-boat' : ''} ${mark.isGate ? 'is-gate' : ''}`
+      element.className = `pre-event-map-mark ${mark.shortLabel === 'RC' ? 'is-signal-boat' : ''} ${mark.shortLabel === 'PIN' ? 'is-start-pin' : ''} ${mark.isGate ? 'is-gate' : ''}`
       element.setAttribute('aria-label', mark.shortLabel === 'RC' ? '本部船・ドラッグして移動' : mark.label)
-      element.innerHTML = `<strong>${mark.shortLabel}</strong><span>${mark.shortLabel === 'RC' ? '本部船' : mark.label}</span>`
+      const detail = mark.shortLabel === 'RC'
+        ? '本部船・右端'
+        : mark.shortLabel === 'PIN' ? 'ピン・左端' : mark.label
+      element.innerHTML = `<strong>${mark.shortLabel}</strong><span>${detail}</span>`
       const marker = new maplibregl.Marker({
         element,
         anchor: 'center',
@@ -155,7 +174,11 @@ export function CoursePreviewMap({
         <span><Crosshair size={16} /><strong>推奨マーク配置</strong></span>
         <span><Wind size={16} />{formatTrueBearing(windDirection)}・{formatWindSpeedDual(windSpeed)}</span>
       </div>
-      <p className="pre-event-map__hint">地図タップ／RCをドラッグで本部船を移動</p>
+      <div className={`pre-event-map__clearance is-${coastClearance.status}`}>
+        {coastClearance.status === 'safe' ? <ShieldCheck size={15} /> : <AlertTriangle size={15} />}
+        <strong>{coastClearance.label}</strong>
+      </div>
+      <p className="pre-event-map__hint">橙線＝スタートライン・RCをドラッグ可</p>
     </section>
   )
 }
