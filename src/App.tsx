@@ -52,6 +52,7 @@ import { StartSequence } from './components/StartSequence'
 import { RaceTabs } from './components/RaceTabs'
 import { OperationalCommandBar } from './components/OperationalCommandBar'
 import { MobileCommandDock } from './components/MobileCommandDock'
+import { PreEventCoursePlanner } from './components/PreEventCoursePlanner'
 import {
   authenticatePasskey,
   authErrorMessage,
@@ -131,7 +132,6 @@ const EventManager = lazy(() => import('./components/EventManager').then((module
 const JoinRecoveryPanel = lazy(() => import('./components/JoinRecoveryPanel').then((module) => ({ default: module.JoinRecoveryPanel })))
 const LogDrawer = lazy(() => import('./components/LogDrawer').then((module) => ({ default: module.LogDrawer })))
 const MapView = lazy(() => import('./components/MapView').then((module) => ({ default: module.MapView })))
-const PreEventCoursePlanner = lazy(() => import('./components/PreEventCoursePlanner').then((module) => ({ default: module.PreEventCoursePlanner })))
 
 function storedNumber(key: string, fallback: number): number {
   const value = Number(window.localStorage.getItem(key))
@@ -1840,22 +1840,20 @@ export default function App() {
   if (!eventRoute) {
     return (
       <div className="pre-event-root">
-        <Suspense fallback={<main className="pre-event-loading" aria-live="polite">コース地図を準備しています…</main>}>
-          <PreEventCoursePlanner
-            onIssueEvent={(plan) => {
-              setPreEventPlan(plan)
-              if (session.mode === 'authenticated') setEventManagerOpen(true)
-              else {
-                setResumeEventIssuanceAfterAuth(true)
-                setAuthOpen(true)
-              }
-            }}
-            onOpenEvents={() => {
-              setPreEventPlan(undefined)
-              setEventManagerOpen(true)
-            }}
-          />
-        </Suspense>
+        <PreEventCoursePlanner
+          onIssueEvent={(plan) => {
+            setPreEventPlan(plan)
+            if (session.mode === 'authenticated') setEventManagerOpen(true)
+            else {
+              setResumeEventIssuanceAfterAuth(true)
+              setAuthOpen(true)
+            }
+          }}
+          onOpenEvents={() => {
+            setPreEventPlan(undefined)
+            setEventManagerOpen(true)
+          }}
+        />
         {eventAccessPanels}
       </div>
     )
