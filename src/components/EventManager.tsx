@@ -61,7 +61,7 @@ import { exportLocalEventData } from '../offlineStore'
 import { CoursePresetPicker } from './CoursePresetPicker'
 import { OwnerRecoveryKitPanel } from './OwnerRecoveryKitPanel'
 import { RaceAreaPicker } from './RaceAreaPicker'
-import { courseLegDivisor, recommendedCourseLength, type CourseTemplate } from '../course'
+import { firstLegLengthMetresFromTotal, recommendedCourseLength, type CourseTemplate } from '../course'
 import type { EventCreationPlan } from '../eventClient'
 
 interface EventManagerProps {
@@ -151,6 +151,7 @@ export function EventManager({
   const [className, setClassName] = useState<SailingClass>(initialCreationPlan?.className ?? '470')
   const [courseCode, setCourseCode] = useState(initialCreationPlan?.courseCode ?? 'O2')
   const [lowerGate, setLowerGate] = useState(initialCreationPlan?.lowerGate ?? true)
+  const [finishLineMode, setFinishLineMode] = useState<'separate' | 'shared-rc'>(initialCreationPlan?.finishLineMode ?? 'separate')
   const [windDirection, setWindDirection] = useState(initialCreationPlan?.windDirection ?? 350)
   const [windSpeed, setWindSpeed] = useState(initialCreationPlan?.windSpeed ?? 8)
   const [targetLengthKm, setTargetLengthKm] = useState(() => (
@@ -291,19 +292,24 @@ export function EventManager({
     setClassName(nextClass)
     setCourseCode(nextCode)
     setLowerGate(coursePresetForClass(nextClass, nextCode).route.some((point) => point.includes('S/')))
-    setTargetLengthKm(recommendedCourseLength(nextClass, windSpeed, undefined, nextCode as CourseTemplate).kilometres.toFixed(1))
+    setTargetLengthKm(recommendedCourseLength(nextClass, windSpeed, undefined, nextCode as CourseTemplate, finishLineMode).kilometres.toFixed(1))
   }
 
   const changeCourse = (nextCode: string) => {
     setCourseCode(nextCode)
     setLowerGate(coursePresetForClass(className, nextCode).route.some((point) => point.includes('S/')))
-    setTargetLengthKm(recommendedCourseLength(className, windSpeed, undefined, nextCode as CourseTemplate).kilometres.toFixed(1))
+    setTargetLengthKm(recommendedCourseLength(className, windSpeed, undefined, nextCode as CourseTemplate, finishLineMode).kilometres.toFixed(1))
   }
 
   const changeWindSpeed = (nextSpeed: number) => {
     const normalized = Math.min(40, Math.max(1, nextSpeed))
     setWindSpeed(normalized)
-    setTargetLengthKm(recommendedCourseLength(className, normalized, undefined, courseCode as CourseTemplate).kilometres.toFixed(1))
+    setTargetLengthKm(recommendedCourseLength(className, normalized, undefined, courseCode as CourseTemplate, finishLineMode).kilometres.toFixed(1))
+  }
+
+  const changeFinishLineMode = (nextMode: 'separate' | 'shared-rc') => {
+    setFinishLineMode(nextMode)
+    setTargetLengthKm(recommendedCourseLength(className, windSpeed, undefined, courseCode as CourseTemplate, nextMode).kilometres.toFixed(1))
   }
 
   const changeStartsOn = (nextDate: string) => {
@@ -335,7 +341,7 @@ export function EventManager({
     const enteredTargetLengthKm = Number(targetLengthKm)
     const targetLengthMetres = Number.isFinite(enteredTargetLengthKm) && enteredTargetLengthKm >= 0.5
       ? enteredTargetLengthKm * 1_000
-      : recommendedCourseLength(className, windSpeed, undefined, courseCode as CourseTemplate).kilometres * 1_000
+      : recommendedCourseLength(className, windSpeed, undefined, courseCode as CourseTemplate, finishLineMode).kilometres * 1_000
     try {
       const created = await createEvent({
         name: name.trim(),
@@ -351,6 +357,7 @@ export function EventManager({
         windDirection,
         windSpeed,
         lowerGate,
+        finishLineMode,
         targetLengthMetres,
       })
       if (created.ownerRecoveryKit) {
@@ -994,10 +1001,15 @@ export function EventManager({
                     <button type="button" role="radio" aria-checked={lowerGate} className={lowerGate ? 'is-selected' : ''} onClick={() => setLowerGate(true)}>あり（S・P）</button>
                     <button type="button" role="radio" aria-checked={!lowerGate} className={!lowerGate ? 'is-selected' : ''} onClick={() => setLowerGate(false)}>なし（単一）</button>
                   </div>
+                  <div className="event-initial-gate" role="radiogroup" aria-label="フィニッシュライン方式">
+                    <span>フィニッシュ</span>
+                    <button type="button" role="radio" aria-checked={finishLineMode === 'separate'} className={finishLineMode === 'separate' ? 'is-selected' : ''} onClick={() => changeFinishLineMode('separate')}>別に設置（FIN艇＋F）</button>
+                    <button type="button" role="radio" aria-checked={finishLineMode === 'shared-rc'} className={finishLineMode === 'shared-rc' ? 'is-selected' : ''} onClick={() => changeFinishLineMode('shared-rc')}>本船兼用（RC＋PIN）</button>
+                  </div>
                   <div className="event-form-grid">
                     <label className="event-field"><span>初期風向（°T）</span><input type="number" min="0" max="359" value={windDirection} onChange={(event) => setWindDirection(Math.min(359, Math.max(0, Number(event.target.value))))} /></label>
                     <label className="event-field"><span>初期風速（kt）</span><input type="number" min="1" max="40" step="0.1" value={windSpeed} onChange={(event) => changeWindSpeed(Number(event.target.value))} /></label>
-                    <label className="event-field"><span>初期推定総航程（km）</span><input type="number" min="0.5" max="30" step="0.1" value={targetLengthKm} onChange={(event) => setTargetLengthKm(event.target.value)} /><small>第1レグ 約{(Number(targetLengthKm) / courseLegDivisor(selectedCoursePreset.code as CourseTemplate, className)).toFixed(2)} km・艇種、風速、コースから算出</small></label>
+                    <label className="event-field"><span>初期推定総航程（km）</span><input type="number" min="0.5" max="30" step="0.1" value={targetLengthKm} onChange={(event) => setTargetLengthKm(event.target.value)} /><small>第1レグ 約{(firstLegLengthMetresFromTotal(Number(targetLengthKm) * 1_000, selectedCoursePreset.code as CourseTemplate, className, windSpeed, finishLineMode) / 1_000).toFixed(2)} km・艇種、風速、コースから算出</small></label>
                   </div>
                 </section>
                 {!racePlanReady && <div className="event-step-readiness is-warning">予告予定を大会の開催期間内にしてください</div>}
@@ -1007,7 +1019,7 @@ export function EventManager({
               {creationStep === 3 && <section className="event-create-step" aria-labelledby="create-step-area">
                 <div className="event-create-step__title"><span><b>3</b><strong id="create-step-area">本部船の初期位置を決めて確認</strong></span><small>ここを基準に推奨マークを作成します</small></div>
                 <section className="event-center-editor" aria-labelledby="event-center-title">
-                  <header><span id="event-center-title">シグナルボート（RC）の予定位置</span><small>地図をタップ</small></header>
+                  <header><span id="event-center-title">シグナルボート（RC）の予定位置</span><small>ボタンを押してピンをドラッグ</small></header>
                   <p className="event-center-editor__lead">本部船を置く予定位置を選んでください。スマホの現在地、緯度・経度の直接入力も使えます。</p>
                   <RaceAreaPicker
                     longitude={center?.longitude ?? DEFAULT_RACE_AREA_CENTER.longitude}
@@ -1036,6 +1048,7 @@ export function EventManager({
                     <div><dt>運営体制</dt><dd>{operationModeOption(operationMode).label}</dd></div>
                     <div><dt>初期コース</dt><dd>{selectedCoursePreset.optionLabel}</dd></div>
                     <div><dt>ゲート</dt><dd>{lowerGate ? 'あり（S・P）' : 'なし（単一マーク）'}</dd></div>
+                    <div><dt>フィニッシュ</dt><dd>{finishLineMode === 'separate' ? '別に設置（FIN艇＋F）' : '本船兼用（RC＋PIN）'}</dd></div>
                     <div><dt>初期風</dt><dd>{windDirection}°T・{windSpeed.toFixed(1)} kt</dd></div>
                     <div><dt>推定総航程</dt><dd>{Number(targetLengthKm).toFixed(1)} km</dd></div>
                     <div><dt>1R予告</dt><dd>{formatTimestamp(firstWarningAt)}</dd></div>

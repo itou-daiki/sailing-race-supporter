@@ -66,7 +66,11 @@ describe('EventManager free-only backup UI', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '次へ：海面と確認' }))
     expect(screen.getByText('本部船の初期位置を決めて確認')).toBeInTheDocument()
-    expect(screen.getByText('地図をタップ、またはピンを移動')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'レースエリアを変える' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByText('通常操作は地図の移動・拡大縮小のみ')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'レースエリアを変える' }))
+    expect(screen.getByRole('button', { name: '位置を確定' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText('青いピンを押したままドラッグ')).toBeInTheDocument()
     expect(screen.getByText('緯度・経度を直接入力する')).toBeInTheDocument()
     expect(screen.getByLabelText('レース海面の経度')).toHaveValue(131.5221959)
     expect(screen.getByLabelText('レース海面の緯度')).toHaveValue(33.2786648)

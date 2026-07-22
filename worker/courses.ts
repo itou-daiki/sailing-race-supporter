@@ -8,7 +8,7 @@ import { assertSameOrigin, hasRecentAuthentication, requireSession, sha256Base64
 interface CourseNodeInput {
   markId?: string
   label?: string
-  nodeType?: 'single' | 'gate' | 'start' | 'offset'
+  nodeType?: 'single' | 'gate' | 'start' | 'offset' | 'finish'
   rounding?: string
   target?: [number, number]
 }
@@ -21,6 +21,7 @@ interface CourseRevisionInput {
   lowerGate?: boolean
   upperGate?: boolean
   secondGate?: boolean
+  finishLineMode?: 'separate' | 'shared-rc'
   nodes?: CourseNodeInput[]
 }
 
@@ -247,6 +248,9 @@ export async function handleCourseRequest(request: Request, env: AppEnv): Promis
   if (!finite(body.windDirection, 0, 360)) return json({ error: '風向は0〜360度で指定してください' }, { status: 400 })
   if (!finite(body.windSpeed, 0, 100)) return json({ error: '風速を確認してください' }, { status: 400 })
   if (!finite(body.targetLengthMetres, 100, 100_000)) return json({ error: 'コース長を確認してください' }, { status: 400 })
+  if (body.finishLineMode !== undefined && body.finishLineMode !== 'separate' && body.finishLineMode !== 'shared-rc') {
+    return json({ error: 'フィニッシュライン方式を確認してください' }, { status: 400 })
+  }
   if (!Array.isArray(body.nodes) || body.nodes.length < 3 || body.nodes.length > 30) {
     return json({ error: 'コース点は3〜30個で指定してください' }, { status: 400 })
   }
@@ -259,19 +263,22 @@ export async function handleCourseRequest(request: Request, env: AppEnv): Promis
   for (const node of body.nodes) {
     if (!node.markId || !availableMarks.has(node.markId)) return json({ error: '大会外のマークが含まれています' }, { status: 400 })
     if (!node.label?.trim() || node.label.length > 100) return json({ error: 'マーク名を確認してください' }, { status: 400 })
-    if (!node.nodeType || !['single', 'gate', 'start', 'offset'].includes(node.nodeType)) return json({ error: 'コース点種別を確認してください' }, { status: 400 })
+    if (!node.nodeType || !['single', 'gate', 'start', 'offset', 'finish'].includes(node.nodeType)) return json({ error: 'コース点種別を確認してください' }, { status: 400 })
     if (!Array.isArray(node.target) || !finite(node.target[0], -180, 180) || !finite(node.target[1], -85, 85)) {
       return json({ error: 'コース点座標を確認してください' }, { status: 400 })
     }
     nodes.push({ markId: node.markId, label: node.label.trim(), nodeType: node.nodeType, rounding: node.rounding?.slice(0, 20) ?? null, target: node.target })
   }
-  let gateConfiguration: ReturnType<typeof buildGateConfiguration>
+  let gateConfiguration: ReturnType<typeof buildGateConfiguration> & { finishLineMode: 'separate' | 'shared-rc' }
   try {
-    gateConfiguration = buildGateConfiguration({
-      lower: body.lowerGate === true,
-      upper: body.upperGate === true,
-      second: body.secondGate === true,
-    }, nodes)
+    gateConfiguration = {
+      ...buildGateConfiguration({
+        lower: body.lowerGate === true,
+        upper: body.upperGate === true,
+        second: body.secondGate === true,
+      }, nodes),
+      finishLineMode: body.finishLineMode === 'shared-rc' ? 'shared-rc' : 'separate',
+    }
   } catch (reason) {
     return json({ error: reason instanceof Error ? reason.message : 'ゲート構成を確認してください' }, { status: 400 })
   }

@@ -6,11 +6,12 @@ const toDegrees = (radians: number) => (radians * 180) / Math.PI
 
 export type CoursePosition = readonly [longitude: number, latitude: number]
 export type CourseTemplate = 'O2' | 'I2' | 'L2' | 'L3' | 'W2' | 'T2' | 'トライアングル'
+export type FinishLineMode = 'separate' | 'shared-rc'
 
 export interface CoursePlanNode {
   key: string
   label: string
-  nodeType: 'single' | 'gate' | 'start' | 'offset'
+  nodeType: 'single' | 'gate' | 'start' | 'offset' | 'finish'
   target: CoursePosition
 }
 
@@ -26,6 +27,16 @@ export interface CoursePlanInput {
   secondGate?: boolean
   gateWidthMetres?: number
   startLineLengthMetres?: number
+  windSpeed?: number
+  finishLineMode?: FinishLineMode
+}
+
+export interface CourseSailingDistanceModel {
+  closeHauledLegs: number
+  reachLegs: number
+  downwindLegs: number
+  fixedFinishDistanceMetres: number
+  finishPointOfSail: 'reach' | 'downwind'
 }
 
 export function destinationPoint(origin: CoursePosition, distance: number, bearingDegreesValue: number): CoursePosition {
@@ -44,27 +55,74 @@ export function destinationPoint(origin: CoursePosition, distance: number, beari
   return [toDegrees(targetLongitude), toDegrees(targetLatitude)]
 }
 
-export function courseLegDivisor(courseCode: CourseTemplate, className?: string): number {
-  // These ratios follow the actual generated route. They convert the estimated
-  // start-to-finish sailing distance into the first windward-leg length.
-  if (courseCode === 'O2') return className === 'スナイプ' ? 4.58 : 5.03
-  if (courseCode === 'I2') return 5.03
-  if (courseCode === 'L2') return 3.82
-  if (courseCode === 'L3') return 5.64
-  if (courseCode === 'W2') return 4.22
-  if (courseCode === 'T2') return 5.44
-  return 2.86
+export function courseSailingDistanceModel(
+  courseCode: CourseTemplate,
+  className?: string,
+  windSpeed = 8,
+  finishLineMode: FinishLineMode = 'separate',
+): CourseSailingDistanceModel {
+  const standardLeewardFinish = windSpeed >= 12 ? 0.1 * 1_852 : 0.05 * 1_852
+  if (courseCode === 'O2' && className !== 'スナイプ') {
+    return finishLineMode === 'shared-rc'
+      ? { closeHauledLegs: 1.91, reachLegs: 1.3, downwindLegs: 1.82, fixedFinishDistanceMetres: 0, finishPointOfSail: 'reach' }
+      : { closeHauledLegs: 1.91, reachLegs: 0.67, downwindLegs: 1.82, fixedFinishDistanceMetres: 0.15 * 1_852, finishPointOfSail: 'reach' }
+  }
+  if (courseCode === 'I2') {
+    return finishLineMode === 'shared-rc'
+      ? { closeHauledLegs: 1.91, reachLegs: 1.3, downwindLegs: 1.82, fixedFinishDistanceMetres: 0, finishPointOfSail: 'reach' }
+      : { closeHauledLegs: 1.91, reachLegs: 0.67, downwindLegs: 1.82, fixedFinishDistanceMetres: 0.15 * 1_852, finishPointOfSail: 'reach' }
+  }
+  if (courseCode === 'O2') {
+    return { closeHauledLegs: 1.86, reachLegs: 1.72, downwindLegs: 0.86, fixedFinishDistanceMetres: standardLeewardFinish, finishPointOfSail: 'downwind' }
+  }
+  if (courseCode === 'L2') {
+    return { closeHauledLegs: 1.91, reachLegs: 0, downwindLegs: 1.82, fixedFinishDistanceMetres: standardLeewardFinish, finishPointOfSail: 'downwind' }
+  }
+  if (courseCode === 'L3') {
+    return { closeHauledLegs: 2.82, reachLegs: 0, downwindLegs: 2.73, fixedFinishDistanceMetres: standardLeewardFinish, finishPointOfSail: 'downwind' }
+  }
+  if (courseCode === 'W2') {
+    return { closeHauledLegs: 1.91, reachLegs: 0.36, downwindLegs: 1.86, fixedFinishDistanceMetres: standardLeewardFinish, finishPointOfSail: 'downwind' }
+  }
+  if (courseCode === 'T2') {
+    return { closeHauledLegs: 1.86, reachLegs: 3.44, downwindLegs: 0, fixedFinishDistanceMetres: standardLeewardFinish, finishPointOfSail: 'downwind' }
+  }
+  return { closeHauledLegs: 1, reachLegs: 1.72, downwindLegs: 0, fixedFinishDistanceMetres: standardLeewardFinish, finishPointOfSail: 'downwind' }
 }
 
-export function recommendedStartLineLength(totalLengthMetres: number, courseCode: CourseTemplate, className?: string): number {
-  const leg = totalLengthMetres / courseLegDivisor(courseCode, className)
+export function courseLegDivisor(courseCode: CourseTemplate, className?: string): number {
+  const model = courseSailingDistanceModel(courseCode, className)
+  return model.closeHauledLegs + model.reachLegs + model.downwindLegs
+}
+
+export function firstLegLengthMetresFromTotal(
+  totalLengthMetres: number,
+  courseCode: CourseTemplate,
+  className?: string,
+  windSpeed = 8,
+  finishLineMode: FinishLineMode = 'separate',
+): number {
+  const model = courseSailingDistanceModel(courseCode, className, windSpeed, finishLineMode)
+  const scaledLegs = model.closeHauledLegs + model.reachLegs + model.downwindLegs
+  return Math.max(250, (totalLengthMetres - model.fixedFinishDistanceMetres) / scaledLegs)
+}
+
+export function recommendedStartLineLength(
+  totalLengthMetres: number,
+  courseCode: CourseTemplate,
+  className?: string,
+  windSpeed = 8,
+  finishLineMode: FinishLineMode = 'separate',
+): number {
+  const leg = firstLegLengthMetresFromTotal(totalLengthMetres, courseCode, className, windSpeed, finishLineMode)
   return Math.min(600, Math.max(180, leg * 0.35))
 }
 
 export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
   const wind = ((input.windDirection % 360) + 360) % 360
   const center = input.startLine ? geodesicMidpoint(input.startLine.pin, input.startLine.signal) : input.center
-  const leg = Math.min(3_000, Math.max(250, input.totalLengthMetres / courseLegDivisor(input.courseCode, input.className)))
+  const finishLineMode = input.finishLineMode ?? 'separate'
+  const leg = Math.min(3_000, firstLegLengthMetresFromTotal(input.totalLengthMetres, input.courseCode, input.className, input.windSpeed, finishLineMode))
   const gateWidth = input.gateWidthMetres ?? Math.min(180, Math.max(70, leg * 0.12))
   const lineLength = input.startLineLengthMetres ?? Math.min(600, Math.max(180, leg * 0.35))
   const upwind = destinationPoint(center, leg, wind)
@@ -77,6 +135,16 @@ export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
     { key: 'start-pin', label: 'スタート・ピン', nodeType: 'start', target: input.startLine?.pin ?? destinationPoint(center, lineLength / 2, wind - 90) },
     { key: 'start-rc', label: 'シグナルボート', nodeType: 'start', target: input.startLine?.signal ?? destinationPoint(center, lineLength / 2, wind + 90) },
   ]
+  const appendFinishLine = (origin: CoursePosition, bearing: number, distance: number) => {
+    if (finishLineMode === 'shared-rc') return
+    const finishCenter = destinationPoint(origin, distance, bearing)
+    const lineBearing = bearing + 90
+    nodes.push(
+      { key: 'finish-mark', label: 'フィニッシュマーク', nodeType: 'finish', target: destinationPoint(finishCenter, 25, lineBearing - 180) },
+      { key: 'finish-boat', label: 'フィニッシュ艇', nodeType: 'finish', target: destinationPoint(finishCenter, 25, lineBearing) },
+    )
+  }
+  const finishDistance = courseSailingDistanceModel(input.courseCode, input.className, input.windSpeed, finishLineMode).fixedFinishDistanceMetres
 
   if (input.upperGate) {
     nodes.push(
@@ -129,9 +197,11 @@ export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
       nodes.push({ key: 'mark-2', label: '2マーク', nodeType: 'single', target: mark2 })
     }
     nodes.push({ key: 'mark-3p', label: '下ゲート 3P', nodeType: 'single', target: destinationPoint(lowerRoundingCenter, gateWidth / 2, wind + 90) })
+    appendFinishLine(lowerRoundingCenter, wind + 135, finishDistance)
     return nodes
   } else if (!isSnipe && (input.courseCode === 'L2' || input.courseCode === 'L3')) {
     pushGateOrSingle('mark-4', '内側ゲート 4', innerGateCenter)
+    appendFinishLine(innerGateCenter, wind + 180, finishDistance)
     return nodes
   } else if ((isSnipe && (input.courseCode === 'O2' || input.courseCode === 'T2')) || input.courseCode === 'トライアングル') {
     const mark2 = destinationPoint(upwind, leg * 0.86, wind - 120)
@@ -147,5 +217,10 @@ export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
   }
 
   pushGateOrSingle('mark-3', '下ゲート 3', lowerRoundingCenter)
+  appendFinishLine(
+    lowerRoundingCenter,
+    !isSnipe && input.courseCode === 'O2' ? wind + 135 : wind + 180,
+    finishDistance,
+  )
   return nodes
 }

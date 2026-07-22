@@ -1,6 +1,6 @@
 import maplibregl, { type Map as MapLibreMap, type Marker } from 'maplibre-gl'
-import { MapPin } from 'lucide-react'
-import { useEffect, useRef } from 'react'
+import { Check, MapPin, Move } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import { GSI_MAP_STYLE } from '../mapStyle'
 
 interface RaceAreaPickerProps {
@@ -15,6 +15,7 @@ export function RaceAreaPicker({ longitude, latitude, onChange }: RaceAreaPicker
   const markerRef = useRef<Marker>(null)
   const onChangeRef = useRef(onChange)
   const initialCenterRef = useRef({ longitude, latitude })
+  const [editing, setEditing] = useState(false)
 
   useEffect(() => {
     onChangeRef.current = onChange
@@ -30,15 +31,11 @@ export function RaceAreaPicker({ longitude, latitude, onChange }: RaceAreaPicker
         zoom: 12.5,
         attributionControl: false,
       })
-      const marker = new maplibregl.Marker({ color: '#0674d5', draggable: true })
+      const marker = new maplibregl.Marker({ color: '#0674d5', draggable: false })
         .setLngLat([initialCenterRef.current.longitude, initialCenterRef.current.latitude])
         .addTo(map)
       map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
       map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right')
-      map.on('click', (event) => {
-        marker.setLngLat(event.lngLat)
-        onChangeRef.current({ longitude: event.lngLat.lng, latitude: event.lngLat.lat })
-      })
       marker.on('dragend', () => {
         const next = marker.getLngLat()
         onChangeRef.current({ longitude: next.lng, latitude: next.lat })
@@ -57,6 +54,10 @@ export function RaceAreaPicker({ longitude, latitude, onChange }: RaceAreaPicker
   }, [])
 
   useEffect(() => {
+    markerRef.current?.setDraggable(editing)
+  }, [editing])
+
+  useEffect(() => {
     markerRef.current?.setLngLat([longitude, latitude])
     mapRef.current?.easeTo({ center: [longitude, latitude], duration: 250 })
   }, [latitude, longitude])
@@ -64,7 +65,16 @@ export function RaceAreaPicker({ longitude, latitude, onChange }: RaceAreaPicker
   return (
     <div className="race-area-picker">
       <div ref={containerRef} className="race-area-picker__map" aria-label="レース海面の中心を選ぶ地図" />
-      <span className="race-area-picker__guide"><MapPin size={15} /> 地図をタップ、またはピンを移動</span>
+      <span className="race-area-picker__guide"><MapPin size={15} /> {editing ? '青いピンを押したままドラッグ' : '通常操作は地図の移動・拡大縮小のみ'}</span>
+      <button
+        type="button"
+        className={`race-area-picker__edit ${editing ? 'is-active' : ''}`}
+        aria-pressed={editing}
+        onClick={() => setEditing((current) => !current)}
+      >
+        {editing ? <Check size={16} /> : <Move size={16} />}
+        {editing ? '位置を確定' : 'レースエリアを変える'}
+      </button>
     </div>
   )
 }

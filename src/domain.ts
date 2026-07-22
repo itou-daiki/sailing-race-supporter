@@ -69,6 +69,7 @@ export interface RaceDefinition {
   number: string
   className: SailingClass
   courseCode: string
+  finishLineMode?: 'separate' | 'shared-rc'
   status: 'planning' | 'setup' | 'start-sequence' | 'racing' | 'provisional' | 'finalized'
   warningAt: string
   targetMinutes: number

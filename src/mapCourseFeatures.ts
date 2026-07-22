@@ -37,6 +37,7 @@ export function buildCourseFeatures(marks: readonly CourseMark[], route?: readon
   course: FeatureCollection<LineString>
   gates: FeatureCollection<LineString>
   startLine: FeatureCollection<LineString>
+  finishLine: FeatureCollection<LineString>
 } {
   const gates = findGatePairs(marks)
   const pointFeatures: Feature<Point>[] = marks.flatMap((mark) => {
@@ -118,8 +119,37 @@ export function buildCourseFeatures(marks: readonly CourseMark[], route?: readon
       },
     }] : [],
   }
+  const finishBoatMark = marks.find((mark) => mark.shortLabel === 'FIN' || mark.label === 'フィニッシュ艇')
+  const finishMark = marks.find((mark) => mark.shortLabel === 'F' || mark.label === 'フィニッシュマーク')
+  const finishBoatPosition = finishBoatMark ? finishBoatMark.actual ?? finishBoatMark.target : undefined
+  const finishMarkPosition = finishMark ? finishMark.actual ?? finishMark.target : undefined
+  const finishCenter = finishBoatPosition && finishMarkPosition
+    ? midpoint(finishBoatPosition, finishMarkPosition)
+    : finishBoatPosition ?? finishMarkPosition
+  const finishLine: FeatureCollection<LineString> = {
+    type: 'FeatureCollection',
+    features: finishBoatMark && finishMark && finishBoatPosition && finishMarkPosition ? [{
+      type: 'Feature',
+      properties: { kind: 'finish-line', mark: finishMark.id, boat: finishBoatMark.id, shared: false },
+      geometry: {
+        type: 'LineString',
+        coordinates: [[...finishMarkPosition], [...finishBoatPosition]],
+      },
+    }] : pinMark && signalMark ? [{
+      type: 'Feature',
+      properties: { kind: 'finish-line', mark: pinMark.id, boat: signalMark.id, shared: true },
+      geometry: {
+        type: 'LineString',
+        coordinates: [
+          [...(pinMark.actual ?? pinMark.target)],
+          [...(signalMark.actual ?? signalMark.target)],
+        ],
+      },
+    }] : [],
+  }
   const routeOrder = route?.flatMap((point) => {
-    if (point === 'Start' || point === 'Finish') return startCenter ? [[...startCenter]] : []
+    if (point === 'Start') return startCenter ? [[...startCenter]] : []
+    if (point === 'Finish') return finishCenter ? [[...finishCenter]] : startCenter ? [[...startCenter]] : []
     const exact = marks.find((mark) => mark.shortLabel === point)
     if (exact) return [[...(exact.actual ?? exact.target)]]
     const gateNumber = point.match(/^(\d+)[SP]?\/(?:\1)?[SP]$/u)?.[1]
@@ -149,5 +179,5 @@ export function buildCourseFeatures(marks: readonly CourseMark[], route?: readon
       geometry: { type: 'LineString', coordinates: gate.positions.map((position) => [...position]) },
     })),
   }
-  return { points, targetLinks, course, gates: gateLines, startLine }
+  return { points, targetLinks, course, gates: gateLines, startLine, finishLine }
 }

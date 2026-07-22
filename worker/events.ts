@@ -14,6 +14,7 @@ import {
   generateCoursePlan,
   recommendedStartLineLength,
   type CourseTemplate,
+  type FinishLineMode,
 } from '../shared/courseGeometry.js'
 import { recommendedCourseLength, type SupportedSailingClass } from '../shared/classPerformance.js'
 
@@ -45,6 +46,7 @@ interface CreateEventInput {
   windDirection?: number
   windSpeed?: number
   lowerGate?: boolean
+  finishLineMode?: FinishLineMode
   targetLengthMetres?: number
 }
 
@@ -156,25 +158,31 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
     : 8
   const preset = coursePresetForClass(className, courseCode)
   const lowerGate = body.lowerGate ?? preset.route.some((point) => point.includes('S/'))
+  if (body.finishLineMode !== undefined && body.finishLineMode !== 'separate' && body.finishLineMode !== 'shared-rc') {
+    return json({ error: 'フィニッシュライン方式を確認してください' }, { status: 400 })
+  }
+  const finishLineMode: FinishLineMode = body.finishLineMode === 'shared-rc' ? 'shared-rc' : 'separate'
   const recommendedLengthMetres = Math.round(
-    recommendedCourseLength(className as SupportedSailingClass, windSpeed, undefined, courseCode as CourseTemplate).kilometres * 1_000,
+    recommendedCourseLength(className as SupportedSailingClass, windSpeed, undefined, courseCode as CourseTemplate, finishLineMode).kilometres * 1_000,
   )
   const targetLengthMetres = typeof body.targetLengthMetres === 'number' && Number.isFinite(body.targetLengthMetres)
     ? Math.round(Math.min(30_000, Math.max(500, body.targetLengthMetres)))
     : recommendedLengthMetres
   const courseTemplate = courseCode as CourseTemplate
-  const startLineLength = recommendedStartLineLength(targetLengthMetres, courseTemplate, className)
+  const startLineLength = recommendedStartLineLength(targetLengthMetres, courseTemplate, className, windSpeed, finishLineMode)
   const startPin = destinationPoint(signalBoatPosition, startLineLength, windDirection - 90)
   const initialCoursePlan = generateCoursePlan({
     center,
     startLine: { pin: startPin, signal: signalBoatPosition },
     windDirection,
+    windSpeed,
     totalLengthMetres: targetLengthMetres,
     courseCode: courseTemplate,
     className,
     lowerGate,
     upperGate: false,
     secondGate: false,
+    finishLineMode,
   })
   const now = new Date().toISOString()
   const eventId = crypto.randomUUID()
@@ -257,14 +265,17 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
       if (!markId) throw new Error(`標準マーク ${key} が見つかりません`)
       return { markId, label, nodeType, target }
     })
-    const gateConfiguration = buildGateConfiguration(
-      {
-        lower: initialCourseNodes.some((node) => node.nodeType === 'gate' && (node.label.startsWith('下ゲート') || node.label.startsWith('内側ゲート'))),
-        upper: initialCourseNodes.some((node) => node.nodeType === 'gate' && node.label.startsWith('上ゲート')),
-        second: initialCourseNodes.some((node) => node.nodeType === 'gate' && node.label.startsWith('中ゲート')),
-      },
-      initialCourseNodes,
-    )
+    const gateConfiguration = {
+      ...buildGateConfiguration(
+        {
+          lower: initialCourseNodes.some((node) => node.nodeType === 'gate' && (node.label.startsWith('下ゲート') || node.label.startsWith('内側ゲート'))),
+          upper: initialCourseNodes.some((node) => node.nodeType === 'gate' && node.label.startsWith('上ゲート')),
+          second: initialCourseNodes.some((node) => node.nodeType === 'gate' && node.label.startsWith('中ゲート')),
+        },
+        initialCourseNodes,
+      ),
+      finishLineMode,
+    }
     statements.push(env.DB.prepare(
       `INSERT INTO races
        (id, regatta_id, race_area_id, race_number, race_order, class_name, course_code,
@@ -342,7 +353,7 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
     entityId: eventId,
     after: {
       name, slug, startsOn, endsOn, raceCount, className, courseCode, operationMode,
-      lowerGate, windDirection, windSpeed, targetLengthMetres, signalBoatPosition,
+      lowerGate, finishLineMode, windDirection, windSpeed, targetLengthMetres, signalBoatPosition,
       ownerRecovery: ownerRecoveryId ? 'issued-pending-confirmation' : 'two-or-more-passkeys',
     },
   })

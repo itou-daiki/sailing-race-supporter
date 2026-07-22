@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bearingDegrees, distanceMetres, estimateEtaSeconds, generateCoursePlan, headingDifferenceDegrees, midpoint, recommendedCourseLength } from '../src/course'
+import { bearingDegrees, distanceMetres, estimateEtaSeconds, firstLegLengthMetresFromTotal, generateCoursePlan, headingDifferenceDegrees, midpoint, recommendedCourseLength } from '../src/course'
 import { DEMO_RACES } from '../src/domain'
 
 describe('course calculations', () => {
@@ -29,7 +29,7 @@ describe('course calculations', () => {
     const longRace = recommendedCourseLength('470', 8, 50)
     expect(longRace.nauticalMiles).toBeGreaterThan(shortRace.nauticalMiles)
     expect(longRace.confidence).toBe('low')
-    expect(longRace.firstLegKilometres).toBeCloseTo(longRace.kilometres / 5.03, 6)
+    expect(longRace.kilometres).toBeCloseTo(longRace.firstLegKilometres * 4.4 + 0.15 * 1.852, 6)
     expect(longRace.legSpeedsKnots.closeHauledVmg).toBeCloseTo(5.1, 6)
     expect(longRace.legSpeedsKnots.reach).toBeCloseTo(7.3, 6)
     expect(longRace.legSpeedsKnots.downwindVmg).toBeCloseTo(6.6, 6)
@@ -44,8 +44,8 @@ describe('course calculations', () => {
 
     expect(triangle.legDistanceShare.reach).toBeGreaterThan(0.6)
     expect(windwardLeeward.legDistanceShare.reach).toBeLessThan(0.1)
-    expect(triangle.firstLegKilometres).toBeCloseTo(triangle.kilometres / 5.44, 6)
-    expect(windwardLeeward.firstLegKilometres).toBeCloseTo(windwardLeeward.kilometres / 4.22, 6)
+    expect(triangle.kilometres).toBeCloseTo(triangle.firstLegKilometres * 5.3 + 0.05 * 1.852, 6)
+    expect(windwardLeeward.kilometres).toBeCloseTo(windwardLeeward.firstLegKilometres * 4.13 + 0.05 * 1.852, 6)
   })
 
   it('keeps a decided start line and recommends marks from its midpoint', () => {
@@ -67,7 +67,55 @@ describe('course calculations', () => {
     const mark1 = plan.find((node) => node.key === 'mark-1')
     expect(mark1).toBeDefined()
     expect(bearingDegrees(midpoint(pin, signal), mark1!.target)).toBeCloseTo(0, 1)
-    expect(distanceMetres(midpoint(pin, signal), mark1!.target)).toBeCloseTo(5_400 / 5.03, -1)
+    expect(distanceMetres(midpoint(pin, signal), mark1!.target)).toBeCloseTo(
+      firstLegLengthMetresFromTotal(5_400, 'O2', '470'),
+      -1,
+    )
+  })
+
+  it('creates a separate O2 finish line square to the final reach', () => {
+    const plan = generateCoursePlan({
+      center: [131.5221959, 33.2786648],
+      windDirection: 0,
+      windSpeed: 8,
+      totalLengthMetres: 5_400,
+      courseCode: 'O2',
+      className: '470',
+      lowerGate: true,
+      upperGate: false,
+      finishLineMode: 'separate',
+    })
+    const gate = midpoint(
+      plan.find((node) => node.key === 'mark-3s')!.target,
+      plan.find((node) => node.key === 'mark-3p')!.target,
+    )
+    const finishMark = plan.find((node) => node.key === 'finish-mark')!
+    const finishBoat = plan.find((node) => node.key === 'finish-boat')!
+    const finishCenter = midpoint(finishMark.target, finishBoat.target)
+
+    expect(distanceMetres(gate, finishCenter)).toBeCloseTo(0.15 * 1_852, 0)
+    expect(distanceMetres(finishMark.target, finishBoat.target)).toBeCloseTo(50, 0)
+    expect(bearingDegrees(gate, finishCenter)).toBeCloseTo(135, 1)
+    expect(Math.abs(headingDifferenceDegrees(
+      bearingDegrees(gate, finishCenter),
+      bearingDegrees(finishMark.target, finishBoat.target),
+    ))).toBeCloseTo(90, 1)
+  })
+
+  it('reuses RC and PIN for a practice finish without adding finish equipment', () => {
+    const plan = generateCoursePlan({
+      center: [131.5221959, 33.2786648],
+      windDirection: 0,
+      totalLengthMetres: 5_400,
+      courseCode: 'O2',
+      className: '470',
+      lowerGate: true,
+      upperGate: false,
+      finishLineMode: 'shared-rc',
+    })
+
+    expect(plan.some((node) => node.nodeType === 'finish')).toBe(false)
+    expect(plan.map((node) => node.key)).toEqual(expect.arrayContaining(['start-pin', 'start-rc']))
   })
 
   it('places the O2 lower gate below mark 2 so the map forms an outer trapezoid', () => {

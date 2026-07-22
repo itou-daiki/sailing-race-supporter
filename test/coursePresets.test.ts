@@ -11,7 +11,7 @@ describe('class-aware course presets', () => {
       optionLabel: 'トラペゾイド（O2）— アウター・風上レグ2回',
       codeMeaning: 'O = Outer（アウター）／2 = 風上レグ2回',
       route: ['Start', '1', '2', '3S/3P', '2', '3P', 'Finish'],
-      initialMarkKeys: ['start-pin', 'start-rc', 'mark-1', 'mark-2', 'mark-3s', 'mark-3p'],
+      initialMarkKeys: ['start-pin', 'start-rc', 'mark-1', 'mark-2', 'mark-3s', 'mark-3p', 'finish-mark', 'finish-boat'],
     })
   })
 
@@ -33,7 +33,7 @@ describe('class-aware course presets', () => {
     expect(coursePresetForClass('スナイプ', 'O2').name).toBe('オリンピック・2周')
     expect(coursePresetForClass('スナイプ', 'T2').route).toEqual(['Start', '1', '2', '3', '1', '2', '3', 'Finish'])
     expect(coursePresetForClass('スナイプ', 'W2').initialMarkKeys).toEqual([
-      'start-pin', 'start-rc', 'mark-1', 'mark-1a', 'mark-3s', 'mark-3p',
+      'start-pin', 'start-rc', 'mark-1', 'mark-1a', 'mark-3s', 'mark-3p', 'finish-mark', 'finish-boat',
     ])
   })
 

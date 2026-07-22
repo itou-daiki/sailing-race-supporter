@@ -951,9 +951,11 @@ async function loadEventBootstrap(env: AppEnv, eventId: string, access: EventAcc
     if (!regatta) return json({ error: 'Event not found' }, { status: 404 })
 
     const races = await env.DB.prepare(
-      `SELECT id, race_area_id, race_number, class_name, course_code, status, warning_at,
-              target_minutes, finalized_revision, finalized_at
-       FROM races WHERE regatta_id = ? ORDER BY race_order`,
+      `SELECT race.id, race.race_area_id, race.race_number, race.class_name, race.course_code,
+              race.status, race.warning_at, race.target_minutes, race.finalized_revision, race.finalized_at,
+              (SELECT revision.gate_config_json FROM course_revisions revision
+               WHERE revision.race_id = race.id ORDER BY revision.revision DESC LIMIT 1) AS course_config_json
+       FROM races race WHERE race.regatta_id = ? ORDER BY race.race_order`,
     ).bind(regatta.id).all()
 
     const signalEvents = await env.DB.prepare(

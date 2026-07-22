@@ -1,4 +1,4 @@
-import { courseLegDivisor, type CourseTemplate } from './courseGeometry.js'
+import { courseSailingDistanceModel, type CourseTemplate, type FinishLineMode } from './courseGeometry.js'
 
 export type SupportedSailingClass =
   | 'OP'
@@ -66,35 +66,34 @@ export function recommendedCourseLength(
   windKnots: number,
   targetMinutes?: number,
   courseCode: CourseTemplate = className === 'スナイプ' ? 'W2' : 'O2',
+  finishLineMode: FinishLineMode = 'separate',
 ): CourseLengthRecommendation {
   const profile = CLASS_PERFORMANCE_PROFILES.find((item) => item.className === className)
   if (!profile) throw new Error(`Unsupported sailing class: ${className}`)
 
   const factor = windSpeedFactor(windKnots)
-  const legMix = courseCode === 'O2' && className === 'スナイプ'
-    ? { upwind: 1.86 / 4.58, downwind: 1 / 4.58, reach: 1.72 / 4.58 }
-    : courseCode === 'O2' || courseCode === 'I2'
-      ? { upwind: 1.91 / 5.03, downwind: 1.82 / 5.03, reach: 1.3 / 5.03 }
-      : courseCode === 'T2'
-        ? { upwind: 1.86 / 5.44, downwind: 0.14 / 5.44, reach: 3.44 / 5.44 }
-        : courseCode === 'トライアングル'
-          ? { upwind: 1 / 2.86, downwind: 0.14 / 2.86, reach: 1.72 / 2.86 }
-          : courseCode === 'W2'
-            ? { upwind: 1.91 / 4.22, downwind: 1.95 / 4.22, reach: 0.36 / 4.22 }
-            : { upwind: 0.5, downwind: 0.5, reach: 0 }
+  const distanceModel = courseSailingDistanceModel(courseCode, className, windKnots, finishLineMode)
   const upwindSpeed = profile.upwindKnotsAt8 * factor
   const downwindSpeed = profile.downwindKnotsAt8 * factor
   const reachSpeed = profile.reachKnotsAt8 * factor
-  // Race time is the sum of each leg's distance divided by speed, so the
-  // course-average speed must be a weighted harmonic mean, not an arithmetic mean.
-  const weightedSpeed = 1 / (
-    legMix.upwind / upwindSpeed +
-    legMix.downwind / downwindSpeed +
-    (legMix.reach ? legMix.reach / reachSpeed : 0)
-  )
   const durationHours = (targetMinutes ?? profile.targetMinutes) / 60
-  const nauticalMiles = weightedSpeed * durationHours
-  const firstLegNauticalMiles = nauticalMiles / courseLegDivisor(courseCode, className)
+  const fixedFinishNauticalMiles = distanceModel.fixedFinishDistanceMetres / 1_852
+  const finishSpeed = distanceModel.finishPointOfSail === 'reach' ? reachSpeed : downwindSpeed
+  const fixedFinishHours = fixedFinishNauticalMiles / finishSpeed
+  const hoursPerFirstLegNauticalMile =
+    distanceModel.closeHauledLegs / upwindSpeed +
+    distanceModel.downwindLegs / downwindSpeed +
+    distanceModel.reachLegs / reachSpeed
+  const firstLegNauticalMiles = Math.max(0.1, (durationHours - fixedFinishHours) / hoursPerFirstLegNauticalMile)
+  const closeHauledDistance = firstLegNauticalMiles * distanceModel.closeHauledLegs
+  const reachDistance = firstLegNauticalMiles * distanceModel.reachLegs + (
+    distanceModel.finishPointOfSail === 'reach' ? fixedFinishNauticalMiles : 0
+  )
+  const downwindDistance = firstLegNauticalMiles * distanceModel.downwindLegs + (
+    distanceModel.finishPointOfSail === 'downwind' ? fixedFinishNauticalMiles : 0
+  )
+  const nauticalMiles = closeHauledDistance + reachDistance + downwindDistance
+  const weightedSpeed = nauticalMiles / durationHours
 
   return {
     nauticalMiles,
@@ -108,9 +107,9 @@ export function recommendedCourseLength(
       downwindVmg: downwindSpeed,
     },
     legDistanceShare: {
-      closeHauled: legMix.upwind,
-      reach: legMix.reach,
-      downwind: legMix.downwind,
+      closeHauled: closeHauledDistance / nauticalMiles,
+      reach: reachDistance / nauticalMiles,
+      downwind: downwindDistance / nauticalMiles,
     },
     confidence: 'low',
   }

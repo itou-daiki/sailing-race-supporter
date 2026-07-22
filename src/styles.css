@@ -735,6 +735,32 @@ select:focus-visible {
   font-size: 9px;
 }
 
+.pre-event-map__edit-toggle {
+  position: absolute;
+  z-index: 5;
+  bottom: 12px;
+  left: 12px;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 11px;
+  color: #164966;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid #9fc6dc;
+  border-radius: 9px;
+  box-shadow: 0 5px 16px rgba(9, 39, 62, 0.14);
+  font-size: 9px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.pre-event-map__edit-toggle.is-active {
+  color: #fff;
+  background: var(--dodger-strong);
+  border-color: var(--dodger-strong);
+}
+
 .pre-event-map-mark {
   min-width: 40px;
   min-height: 40px;
@@ -771,11 +797,30 @@ select:focus-visible {
   background: var(--navy-soft);
   border-color: #fff;
   border-radius: 12px;
-  cursor: grab;
+  cursor: default;
 }
 
 .pre-event-map-mark.is-start-pin {
   border-color: #ff6b00;
+}
+
+.pre-event-map-mark.is-signal-boat.is-editable {
+  outline: 5px solid rgba(8, 126, 232, 0.24);
+  cursor: grab;
+}
+
+.pre-event-map-mark.is-finish-boat,
+.pre-event-map-mark.is-finish-mark {
+  color: #087452;
+  border-color: #13a66b;
+}
+
+.pre-event-map-mark.is-finish-boat {
+  min-width: 54px;
+  color: #fff;
+  background: #087452;
+  border-color: #fff;
+  border-radius: 10px;
 }
 
 .pre-event-map-mark.is-signal-boat span {
@@ -1818,6 +1863,19 @@ select:focus-visible {
   border: 2px solid #5f4108;
 }
 
+.legend-start-line,
+.legend-finish-line {
+  width: 16px;
+  height: 0;
+  display: inline-block;
+  border-top: 4px solid #ff6b00;
+  border-radius: 99px;
+}
+
+.legend-finish-line {
+  border-top-color: #13a66b;
+}
+
 .map-mark-strip {
   position: absolute;
   left: 14px;
@@ -2448,6 +2506,14 @@ select:focus-visible {
   transform: scale(1.06);
 }
 
+.mark-map-label.is-finish {
+  border-color: #13a66b;
+}
+
+.mark-map-label.is-finish > strong {
+  background: #087452;
+}
+
 .mark-map-label.is-stale > span b,
 .mark-map-label.is-stale > span small {
   color: #8a5700;
@@ -2455,7 +2521,7 @@ select:focus-visible {
 
 .map-canvas.is-placing-mark,
 .map-canvas.is-placing-mark .maplibregl-canvas {
-  cursor: crosshair;
+  cursor: default;
 }
 
 .map-placement-preview {
@@ -2466,6 +2532,19 @@ select:focus-visible {
   border: 4px solid #e5522d;
   border-radius: 50%;
   box-shadow: 0 0 0 9px rgba(229, 82, 45, 0.16);
+  cursor: grab;
+  touch-action: none;
+}
+
+.map-placement-preview::after {
+  content: '↕';
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #a92f16;
+  font-size: 14px;
+  font-weight: 950;
 }
 
 .map-placement-panel {
@@ -7409,6 +7488,32 @@ select:focus-visible {
   pointer-events: none;
 }
 
+.race-area-picker__edit {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 3;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  color: #075b95;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid #78bdea;
+  border-radius: 9px;
+  box-shadow: 0 4px 12px rgba(9, 39, 62, 0.16);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.race-area-picker__edit.is-active {
+  color: #fff;
+  background: #087ee8;
+  border-color: #087ee8;
+}
+
 .event-coordinate-details {
   color: var(--muted);
   font-size: 10px;
@@ -8921,6 +9026,11 @@ select:focus-visible {
     font-size: 11px;
   }
 
+  .race-area-picker__edit {
+    min-height: 42px;
+    font-size: 11px;
+  }
+
   .event-location-button,
   .event-coordinate-details summary,
   .start-line-basis__actions button {
@@ -9970,11 +10080,19 @@ select:focus-visible {
 
   .pre-event-map__hint {
     right: 8px;
-    bottom: 8px;
-    max-width: calc(100% - 56px);
+    bottom: 50px;
+    max-width: calc(100% - 16px);
     padding: 5px 7px;
     font-size: 8px;
     white-space: nowrap;
+  }
+
+  .pre-event-map__edit-toggle {
+    bottom: 8px;
+    left: 8px;
+    min-height: 36px;
+    padding: 0 9px;
+    font-size: 8px;
   }
 
   .pre-event-map-mark {
@@ -9991,6 +10109,11 @@ select:focus-visible {
     min-width: 54px;
     min-height: 43px;
     border-radius: 10px;
+  }
+
+  .pre-event-map-mark.is-finish-boat {
+    min-width: 46px;
+    min-height: 36px;
   }
 
   .pre-event-controls {

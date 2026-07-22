@@ -46,4 +46,11 @@ describe('pre-event course plan', () => {
       distanceMetres(shortPlan.signalBoatPosition, shortMark!.target) * 1.8,
     )
   })
+
+  it('does not create extra finish equipment in RC-shared practice mode', () => {
+    const marks = buildPreEventCourseMarks(plan({ finishLineMode: 'shared-rc' }))
+
+    expect(marks.some((mark) => mark.shortLabel === 'FIN' || mark.shortLabel === 'F')).toBe(false)
+    expect(marks.map((mark) => mark.shortLabel)).toEqual(expect.arrayContaining(['PIN', 'RC']))
+  })
 })

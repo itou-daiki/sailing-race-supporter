@@ -16,6 +16,7 @@ import type { OwnerRecoveryKit } from './authClient'
 import { makeRaceSignalEvent } from './signals'
 import type { GateGeometry } from '../shared/gates'
 import type { OperationMode } from '../shared/operationModes'
+import type { FinishLineMode } from '../shared/courseGeometry'
 
 export interface EventSummary {
   id: string
@@ -76,7 +77,7 @@ export interface CourseRevisionSummary {
   windDirection?: number
   windSpeed?: number
   targetLengthMetres?: number
-  gateConfig: { lower?: boolean; upper?: boolean; second?: boolean; gates?: GateGeometry[] }
+  gateConfig: { lower?: boolean; upper?: boolean; second?: boolean; finishLineMode?: FinishLineMode; gates?: GateGeometry[] }
   status: string
   basedOnRevision?: number
   createdBy?: string
@@ -134,6 +135,7 @@ export interface CreateEventInput {
   windDirection?: number
   windSpeed?: number
   lowerGate?: boolean
+  finishLineMode?: FinishLineMode
   targetLengthMetres?: number
 }
 
@@ -144,6 +146,7 @@ export interface EventCreationPlan {
   windDirection: number
   windSpeed: number
   lowerGate: boolean
+  finishLineMode?: FinishLineMode
   targetLengthMetres: number
 }
 
@@ -207,7 +210,7 @@ export interface BootstrapResponse {
   races: Array<{
     id: string; race_area_id: string; race_number: string; class_name: SailingClass; course_code: string
     status: RaceDefinition['status']; warning_at: string; target_minutes: number
-    finalized_revision: number | null; finalized_at: string | null
+    finalized_revision: number | null; finalized_at: string | null; course_config_json: string | null
   }>
   signalEvents: Array<{
     id: string; race_id: string; signal_type: RaceSignalAction; executed_at: string; scheduled_at: string | null
@@ -494,9 +497,13 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
     races: response.races.map((race) => {
       const latest = (response.raceCorrections ?? []).find((correction) => correction.race_id === race.id)
       let corrections: { courseCode?: string; warningAt?: string; targetMinutes?: number } = {}
+      let courseConfig: { finishLineMode?: FinishLineMode } = {}
       try {
         if (latest) corrections = JSON.parse(latest.patch_json) as typeof corrections
       } catch { /* Invalid historical patches do not replace the finalized base record. */ }
+      try {
+        if (race.course_config_json) courseConfig = JSON.parse(race.course_config_json) as typeof courseConfig
+      } catch { /* Invalid historical course settings fall back to the separate finish. */ }
       const signalRow = (response.signalEvents ?? []).find((signal) => signal.race_id === race.id)
       let signalPayload: Record<string, unknown> = {}
       try {
@@ -540,6 +547,7 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
         number: race.race_number,
         className: race.class_name,
         courseCode: corrections.courseCode ?? race.course_code,
+        finishLineMode: courseConfig.finishLineMode === 'shared-rc' ? 'shared-rc' : 'separate',
         status: race.status,
         warningAt: corrections.warningAt ?? race.warning_at,
         targetMinutes: corrections.targetMinutes ?? race.target_minutes,
@@ -766,6 +774,7 @@ export async function saveCourseRevision(
     lowerGate: boolean
     upperGate: boolean
     secondGate?: boolean
+    finishLineMode?: FinishLineMode
     nodes: Array<{ markId: string; label: string; nodeType: string; rounding?: string; target: readonly [number, number] }>
   },
 ): Promise<{ revisionId: string; revision: number; createdAt: string }> {

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { PreEventCoursePlanner } from '../src/components/PreEventCoursePlanner'
 import { recommendedCourseLength } from '../src/course'
@@ -22,7 +22,7 @@ describe('PreEventCoursePlanner mobile navigation', () => {
     expect(coursePanel).toHaveClass('is-mobile-active')
     expect(positionPanel).not.toHaveClass('is-mobile-active')
 
-    fireEvent.click(screen.getByRole('button', { name: /本部船.*位置/u }))
+    fireEvent.click(within(screen.getByRole('navigation', { name: '設定する項目' })).getByRole('button', { name: /本部船.*位置/u }))
     expect(coursePanel).not.toHaveClass('is-mobile-active')
     expect(positionPanel).toHaveClass('is-mobile-active')
 
@@ -41,7 +41,22 @@ describe('PreEventCoursePlanner mobile navigation', () => {
       className: '470',
       courseCode: 'O2',
       windSpeed: 4,
+      finishLineMode: 'separate',
       targetLengthMetres: Number(recommendedCourseLength('470', 4, undefined, 'O2').kilometres.toFixed(2)) * 1_000,
     }))
+  })
+
+  it('offers a practice finish that reuses RC and PIN without extra finish marks', async () => {
+    const onIssueEvent = vi.fn()
+    const { container } = render(<PreEventCoursePlanner onIssueEvent={onIssueEvent} onOpenEvents={vi.fn()} />)
+
+    fireEvent.click(within(container).getByRole('radio', { name: '本船兼用（RC＋PIN）' }))
+    expect(within(container).getByText('練習向け・追加マーク不要')).toBeInTheDocument()
+    expect(within(container).queryByText('フィニッシュ艇')).not.toBeInTheDocument()
+
+    const issueButton = within(container).getAllByRole('button', { name: '大会URLを発行' }).at(-1)!
+    await waitFor(() => expect(issueButton).toBeEnabled())
+    fireEvent.click(issueButton)
+    expect(onIssueEvent).toHaveBeenCalledWith(expect.objectContaining({ finishLineMode: 'shared-rc' }))
   })
 })

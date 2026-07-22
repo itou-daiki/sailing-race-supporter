@@ -2,7 +2,9 @@ import type { LngLat } from './domain'
 export { recommendedCourseLength } from '../shared/classPerformance.js'
 export {
   courseLegDivisor,
+  courseSailingDistanceModel,
   destinationPoint,
+  firstLegLengthMetresFromTotal,
   generateCoursePlan,
   recommendedStartLineLength,
 } from '../shared/courseGeometry.js'
@@ -10,6 +12,7 @@ export type {
   CoursePlanInput,
   CoursePlanNode,
   CourseTemplate,
+  FinishLineMode,
 } from '../shared/courseGeometry.js'
 
 const EARTH_RADIUS_METRES = 6_371_008.8

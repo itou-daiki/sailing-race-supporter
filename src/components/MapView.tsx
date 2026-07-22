@@ -304,6 +304,7 @@ export function MapView({
       map.addSource('course-route', { type: 'geojson', data: initialFeaturesRef.current.course })
       map.addSource('gate-lines', { type: 'geojson', data: initialFeaturesRef.current.gates })
       map.addSource('start-line', { type: 'geojson', data: initialFeaturesRef.current.startLine })
+      map.addSource('finish-line', { type: 'geojson', data: initialFeaturesRef.current.finishLine })
       map.addLayer({
         id: 'start-line-casing',
         type: 'line',
@@ -315,6 +316,28 @@ export function MapView({
         type: 'line',
         source: 'start-line',
         paint: { 'line-color': '#ff6b00', 'line-width': 5, 'line-opacity': 1 },
+      })
+      map.addLayer({
+        id: 'finish-line-casing',
+        type: 'line',
+        source: 'finish-line',
+        paint: {
+          'line-color': '#ffffff',
+          'line-width': 8,
+          'line-opacity': 0.95,
+          'line-offset': ['case', ['boolean', ['get', 'shared'], false], 5, 0],
+        },
+      })
+      map.addLayer({
+        id: 'finish-line-main',
+        type: 'line',
+        source: 'finish-line',
+        paint: {
+          'line-color': '#13a66b',
+          'line-width': 5,
+          'line-opacity': 1,
+          'line-offset': ['case', ['boolean', ['get', 'shared'], false], 5, 0],
+        },
       })
       map.addLayer({
         id: 'gate-width-line',
@@ -423,6 +446,7 @@ export function MapView({
     ;(map.getSource('course-route') as GeoJSONSource | undefined)?.setData(features.course)
     ;(map.getSource('gate-lines') as GeoJSONSource | undefined)?.setData(features.gates)
     ;(map.getSource('start-line') as GeoJSONSource | undefined)?.setData(features.startLine)
+    ;(map.getSource('finish-line') as GeoJSONSource | undefined)?.setData(features.finishLine)
   }, [features, mapReady])
 
   useEffect(() => {
@@ -470,7 +494,7 @@ export function MapView({
       const age = reading ? observationAgeSeconds(reading.observation.observedAt, freshnessNow) : undefined
       const element = document.createElement('button')
       element.type = 'button'
-      element.className = `mark-map-label ${mark.actual ? 'is-deployed' : 'is-planned'} ${selectedMarkId === mark.id ? 'is-selected' : ''} ${(age ?? 0) > 300 ? 'is-stale' : ''}`
+      element.className = `mark-map-label ${mark.actual ? 'is-deployed' : 'is-planned'} ${selectedMarkId === mark.id ? 'is-selected' : ''} ${mark.shortLabel === 'FIN' || mark.shortLabel === 'F' ? 'is-finish' : ''} ${(age ?? 0) > 300 ? 'is-stale' : ''}`
       const boatName = reading?.observation.committeeBoatId
         ? boats.find((boat) => boat.id === reading.observation.committeeBoatId)?.name
         : undefined
@@ -520,13 +544,8 @@ export function MapView({
     if (!map || !mapReady || !mapPlacementMode || !selectedMark) return
     const canvas = map.getCanvas()
     canvas.classList.add('is-placing-mark')
-    const handleMapClick = (event: maplibregl.MapMouseEvent) => {
-      setPendingMapPosition([event.lngLat.lng, event.lngLat.lat])
-    }
-    map.on('click', handleMapClick)
     return () => {
       canvas.classList.remove('is-placing-mark')
-      map.off('click', handleMapClick)
     }
   }, [mapPlacementMode, mapReady, selectedMark])
 
@@ -535,17 +554,24 @@ export function MapView({
     placementPreviewRef.current?.remove()
     placementPreviewRef.current = null
     if (!map || !mapReady || !mapPlacementMode || !pendingMapPosition) return
+    const placementMark = selectedMark
+    if (!placementMark) return
     const element = document.createElement('span')
     element.className = 'map-placement-preview'
-    element.setAttribute('aria-hidden', 'true')
-    placementPreviewRef.current = new maplibregl.Marker({ element, anchor: 'center' })
+    element.setAttribute('aria-label', `${placementMark.shortLabel}を押したままドラッグ`)
+    const marker = new maplibregl.Marker({ element, anchor: 'center', draggable: true })
       .setLngLat([...pendingMapPosition])
       .addTo(map)
+    marker.on('dragend', () => {
+      const next = marker.getLngLat()
+      setPendingMapPosition([next.lng, next.lat])
+    })
+    placementPreviewRef.current = marker
     return () => {
       placementPreviewRef.current?.remove()
       placementPreviewRef.current = null
     }
-  }, [mapPlacementMode, mapReady, pendingMapPosition])
+  }, [mapPlacementMode, mapReady, pendingMapPosition, selectedMark])
 
   useEffect(() => () => {
     if (watchRef.current != null) navigator.geolocation.clearWatch(watchRef.current)
@@ -727,6 +753,8 @@ export function MapView({
         <span><i className="legend-verification" /> 位置確認</span>
         <span><i className="legend-recovery" /> 回収地点</span>
         <span><i className="legend-gate-center" /> ゲート中央</span>
+        <span><i className="legend-start-line" /> スタート</span>
+        <span><i className="legend-finish-line" /> フィニッシュ</span>
         <span className="map-legend-boats"><Navigation size={13} /> 運営ボート</span>
         <span className={`map-coast-clearance is-${coastClearance.status}`}>
           {coastClearance.status === 'safe' ? <ShieldCheck size={13} /> : <AlertTriangle size={13} />}
@@ -833,11 +861,11 @@ export function MapView({
                 setManualEditorMarkId(undefined)
                 setExpandedMarkId(undefined)
                 setMapPlacementMarkId(selectedMark.id)
-                setPendingMapPosition(undefined)
+                setPendingMapPosition(selectedMark.actual ?? selectedMark.target)
               }}
               disabled={!canManageSelectedMark || locked && !canEditFinalizedPosition}
             >
-              <MousePointer2 size={14} /> 地図をタップして配置
+              <MousePointer2 size={14} /> 地図上でドラッグして配置
             </button>}
             {selectedMark.status === 'deployed' && (
               <button type="button" className="mark-action--verify" onClick={() => onRecordConfirmation(selectedMark.id)} disabled={locked || !selfBoat || !canVerifyMarks}>
@@ -918,15 +946,15 @@ export function MapView({
           <div>
             <MousePointer2 size={18} />
             <span>
-              <strong>{pendingMapPosition ? `${selectedMark.shortLabel}：この地点でよいですか？` : `${selectedMark.shortLabel}を置く地点をタップ`}</strong>
+              <strong>{selectedMark.shortLabel}を押したままドラッグ</strong>
               <small>{pendingMapPosition
-                ? `${pendingMapPosition[1].toFixed(6)}, ${pendingMapPosition[0].toFixed(6)}・地図指定は概略位置です`
-                : '地図を拡大してから地点を選べます。保存前に座標を確認してください。'}</small>
+                ? `${pendingMapPosition[1].toFixed(6)}, ${pendingMapPosition[0].toFixed(6)}・通常の地図タップでは配置は変わりません`
+                : '配置位置を準備中です'}</small>
             </span>
           </div>
           <div className="map-placement-panel__actions">
             {pendingMapPosition && <button type="button" className="map-placement-confirm" onClick={confirmMapPlacement}>この地点に配置</button>}
-            <button type="button" onClick={() => setPendingMapPosition(undefined)} disabled={!pendingMapPosition}>選び直す</button>
+            <button type="button" onClick={() => setPendingMapPosition(selectedMark.actual ?? selectedMark.target)}>元の位置に戻す</button>
             <button type="button" aria-label="地図配置を取り消す" onClick={() => { setMapPlacementMarkId(undefined); setPendingMapPosition(undefined) }}><X size={17} /></button>
           </div>
         </aside>

@@ -14,4 +14,6 @@ export const STANDARD_MARK_DEFINITIONS = [
   ['mark-4', '4マーク', 'rounding'],
   ['start-pin', 'スタート・ピン', 'pin'],
   ['start-rc', 'シグナルボート', 'signal'],
+  ['finish-mark', 'フィニッシュマーク', 'finish-mark'],
+  ['finish-boat', 'フィニッシュ艇', 'finish-boat'],
 ] as const

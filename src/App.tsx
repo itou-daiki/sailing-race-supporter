@@ -86,6 +86,7 @@ import { assignWindReadingsToMarks, formatWindSpeedDual } from './markWind'
 import { canRecordOverallWind, isRaceOfficerRole, operationRoleLabel, roleCan } from '../shared/roles'
 import type { OperationMode } from '../shared/operationModes'
 import { deriveOperationalGuidance } from './operationalGuidance'
+import { shortCourseMarkLabel } from './courseMarkLabels'
 
 const DETAIL_KEY = 'srs-board-detail-v2'
 const SCALE_KEY = 'srs-board-scale'
@@ -297,6 +298,7 @@ export default function App() {
   const [seaCurrent, setSeaCurrent] = useState<CurrentObservation>(INITIAL_CURRENT)
   const [courseTemplate, setCourseTemplate] = useState<CourseTemplate>('O2')
   const [lowerGate, setLowerGate] = useState(true)
+  const [finishLineMode, setFinishLineMode] = useState<'separate' | 'shared-rc'>('separate')
   const [upperGate, setUpperGate] = useState(false)
   const [secondGate, setSecondGate] = useState(false)
   const [gateWidthMetres, setGateWidthMetres] = useState(130)
@@ -674,18 +676,20 @@ export default function App() {
       const preview = generateCoursePlan({
         center: fallbackCenter,
         windDirection: courseWindDirection,
+        windSpeed: courseWindSpeed,
         totalLengthMetres: recommendedCourseLength(activeRace.className, courseWindSpeed, activeRace.targetMinutes, activeCoursePreset.code as CourseTemplate).kilometres * 1_000,
         courseCode: activeCoursePreset.code as CourseTemplate,
         className: activeRace.className,
         lowerGate: activeCoursePreset.route.some((point) => point.includes('S/')),
         upperGate: false,
+        finishLineMode: activeRace.finishLineMode ?? 'separate',
       })
       return preview.map((node) => {
         const physical = eventResources.marks.find((mark) => mark.label === node.label)
         return {
           id: physical?.id ?? `${activeRace.id}-${node.key}`,
           label: node.label,
-          shortLabel: node.label === 'スタート・ピン' ? 'PIN' : node.label === 'シグナルボート' ? 'RC' : node.label.replace('オフセット ', '').replace('下ゲート ', '').replace('内側ゲート ', '').replace('中ゲート ', '').replace('上ゲート ', '').replace('マーク', '').trim(),
+          shortLabel: shortCourseMarkLabel(node.label),
           target: node.target,
           status: 'planned' as const,
           isGate: node.nodeType === 'gate',
@@ -693,7 +697,44 @@ export default function App() {
         }
       })
     })()
-    return sourceMarks.map((mark) => {
+    const marksWithFinish: CourseMark[] = activeRace.finishLineMode === 'shared-rc'
+      ? sourceMarks.filter((mark) => mark.shortLabel !== 'FIN' && mark.shortLabel !== 'F')
+      : sourceMarks.some((mark) => mark.shortLabel === 'FIN' || mark.shortLabel === 'F')
+      ? sourceMarks
+      : (() => {
+          const startPin = sourceMarks.find((mark) => mark.shortLabel === 'PIN')
+          const startSignal = sourceMarks.find((mark) => mark.shortLabel === 'RC')
+          const startLine = startPin && startSignal ? {
+            pin: startPin.actual ?? startPin.target,
+            signal: startSignal.actual ?? startSignal.target,
+          } : undefined
+          const center = startLine
+            ? midpoint(startLine.pin, startLine.signal)
+            : raceAreaCenter ?? sourceMarks[0]?.target ?? [131.5221959, 33.2786648] as LngLat
+          const finishNodes = generateCoursePlan({
+            center,
+            startLine,
+            windDirection: courseWindDirection,
+            windSpeed: courseWindSpeed,
+            totalLengthMetres: recommendedCourseLength(activeRace.className, courseWindSpeed, activeRace.targetMinutes, activeCoursePreset.code as CourseTemplate).kilometres * 1_000,
+            courseCode: activeCoursePreset.code as CourseTemplate,
+            className: activeRace.className,
+            lowerGate: activeCoursePreset.route.some((point) => point.includes('S/')),
+            upperGate: false,
+            finishLineMode: 'separate',
+          }).filter((node) => node.nodeType === 'finish')
+          return [...sourceMarks, ...finishNodes.map((node) => {
+            const physical = eventResources.marks.find((mark) => mark.label === node.label)
+            return {
+              id: physical?.id ?? `${activeRace.id}-${node.key}`,
+              label: node.label,
+              shortLabel: shortCourseMarkLabel(node.label),
+              target: node.target,
+              status: 'planned' as const,
+            }
+          })]
+        })()
+    return marksWithFinish.map((mark) => {
       if (mark.assignedBoatId) return mark
       const assignment = eventResources.members.find((member) => member.markId === mark.id && member.committeeBoatId)
       return assignment ? { ...mark, assignedBoatId: assignment.committeeBoatId } : mark
@@ -711,7 +752,7 @@ export default function App() {
     note: draftMarkCorrection.note,
     committeeBoatId: draftMarkCorrection.committeeBoatId,
   } : undefined)
-  const recommendation = recommendedCourseLength(selectedClass, courseWindSpeed, activeRace.targetMinutes, selectedCoursePreset.code as CourseTemplate)
+  const recommendation = recommendedCourseLength(selectedClass, courseWindSpeed, activeRace.targetMinutes, selectedCoursePreset.code as CourseTemplate, finishLineMode)
   const startPinMark = marks.find((mark) => mark.label === 'スタート・ピン')
   const startSignalMark = marks.find((mark) => mark.label === 'シグナルボート')
   const recordedStartEndpoints = Number(Boolean(startPinMark?.actual)) + Number(Boolean(startSignalMark?.actual))
@@ -1462,6 +1503,7 @@ export default function App() {
       : 'O2'
     setCourseTemplate(normalizeCoursePresetCode(selectedClass, supported))
     setLowerGate(activeRace.marks.some((mark) => mark.label.startsWith('下ゲート') || mark.label.startsWith('内側ゲート')) || activeRace.courseCode.includes('ゲート'))
+    setFinishLineMode(activeRace.finishLineMode ?? 'separate')
     setUpperGate(activeRace.marks.some((mark) => mark.label.startsWith('上ゲート')))
     setSecondGate(activeRace.marks.some((mark) => mark.label.startsWith('中ゲート')))
     setGateWidthMetres(130)
@@ -1475,6 +1517,7 @@ export default function App() {
           setCourseHistory(revisions)
           const savedWidth = revisions[0]?.gateConfig.gates?.[0]?.widthMetres
           if (savedWidth && Number.isFinite(savedWidth)) setGateWidthMetres(Math.round(savedWidth))
+          setFinishLineMode(revisions[0]?.gateConfig.finishLineMode === 'shared-rc' ? 'shared-rc' : 'separate')
         })
         .catch((reason) => setCourseSaveError(reason instanceof Error ? reason.message : 'コース版履歴を取得できません'))
         .finally(() => setCourseHistoryLoading(false))
@@ -1521,6 +1564,7 @@ export default function App() {
       center,
       startLine,
       windDirection: courseWindDirection,
+      windSpeed: courseWindSpeed,
       totalLengthMetres: recommendation.kilometres * 1_000,
       courseCode: courseTemplate,
       className: selectedClass,
@@ -1528,6 +1572,7 @@ export default function App() {
       upperGate,
       secondGate,
       gateWidthMetres,
+      finishLineMode,
     })
     const allPhysicalMarks = new Map<string, { id: string; label: string }>()
     marks.forEach((mark) => allPhysicalMarks.set(mark.label, mark))
@@ -1541,7 +1586,7 @@ export default function App() {
       return [{
         id: physical.id,
         label: node.label,
-        shortLabel: node.label === 'スタート・ピン' ? 'PIN' : node.label === 'シグナルボート' ? 'RC' : node.label.replace('オフセット ', '').replace('下ゲート ', '').replace('内側ゲート ', '').replace('中ゲート ', '').replace('上ゲート ', '').replace('マーク', '').trim(),
+        shortLabel: shortCourseMarkLabel(node.label),
         target: node.target,
         actual: existing?.actual,
         status: existing?.status ?? 'planned' as const,
@@ -1565,11 +1610,13 @@ export default function App() {
           lowerGate,
           upperGate,
           secondGate,
+          finishLineMode,
           nodes: plannedMarks.map((mark) => ({
             markId: mark.id,
             label: mark.label,
             nodeType: mark.label === 'スタート・ピン' || mark.label === 'シグナルボート'
               ? 'start'
+              : mark.label === 'フィニッシュマーク' || mark.label === 'フィニッシュ艇' ? 'finish'
               : mark.label.includes('オフセット') ? 'offset' : mark.isGate ? 'gate' : 'single',
             rounding: mark.isGate ? 'gate' : 'port',
             target: mark.target,
@@ -1584,6 +1631,7 @@ export default function App() {
       setRaces((current) => current.map((race) => race.id === activeRace.id ? {
         ...race,
         courseCode: courseTemplate,
+        finishLineMode,
         marks: plannedMarks,
       } : race))
       setSettingsOpen(false)
@@ -2210,6 +2258,7 @@ export default function App() {
               <Waves size={17} /> 潮流を現在地と共有
             </button>
             <label className="switch-row"><span><strong>風下／内側ゲート</strong><small>{courseTemplate === 'I2' || courseTemplate === 'L2' || courseTemplate === 'L3' ? '4S / 4Pを使用' : '3S / 3Pを使用'}</small></span><input type="checkbox" checked={lowerGate} disabled={!canChangeCourse} onChange={(event) => setLowerGate(event.target.checked)} /></label>
+            <label><span>フィニッシュライン</span><select value={finishLineMode} disabled={!canChangeCourse} onChange={(event) => setFinishLineMode(event.target.value as 'separate' | 'shared-rc')}><option value="separate">別に設置（FIN艇＋Fマーク）</option><option value="shared-rc">本船兼用（RC＋PIN・追加マーク不要）</option></select><small>{finishLineMode === 'separate' ? '最終レグに直角の緑ラインを別に作ります。' : 'スタートラインをフィニッシュにも使用します。練習やワンオペ向けです。'}</small></label>
             <label className="switch-row"><span><strong>上ゲート</strong><small>1S / 1Pを使用</small></span><input type="checkbox" checked={upperGate} disabled={!canChangeCourse} onChange={(event) => setUpperGate(event.target.checked)} /></label>
             {(courseTemplate === 'O2' || courseTemplate === 'I2' || courseTemplate === 'T2' || courseTemplate === 'トライアングル') && <label className="switch-row"><span><strong>中ゲート</strong><small>2マークを2S / 2Pへ切替</small></span><input type="checkbox" checked={secondGate} disabled={!canChangeCourse} onChange={(event) => setSecondGate(event.target.checked)} /></label>}
             {(lowerGate || upperGate || secondGate) && <label><span>計画ゲート幅（m・全ゲート共通）</span><input type="number" min="40" max="600" step="5" value={gateWidthMetres} disabled={!canChangeCourse} onChange={(event) => setGateWidthMetres(Math.min(600, Math.max(40, Number(event.target.value) || 40)))} /></label>}

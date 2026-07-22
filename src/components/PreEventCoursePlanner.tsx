@@ -5,7 +5,7 @@ import {
   type LngLat,
   type SailingClass,
 } from '../domain'
-import { courseLegDivisor, recommendedCourseLength, type CourseTemplate } from '../course'
+import { firstLegLengthMetresFromTotal, recommendedCourseLength, type CourseTemplate } from '../course'
 import { coursePresetForClass, coursePresetsForClass, normalizeCoursePresetCode, type CoursePresetCode } from '../../shared/coursePresets'
 import { DEFAULT_RACE_AREA_CENTER } from '../../shared/defaultRaceArea'
 import type { EventCreationPlan } from '../eventClient'
@@ -33,14 +33,15 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
   const [className, setClassName] = useState<SailingClass>('470')
   const [courseCode, setCourseCode] = useState<CoursePresetCode>('O2')
   const [lowerGate, setLowerGate] = useState(true)
+  const [finishLineMode, setFinishLineMode] = useState<'separate' | 'shared-rc'>('separate')
   const [longitude, setLongitude] = useState(String(DEFAULT_RACE_AREA_CENTER.longitude))
   const [latitude, setLatitude] = useState(String(DEFAULT_RACE_AREA_CENTER.latitude))
   const [windDirection, setWindDirection] = useState(350)
   const [windSpeed, setWindSpeed] = useState(8)
   const selectedPreset = coursePresetForClass(className, courseCode)
   const recommendation = useMemo(
-    () => recommendedCourseLength(className, windSpeed, undefined, selectedPreset.code as CourseTemplate),
-    [className, selectedPreset.code, windSpeed],
+    () => recommendedCourseLength(className, windSpeed, undefined, selectedPreset.code as CourseTemplate, finishLineMode),
+    [className, finishLineMode, selectedPreset.code, windSpeed],
   )
   const [courseLengthKm, setCourseLengthKm] = useState(() => recommendedCourseLength('470', 8, undefined, 'O2').kilometres.toFixed(2))
   const [locationError, setLocationError] = useState<string>()
@@ -66,8 +67,9 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
     windDirection,
     windSpeed,
     lowerGate,
+    finishLineMode,
     targetLengthMetres: Math.max(500, Number(courseLengthKm) * 1_000 || recommendation.kilometres * 1_000),
-  }), [className, courseLengthKm, lowerGate, parsedPosition, recommendation.kilometres, selectedPreset.code, windDirection, windSpeed])
+  }), [className, courseLengthKm, finishLineMode, lowerGate, parsedPosition, recommendation.kilometres, selectedPreset.code, windDirection, windSpeed])
   const marks = useMemo(() => buildPreEventCourseMarks(plan), [plan])
   const coursePath = useMemo(() => coursePathForMarks(marks, selectedPreset.route), [marks, selectedPreset.route])
   const coursePathKey = useMemo(() => coursePath.map((position) => position.join(',')).join('|'), [coursePath])
@@ -75,7 +77,13 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
     ? coastCheck.assessment
     : { status: 'checking' }
   const enteredTotalKilometres = Math.max(0.5, Number(courseLengthKm) || recommendation.kilometres)
-  const plannedFirstLegKilometres = enteredTotalKilometres / courseLegDivisor(selectedPreset.code as CourseTemplate, className)
+  const plannedFirstLegKilometres = firstLegLengthMetresFromTotal(
+    enteredTotalKilometres * 1_000,
+    selectedPreset.code as CourseTemplate,
+    className,
+    windSpeed,
+    finishLineMode,
+  ) / 1_000
   const canIssueEvent = Boolean(parsedPosition && coastClearance.status === 'safe' && !relocatingCourse)
 
   const changeClass = (nextClass: SailingClass) => {
@@ -84,20 +92,25 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
     setClassName(nextClass)
     setCourseCode(nextCode)
     setLowerGate(preset.route.some((point) => point.includes('S/')))
-    setCourseLengthKm(recommendedCourseLength(nextClass, windSpeed, undefined, preset.code as CourseTemplate).kilometres.toFixed(2))
+    setCourseLengthKm(recommendedCourseLength(nextClass, windSpeed, undefined, preset.code as CourseTemplate, finishLineMode).kilometres.toFixed(2))
   }
 
   const changeCourse = (nextCode: CoursePresetCode) => {
     const preset = coursePresetForClass(className, nextCode)
     setCourseCode(nextCode)
     setLowerGate(preset.route.some((point) => point.includes('S/')))
-    setCourseLengthKm(recommendedCourseLength(className, windSpeed, undefined, preset.code as CourseTemplate).kilometres.toFixed(2))
+    setCourseLengthKm(recommendedCourseLength(className, windSpeed, undefined, preset.code as CourseTemplate, finishLineMode).kilometres.toFixed(2))
   }
 
   const changeWindSpeed = (nextSpeed: number) => {
     const normalized = Math.min(40, Math.max(1, nextSpeed))
     setWindSpeed(normalized)
-    setCourseLengthKm(recommendedCourseLength(className, normalized, undefined, selectedPreset.code as CourseTemplate).kilometres.toFixed(2))
+    setCourseLengthKm(recommendedCourseLength(className, normalized, undefined, selectedPreset.code as CourseTemplate, finishLineMode).kilometres.toFixed(2))
+  }
+
+  const changeFinishLineMode = (nextMode: 'separate' | 'shared-rc') => {
+    setFinishLineMode(nextMode)
+    setCourseLengthKm(recommendedCourseLength(className, windSpeed, undefined, selectedPreset.code as CourseTemplate, nextMode).kilometres.toFixed(2))
   }
 
   const setSignalPosition = (position: LngLat) => {
@@ -163,11 +176,11 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
 
   useEffect(() => {
     if (coastClearance.status !== 'unsafe' || !parsedPosition || relocatingCourse) return
-    const adjustmentKey = [parsedPosition.join(','), selectedPreset.code, windDirection, courseLengthKm, lowerGate].join('|')
+    const adjustmentKey = [parsedPosition.join(','), selectedPreset.code, windDirection, courseLengthKm, lowerGate, finishLineMode].join('|')
     if (automaticAdjustmentKeyRef.current === adjustmentKey) return
     automaticAdjustmentKeyRef.current = adjustmentKey
     void relocateCourseOffshore()
-  }, [coastClearance.status, courseLengthKm, lowerGate, parsedPosition, relocateCourseOffshore, relocatingCourse, selectedPreset.code, windDirection])
+  }, [coastClearance.status, courseLengthKm, finishLineMode, lowerGate, parsedPosition, relocateCourseOffshore, relocatingCourse, selectedPreset.code, windDirection])
 
   const coastClearanceDisplay = relocatingCourse
     ? { status: 'checking' as const, label: '300m確保へ沖側に補正中' }
@@ -223,6 +236,12 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
               <button type="button" role="radio" aria-checked={lowerGate} className={lowerGate ? 'is-selected' : ''} onClick={() => setLowerGate(true)}>あり（S・Pの2点）</button>
               <button type="button" role="radio" aria-checked={!lowerGate} className={!lowerGate ? 'is-selected' : ''} onClick={() => setLowerGate(false)}>なし（単一マーク）</button>
             </div>
+            <div className="pre-event-gate" role="radiogroup" aria-label="フィニッシュライン方式">
+              <span>フィニッシュ</span>
+              <button type="button" role="radio" aria-checked={finishLineMode === 'separate'} className={finishLineMode === 'separate' ? 'is-selected' : ''} onClick={() => changeFinishLineMode('separate')}>別に設置（FIN艇＋F）</button>
+              <button type="button" role="radio" aria-checked={finishLineMode === 'shared-rc'} className={finishLineMode === 'shared-rc' ? 'is-selected' : ''} onClick={() => changeFinishLineMode('shared-rc')}>本船兼用（RC＋PIN）</button>
+            </div>
+            <p className="pre-event-course-summary"><strong>{finishLineMode === 'separate' ? '大会向け・独立フィニッシュ' : '練習向け・追加マーク不要'}</strong><span>{finishLineMode === 'separate' ? '緑のFIN–Fラインを別に設定します。' : '橙のスタートラインをフィニッシュにも使います。'}</span></p>
           </section>
 
           <section className={`pre-event-step-panel ${mobileStep === 'position' ? 'is-mobile-active' : ''}`} data-mobile-panel="position">
@@ -272,6 +291,7 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
           signalBoatPosition={plan.signalBoatPosition}
           windDirection={windDirection}
           windSpeed={windSpeed}
+          finishLineMode={finishLineMode}
           coastClearance={coastClearanceDisplay}
           onSignalBoatPositionChange={setSignalPosition}
         />

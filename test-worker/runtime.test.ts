@@ -125,7 +125,7 @@ describe('Cloudflare Workers runtime integration', () => {
       "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
     ).first<{ count: number }>()
 
-    expect(migrations.results).toHaveLength(29)
+    expect(migrations.results).toHaveLength(30)
     expect(tableCount?.count).toBeGreaterThanOrEqual(50)
   })
 
@@ -229,6 +229,8 @@ describe('Cloudflare Workers runtime integration', () => {
       { label: '2マーク', node_type: 'single' },
       { label: '下ゲート 3S', node_type: 'gate' },
       { label: '下ゲート 3P', node_type: 'gate' },
+      { label: 'フィニッシュマーク', node_type: 'finish' },
+      { label: 'フィニッシュ艇', node_type: 'finish' },
     ])
 
     const soloResponse = await exports.default.fetch('https://example.test/api/events', {
@@ -246,6 +248,7 @@ describe('Cloudflare Workers runtime integration', () => {
         className: '470',
         courseCode: 'O2',
         operationMode: 'solo',
+        finishLineMode: 'shared-rc',
         firstWarningAt: '2026-07-19T03:00:00.000Z',
       }),
     })
@@ -255,7 +258,7 @@ describe('Cloudflare Workers runtime integration', () => {
     expect(soloResponse.status).toBe(201)
     expect(soloIssued.event.operationMode).toBe('solo')
 
-    const [soloSettings, soloBoats, soloOwner, soloRevision, soloTasks] = await Promise.all([
+    const [soloSettings, soloBoats, soloOwner, soloRevision, soloCourseNodes, soloTasks] = await Promise.all([
       env.DB.prepare('SELECT operation_mode FROM regatta_settings WHERE regatta_id = ?')
         .bind(soloIssued.event.id).first<{ operation_mode: string }>(),
       env.DB.prepare('SELECT name, role, call_sign FROM committee_boats WHERE regatta_id = ?')
@@ -263,11 +266,18 @@ describe('Cloudflare Workers runtime integration', () => {
       env.DB.prepare('SELECT id, assignment FROM event_members WHERE regatta_id = ? AND user_id = ?')
         .bind(soloIssued.event.id, ownerId).first<{ id: string; assignment: string }>(),
       env.DB.prepare(
-        `SELECT revision.target_length_metres
+        `SELECT revision.target_length_metres, revision.gate_config_json
          FROM course_revisions revision
          JOIN races race ON race.id = revision.race_id
          WHERE race.regatta_id = ? AND race.race_order = 1 AND revision.revision = 1`,
-      ).bind(soloIssued.event.id).first<{ target_length_metres: number }>(),
+      ).bind(soloIssued.event.id).first<{ target_length_metres: number; gate_config_json: string }>(),
+      env.DB.prepare(
+        `SELECT node.label FROM course_nodes node
+         JOIN course_revisions revision ON revision.id = node.course_revision_id
+         JOIN races race ON race.id = revision.race_id
+         WHERE race.regatta_id = ? AND race.race_order = 1 AND revision.revision = 1
+         ORDER BY node.node_order`,
+      ).bind(soloIssued.event.id).all<{ label: string }>(),
       env.DB.prepare(
         `SELECT task.title, task.assignee_member_id
          FROM operational_tasks task JOIN races race ON race.id = task.race_id
@@ -277,7 +287,9 @@ describe('Cloudflare Workers runtime integration', () => {
     expect(soloSettings?.operation_mode).toBe('solo')
     expect(soloBoats.results).toEqual([{ name: 'ワンオペ運営艇', role: 'signal-boat', call_sign: '全運営' }])
     expect(soloOwner?.assignment).toBe('全運営')
-    expect(soloRevision?.target_length_metres).toBe(Math.round(recommendedCourseLength('470', 8).kilometres * 1_000))
+    expect(soloRevision?.target_length_metres).toBe(Math.round(recommendedCourseLength('470', 8, undefined, 'O2', 'shared-rc').kilometres * 1_000))
+    expect(JSON.parse(soloRevision?.gate_config_json ?? '{}')).toMatchObject({ finishLineMode: 'shared-rc' })
+    expect(soloCourseNodes.results.some((node) => node.label.startsWith('フィニッシュ'))).toBe(false)
     expect(soloTasks.results).toContainEqual(expect.objectContaining({ title: 'ワンオペの安全条件と中止基準を確認' }))
     expect(soloTasks.results.every((task) => task.assignee_member_id === soloOwner?.id)).toBe(true)
     expect(soloTasks.results.some((task) => task.title === '担当別最終確認を完了')).toBe(false)
@@ -286,9 +298,13 @@ describe('Cloudflare Workers runtime integration', () => {
       `https://example.test/api/events/${soloIssued.event.slug}/bootstrap`,
       { headers: { Cookie: `srs_session=${sessionToken}` } },
     )
-    const soloBootstrap = await soloBootstrapResponse.json<{ regatta: { operation_mode: string } }>()
+    const soloBootstrap = await soloBootstrapResponse.json<{
+      regatta: { operation_mode: string }
+      races: Array<{ course_config_json: string }>
+    }>()
     expect(soloBootstrapResponse.status).toBe(200)
     expect(soloBootstrap.regatta.operation_mode).toBe('solo')
+    expect(JSON.parse(soloBootstrap.races[0].course_config_json)).toMatchObject({ finishLineMode: 'shared-rc' })
 
     const incompatibleCourseResponse = await exports.default.fetch('https://example.test/api/events', {
       method: 'POST',
@@ -309,6 +325,27 @@ describe('Cloudflare Workers runtime integration', () => {
     expect(incompatibleCourseResponse.status).toBe(400)
     await expect(incompatibleCourseResponse.json()).resolves.toMatchObject({
       error: '選択した競技ヨットクラスでは使用できない初期コースです',
+    })
+
+    const invalidFinishModeResponse = await exports.default.fetch('https://example.test/api/events', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        Cookie: `srs_session=${sessionToken}`,
+        Origin: 'https://example.test',
+      },
+      body: JSON.stringify({
+        name: '不正フィニッシュ方式確認',
+        startsOn: '2026-07-19',
+        endsOn: '2026-07-19',
+        className: '470',
+        courseCode: 'O2',
+        finishLineMode: 'unknown',
+      }),
+    })
+    expect(invalidFinishModeResponse.status).toBe(400)
+    await expect(invalidFinishModeResponse.json()).resolves.toMatchObject({
+      error: 'フィニッシュライン方式を確認してください',
     })
 
     const listResponse = await exports.default.fetch('https://example.test/api/events', {

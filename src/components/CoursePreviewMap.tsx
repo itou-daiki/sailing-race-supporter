@@ -1,5 +1,5 @@
 import maplibregl, { type GeoJSONSource, type Map as MapLibreMap, type Marker } from 'maplibre-gl'
-import { AlertTriangle, Crosshair, ShieldCheck, Wind } from 'lucide-react'
+import { AlertTriangle, Check, Crosshair, Move, ShieldCheck, Wind } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CourseMark, LngLat } from '../domain'
 import { buildCourseFeatures } from '../mapCourseFeatures'
@@ -13,6 +13,7 @@ interface CoursePreviewMapProps {
   signalBoatPosition: LngLat
   windDirection: number
   windSpeed: number
+  finishLineMode: 'separate' | 'shared-rc'
   coastClearance: { status: 'checking' | 'safe' | 'unsafe' | 'unavailable'; label: string }
   onSignalBoatPositionChange: (position: LngLat) => void
 }
@@ -23,6 +24,7 @@ export function CoursePreviewMap({
   signalBoatPosition,
   windDirection,
   windSpeed,
+  finishLineMode,
   coastClearance,
   onSignalBoatPositionChange,
 }: CoursePreviewMapProps) {
@@ -32,6 +34,7 @@ export function CoursePreviewMap({
   const initialCenterRef = useRef(signalBoatPosition)
   const onPositionChangeRef = useRef(onSignalBoatPositionChange)
   const [mapReady, setMapReady] = useState(false)
+  const [editingSignalBoat, setEditingSignalBoat] = useState(false)
   const features = useMemo(() => buildCourseFeatures(marks, route), [marks, route])
   const initialFeaturesRef = useRef(features)
 
@@ -54,22 +57,44 @@ export function CoursePreviewMap({
     mapRef.current = map
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right')
     map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left')
-    map.on('click', (event) => onPositionChangeRef.current([event.lngLat.lng, event.lngLat.lat]))
     map.on('load', () => {
       map.addSource('preview-course', { type: 'geojson', data: initialFeaturesRef.current.course })
       map.addSource('preview-gates', { type: 'geojson', data: initialFeaturesRef.current.gates })
       map.addSource('preview-start-line', { type: 'geojson', data: initialFeaturesRef.current.startLine })
+      map.addSource('preview-finish-line', { type: 'geojson', data: initialFeaturesRef.current.finishLine })
       map.addLayer({
         id: 'preview-start-line-casing',
         type: 'line',
         source: 'preview-start-line',
-        paint: { 'line-color': '#ffffff', 'line-width': 8, 'line-opacity': 0.96 },
+        paint: {
+          'line-color': '#ffffff',
+          'line-width': 8,
+          'line-opacity': 0.96,
+          'line-offset': ['case', ['boolean', ['get', 'shared'], false], 5, 0],
+        },
       })
       map.addLayer({
         id: 'preview-start-line',
         type: 'line',
         source: 'preview-start-line',
         paint: { 'line-color': '#ff6b00', 'line-width': 5, 'line-opacity': 1 },
+      })
+      map.addLayer({
+        id: 'preview-finish-line-casing',
+        type: 'line',
+        source: 'preview-finish-line',
+        paint: { 'line-color': '#ffffff', 'line-width': 8, 'line-opacity': 0.96 },
+      })
+      map.addLayer({
+        id: 'preview-finish-line',
+        type: 'line',
+        source: 'preview-finish-line',
+        paint: {
+          'line-color': '#13a66b',
+          'line-width': 5,
+          'line-opacity': 1,
+          'line-offset': ['case', ['boolean', ['get', 'shared'], false], 5, 0],
+        },
       })
       map.addLayer({
         id: 'preview-course-line',
@@ -99,19 +124,24 @@ export function CoursePreviewMap({
     ;(map.getSource('preview-course') as GeoJSONSource | undefined)?.setData(features.course)
     ;(map.getSource('preview-gates') as GeoJSONSource | undefined)?.setData(features.gates)
     ;(map.getSource('preview-start-line') as GeoJSONSource | undefined)?.setData(features.startLine)
+    ;(map.getSource('preview-finish-line') as GeoJSONSource | undefined)?.setData(features.finishLine)
     markerRefs.current.forEach((marker) => marker.remove())
     markerRefs.current = marks.map((mark) => {
       const element = document.createElement('div')
-      element.className = `pre-event-map-mark ${mark.shortLabel === 'RC' ? 'is-signal-boat' : ''} ${mark.shortLabel === 'PIN' ? 'is-start-pin' : ''} ${mark.isGate ? 'is-gate' : ''}`
-      element.setAttribute('aria-label', mark.shortLabel === 'RC' ? '本部船・ドラッグして移動' : mark.label)
+      element.className = `pre-event-map-mark ${mark.shortLabel === 'RC' ? 'is-signal-boat' : ''} ${mark.shortLabel === 'PIN' ? 'is-start-pin' : ''} ${mark.shortLabel === 'FIN' ? 'is-finish-boat' : ''} ${mark.shortLabel === 'F' ? 'is-finish-mark' : ''} ${mark.isGate ? 'is-gate' : ''} ${mark.shortLabel === 'RC' && editingSignalBoat ? 'is-editable' : ''}`
+      element.setAttribute('aria-label', mark.shortLabel === 'RC'
+        ? editingSignalBoat ? '本部船・押したままドラッグして移動' : '本部船・右端（移動ロック中）'
+        : mark.label)
       const detail = mark.shortLabel === 'RC'
-        ? '本部船・右端'
+        ? finishLineMode === 'shared-rc' ? '本部船・スタート／フィニッシュ兼用' : '本部船・スタート右端'
+        : mark.shortLabel === 'FIN' ? 'フィニッシュ艇'
+          : mark.shortLabel === 'F' ? 'フィニッシュマーク'
         : mark.shortLabel === 'PIN' ? 'ピン・左端' : mark.label
       element.innerHTML = `<strong>${mark.shortLabel}</strong><span>${detail}</span>`
       const marker = new maplibregl.Marker({
         element,
         anchor: 'center',
-        draggable: mark.shortLabel === 'RC',
+        draggable: mark.shortLabel === 'RC' && editingSignalBoat,
       }).setLngLat([...mark.target]).addTo(map)
       if (mark.shortLabel === 'RC') {
         marker.on('dragend', () => {
@@ -136,7 +166,7 @@ export function CoursePreviewMap({
       markerRefs.current.forEach((marker) => marker.remove())
       markerRefs.current = []
     }
-  }, [features, mapReady, marks])
+  }, [editingSignalBoat, features, finishLineMode, mapReady, marks])
 
   useEffect(() => {
     const map = mapRef.current
@@ -178,7 +208,16 @@ export function CoursePreviewMap({
         {coastClearance.status === 'safe' ? <ShieldCheck size={15} /> : <AlertTriangle size={15} />}
         <strong>{coastClearance.label}</strong>
       </div>
-      <p className="pre-event-map__hint">橙線＝スタートライン・RCをドラッグ可</p>
+      <button
+        type="button"
+        className={`pre-event-map__edit-toggle ${editingSignalBoat ? 'is-active' : ''}`}
+        aria-pressed={editingSignalBoat}
+        onClick={() => setEditingSignalBoat((current) => !current)}
+      >
+        {editingSignalBoat ? <Check size={15} /> : <Move size={15} />}
+        {editingSignalBoat ? '移動を完了' : '本部船の位置を変える'}
+      </button>
+      <p className="pre-event-map__hint">{editingSignalBoat ? 'RCを押したままドラッグ' : '橙＝スタート・緑＝フィニッシュ・通常タップでは配置不変'}</p>
     </section>
   )
 }

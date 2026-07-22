@@ -64,6 +64,8 @@ describe('course map geometry', () => {
       [131.520, 33.278],
       [131.524, 33.278],
     ])
+    expect(features.finishLine.features[0].properties?.shared).toBe(true)
+    expect(features.finishLine.features[0].geometry.coordinates).toEqual(features.startLine.features[0].geometry.coordinates)
     expect(features.course.features[0].geometry.coordinates).toEqual([
       [131.522, 33.278],
       [131.522, 33.29],
@@ -73,6 +75,24 @@ describe('course map geometry', () => {
       [131.523, 33.28],
       [131.522, 33.278],
     ])
+  })
+
+  it('draws a separately placed finish line and routes to its midpoint', () => {
+    const marks: CourseMark[] = [
+      { id: 'pin', label: 'スタート・ピン', shortLabel: 'PIN', target: [131.520, 33.278], status: 'planned' },
+      { id: 'rc', label: 'シグナルボート', shortLabel: 'RC', target: [131.524, 33.278], status: 'planned' },
+      { id: 'm1', label: '1マーク', shortLabel: '1', target: [131.522, 33.29], status: 'planned' },
+      { id: 'f', label: 'フィニッシュマーク', shortLabel: 'F', target: [131.526, 33.280], status: 'planned' },
+      { id: 'fin', label: 'フィニッシュ艇', shortLabel: 'FIN', target: [131.526, 33.282], status: 'planned' },
+    ]
+
+    const features = buildCourseFeatures(marks, ['Start', '1', 'Finish'])
+    expect(features.finishLine.features[0].properties?.shared).toBe(false)
+    expect(features.finishLine.features[0].geometry.coordinates).toEqual([
+      [131.526, 33.280],
+      [131.526, 33.282],
+    ])
+    expect(features.course.features[0].geometry.coordinates.at(-1)).toEqual([131.526, 33.281])
   })
 
   it('uses the single lower mark when a gate route is previewed with the gate disabled', () => {
