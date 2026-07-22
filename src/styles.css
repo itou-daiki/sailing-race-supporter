@@ -9673,135 +9673,7 @@ select:focus-visible {
   }
 }
 
-@media (max-width: 820px) {
-  .pre-event-shell {
-    grid-template-rows: 56px 64px minmax(0, 1fr);
-  }
-
-  .pre-event-header {
-    gap: 8px;
-    padding: 0 10px;
-  }
-
-  .pre-event-header .brand-lockup {
-    min-width: 0;
-  }
-
-  .pre-event-header .brand-lockup strong {
-    max-width: 154px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .pre-event-header .brand-lockup small {
-    display: none;
-  }
-
-  .pre-event-header__actions button {
-    width: 44px;
-    min-width: 44px;
-    padding: 0;
-    justify-content: center;
-  }
-
-  .pre-event-header__actions button:not(.is-primary) {
-    display: none;
-  }
-
-  .pre-event-header__actions button span,
-  .pre-event-header__actions button {
-    font-size: 0;
-  }
-
-  .pre-event-header__actions button svg {
-    width: 20px;
-    height: 20px;
-  }
-
-  .pre-event-intro {
-    padding: 7px 10px;
-  }
-
-  .pre-event-intro strong {
-    font-size: 12px;
-  }
-
-  .pre-event-intro small {
-    font-size: 8px;
-    line-height: 1.3;
-  }
-
-  .pre-event-workspace {
-    grid-template-areas: "map" "controls";
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(300px, 46%) minmax(0, 1fr);
-  }
-
-  .pre-event-controls {
-    padding: 9px;
-    border-top: 1px solid #bed5e3;
-    border-right: 0;
-  }
-
-  .pre-event-map__status {
-    top: 9px;
-    left: 9px;
-    padding: 7px 8px;
-  }
-
-  .pre-event-map__hint {
-    right: 9px;
-    bottom: 9px;
-    max-width: calc(100% - 90px);
-  }
-}
-
 @media (max-width: 520px) {
-  .pre-event-shell {
-    grid-template-rows: 53px 62px minmax(0, 1fr);
-  }
-
-  .pre-event-workspace {
-    grid-template-rows: minmax(295px, 48%) minmax(0, 1fr);
-  }
-
-  .pre-event-intro > span {
-    width: 32px;
-    height: 32px;
-  }
-
-  .pre-event-map__status {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .pre-event-map__status span + span {
-    padding-top: 2px;
-    padding-left: 0;
-    border-top: 1px solid #cbdde8;
-    border-left: 0;
-  }
-
-  .pre-event-controls > section {
-    padding: 10px;
-  }
-
-  .pre-event-field-grid select,
-  .pre-event-field-grid input,
-  .pre-event-length input {
-    min-height: 44px;
-  }
-
-  .pre-event-gate {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .pre-event-gate > span {
-    grid-column: 1 / -1;
-  }
-
-  .pre-event-gate button,
   .event-initial-gate button {
     min-height: 44px;
   }
@@ -9812,5 +9684,428 @@ select:focus-visible {
 
   .event-initial-gate > span {
     grid-column: 1 / -1;
+  }
+}
+
+/* Pre-event planner: phone-first map + independently scrollable settings sheet. */
+.pre-event-mobile-overview,
+.pre-event-mobile-tabs,
+.pre-event-mobile-action {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .pre-event-shell {
+    grid-template-rows: 52px 38px minmax(0, 1fr) 72px;
+    background: #dcecf6;
+  }
+
+  .pre-event-header {
+    padding: 0 10px;
+  }
+
+  .pre-event-header .brand-lockup {
+    min-width: 0;
+    gap: 8px;
+  }
+
+  .pre-event-header .brand-mark {
+    width: 38px;
+    height: 38px;
+    flex: 0 0 38px;
+  }
+
+  .pre-event-header .brand-lockup strong {
+    max-width: none;
+    overflow: visible;
+    font-size: 13px;
+    text-overflow: clip;
+    white-space: nowrap;
+  }
+
+  .pre-event-header__actions button:not(.is-primary) {
+    width: 42px;
+    min-width: 42px;
+    display: inline-flex;
+    padding: 0;
+    justify-content: center;
+    font-size: 0;
+  }
+
+  .pre-event-header__actions .is-primary {
+    display: none;
+  }
+
+  .pre-event-intro {
+    gap: 7px;
+    padding: 4px 10px;
+  }
+
+  .pre-event-intro > span {
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+  }
+
+  .pre-event-intro > span svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  .pre-event-intro strong {
+    font-size: 10px;
+  }
+
+  .pre-event-intro small {
+    display: none;
+  }
+
+  .pre-event-workspace {
+    grid-template-areas: "map" "controls";
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(190px, 42%) minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .pre-event-map {
+    border-bottom: 1px solid #a9c9dc;
+  }
+
+  .pre-event-map__status {
+    top: 8px;
+    left: 8px;
+    align-items: center;
+    flex-direction: row;
+    gap: 5px;
+    max-width: calc(100% - 16px);
+    padding: 6px 8px;
+    border-radius: 9px;
+  }
+
+  .pre-event-map__status span {
+    font-size: 9px;
+    white-space: nowrap;
+  }
+
+  .pre-event-map__status span + span {
+    padding-top: 0;
+    padding-left: 6px;
+    border-top: 0;
+    border-left: 1px solid #cbdde8;
+  }
+
+  .pre-event-map__hint {
+    right: 8px;
+    bottom: 8px;
+    max-width: calc(100% - 56px);
+    padding: 5px 7px;
+    font-size: 8px;
+    white-space: nowrap;
+  }
+
+  .pre-event-map-mark {
+    min-width: 34px;
+    min-height: 34px;
+    padding: 2px 4px;
+  }
+
+  .pre-event-map-mark strong {
+    font-size: 10px;
+  }
+
+  .pre-event-map-mark.is-signal-boat {
+    min-width: 54px;
+    min-height: 43px;
+    border-radius: 10px;
+  }
+
+  .pre-event-controls {
+    display: block;
+    padding: 0 0 12px;
+    overflow-y: auto;
+    scroll-behavior: smooth;
+    background: #f7fbfe;
+    border: 0;
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -5px 18px rgba(9, 39, 62, 0.12);
+    scrollbar-gutter: stable;
+  }
+
+  .pre-event-mobile-overview {
+    position: sticky;
+    z-index: 7;
+    top: 0;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1px;
+    min-height: 48px;
+    padding: 6px 8px;
+    background: #eff8fd;
+    border-bottom: 1px solid #c7ddea;
+  }
+
+  .pre-event-mobile-overview > span {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    padding: 0 5px;
+    border-right: 1px solid #d4e4ed;
+  }
+
+  .pre-event-mobile-overview > span:last-child {
+    border-right: 0;
+  }
+
+  .pre-event-mobile-overview small {
+    color: #698497;
+    font-size: 7px;
+    font-weight: 750;
+  }
+
+  .pre-event-mobile-overview strong {
+    max-width: 100%;
+    overflow: hidden;
+    color: #0a4f7a;
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .pre-event-mobile-tabs {
+    position: sticky;
+    z-index: 6;
+    top: 48px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 5px;
+    padding: 7px 8px;
+    background: rgba(255, 255, 255, 0.97);
+    border-bottom: 1px solid #d2e2ec;
+    backdrop-filter: blur(10px);
+  }
+
+  .pre-event-mobile-tabs button {
+    min-width: 0;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 4px 5px;
+    color: #547287;
+    background: #f1f6f9;
+    border: 1px solid #d5e3eb;
+    border-radius: 9px;
+    cursor: pointer;
+  }
+
+  .pre-event-mobile-tabs button > span {
+    min-width: 0;
+    display: flex;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .pre-event-mobile-tabs b {
+    font-size: 9px;
+    line-height: 1.2;
+  }
+
+  .pre-event-mobile-tabs small {
+    font-size: 7px;
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+
+  .pre-event-mobile-tabs button.is-active {
+    color: #fff;
+    background: var(--dodger-strong);
+    border-color: var(--dodger-strong);
+    box-shadow: 0 4px 10px rgba(8, 126, 232, 0.2);
+  }
+
+  .pre-event-controls > .pre-event-step-panel {
+    display: none;
+    margin: 10px 9px 0;
+    padding: 11px;
+    border-radius: 11px;
+    box-shadow: none;
+  }
+
+  .pre-event-controls > .pre-event-step-panel.is-mobile-active {
+    display: block;
+  }
+
+  .pre-event-controls > .pre-event-result.is-mobile-active {
+    display: grid;
+  }
+
+  .pre-event-controls > section > header {
+    margin-bottom: 8px;
+  }
+
+  .pre-event-controls > section > header > b {
+    width: 25px;
+    height: 25px;
+  }
+
+  .pre-event-field-grid select,
+  .pre-event-field-grid input,
+  .pre-event-length input {
+    min-height: 44px;
+    font-size: 12px;
+  }
+
+  .pre-event-course-summary span {
+    overflow-x: auto;
+    text-overflow: clip;
+    scrollbar-width: none;
+  }
+
+  .pre-event-result > button:last-child {
+    display: none;
+  }
+
+  .pre-event-mobile-action {
+    position: relative;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px max(10px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+    background: #fff;
+    border-top: 1px solid #bcd4e2;
+    box-shadow: 0 -7px 20px rgba(9, 39, 62, 0.13);
+  }
+
+  .pre-event-mobile-action > span {
+    min-width: 88px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .pre-event-mobile-action small {
+    color: #698497;
+    font-size: 7px;
+    font-weight: 750;
+    white-space: nowrap;
+  }
+
+  .pre-event-mobile-action strong {
+    color: var(--dodger-strong);
+    font-size: 18px;
+    line-height: 1.1;
+  }
+
+  .pre-event-mobile-action button {
+    min-width: 0;
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    gap: 6px;
+    padding: 0 14px;
+    color: #fff;
+    background: var(--dodger-strong);
+    border: 0;
+    border-radius: 11px;
+    box-shadow: 0 5px 13px rgba(8, 126, 232, 0.25);
+    font-size: 11px;
+    font-weight: 900;
+    cursor: pointer;
+  }
+
+  .pre-event-mobile-action button:disabled {
+    opacity: 0.45;
+  }
+}
+
+@media (max-width: 520px) {
+  .pre-event-shell {
+    grid-template-rows: 52px 36px minmax(0, 1fr) 70px;
+  }
+
+  .pre-event-workspace {
+    grid-template-rows: minmax(190px, 42%) minmax(0, 1fr);
+  }
+
+  .pre-event-field-grid {
+    gap: 7px;
+  }
+
+  .pre-event-gate {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .pre-event-gate > span {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 350px) {
+  .pre-event-header .brand-lockup strong {
+    font-size: 11px;
+  }
+
+  .pre-event-mobile-overview strong {
+    font-size: 9px;
+  }
+
+  .pre-event-mobile-tabs small {
+    display: none;
+  }
+
+  .pre-event-mobile-action small {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) and (orientation: landscape) and (max-height: 620px) {
+  .pre-event-shell {
+    grid-template-rows: 48px minmax(0, 1fr) 62px;
+  }
+
+  .pre-event-intro {
+    display: none;
+  }
+
+  .pre-event-workspace {
+    grid-template-areas: "map controls";
+    grid-template-columns: minmax(0, 1.12fr) minmax(330px, 0.88fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .pre-event-controls {
+    border-left: 1px solid #bcd4e2;
+    border-radius: 0;
+    box-shadow: -5px 0 18px rgba(9, 39, 62, 0.1);
+  }
+
+  .pre-event-map {
+    border-right: 0;
+    border-bottom: 0;
+  }
+
+  .pre-event-mobile-overview {
+    min-height: 44px;
+  }
+
+  .pre-event-mobile-tabs {
+    top: 44px;
+  }
+
+  .pre-event-mobile-action {
+    min-height: 62px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+
+  .pre-event-mobile-action button {
+    max-width: 360px;
+    min-height: 46px;
   }
 }

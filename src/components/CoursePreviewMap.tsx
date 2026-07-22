@@ -107,7 +107,7 @@ export function CoursePreviewMap({
     if (!bounds.isEmpty()) {
       map.fitBounds(bounds, {
         padding: map.getContainer().clientWidth <= 520
-          ? { top: 94, right: 72, bottom: 88, left: 72 }
+          ? { top: 62, right: 48, bottom: 54, left: 48 }
           : { top: 92, right: 110, bottom: 100, left: 110 },
         maxZoom: 15,
         duration: 250,
@@ -119,14 +119,43 @@ export function CoursePreviewMap({
     }
   }, [features, mapReady, marks])
 
+  useEffect(() => {
+    const map = mapRef.current
+    const container = containerRef.current
+    if (!map || !container || !mapReady || typeof ResizeObserver === 'undefined') return
+
+    let frame = 0
+    const observer = new ResizeObserver(() => {
+      window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(() => {
+        map.resize()
+        const bounds = new maplibregl.LngLatBounds()
+        marks.forEach((mark) => bounds.extend([...mark.target]))
+        if (bounds.isEmpty()) return
+        map.fitBounds(bounds, {
+          padding: container.clientWidth <= 520
+            ? { top: 62, right: 48, bottom: 54, left: 48 }
+            : { top: 92, right: 110, bottom: 100, left: 110 },
+          maxZoom: 15,
+          duration: 0,
+        })
+      })
+    })
+    observer.observe(container)
+    return () => {
+      observer.disconnect()
+      window.cancelAnimationFrame(frame)
+    }
+  }, [mapReady, marks])
+
   return (
     <section className="pre-event-map" aria-label="入力条件から作成した推奨マーク配置">
       <div ref={containerRef} className="pre-event-map__canvas" aria-label="推奨マーク配置の地図" />
       <div className="pre-event-map__status">
-        <span><Crosshair size={16} /><strong>本部船を基準に自動配置</strong></span>
+        <span><Crosshair size={16} /><strong>推奨マーク配置</strong></span>
         <span><Wind size={16} />{formatTrueBearing(windDirection)}・{formatWindSpeedDual(windSpeed)}</span>
       </div>
-      <p className="pre-event-map__hint">地図をタップ、または「RC 本部船」をドラッグして位置を変更</p>
+      <p className="pre-event-map__hint">地図タップ／RCをドラッグで本部船を移動</p>
     </section>
   )
 }

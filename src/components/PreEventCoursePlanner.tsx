@@ -1,5 +1,5 @@
-import { Anchor, LocateFixed, LogIn, Sailboat, Sparkles, Wind } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { Anchor, Compass, LocateFixed, LogIn, MapPinned, Route, Sailboat, Sparkles, Wind } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
 import {
   CLASS_PROFILES,
   type LngLat,
@@ -19,6 +19,8 @@ interface PreEventCoursePlannerProps {
 }
 
 export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCoursePlannerProps) {
+  const controlsRef = useRef<HTMLElement>(null)
+  const [mobileStep, setMobileStep] = useState<'course' | 'position' | 'wind'>('course')
   const [className, setClassName] = useState<SailingClass>('470')
   const [courseCode, setCourseCode] = useState<CoursePresetCode>('O2')
   const [lowerGate, setLowerGate] = useState(true)
@@ -84,6 +86,11 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
     )
   }
 
+  const openMobileStep = (step: 'course' | 'position' | 'wind') => {
+    setMobileStep(step)
+    if (controlsRef.current) controlsRef.current.scrollTop = 0
+  }
+
   return (
     <main className="pre-event-shell">
       <header className="pre-event-header">
@@ -92,8 +99,8 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
           <span><strong>Sailing Race Supporter</strong><small>Created by Dit-Lab.（Daiki ITO）</small></span>
         </div>
         <div className="pre-event-header__actions">
-          <button type="button" onClick={onOpenEvents}><LogIn size={17} />参加・作成済みの大会</button>
-          <button type="button" className="is-primary" onClick={() => onIssueEvent(plan)}><Sailboat size={17} />大会URLを発行</button>
+          <button type="button" aria-label="参加・作成済みの大会を開く" onClick={onOpenEvents}><LogIn size={17} />参加・作成済みの大会</button>
+          <button type="button" className="is-primary" aria-label="大会URLを発行" onClick={() => onIssueEvent(plan)}><Sailboat size={17} />大会URLを発行</button>
         </div>
       </header>
 
@@ -103,8 +110,20 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
       </section>
 
       <div className="pre-event-workspace">
-        <aside className="pre-event-controls" aria-label="コース作成条件">
-          <section>
+        <aside ref={controlsRef} className="pre-event-controls" aria-label="コース作成条件">
+          <div className="pre-event-mobile-overview" aria-label="現在の設定概要">
+            <span><small>艇種・コース</small><strong>{className}・{selectedPreset.displayCode}</strong></span>
+            <span><small>風</small><strong>{windDirection}°T・{windSpeed.toFixed(1)}kt</strong></span>
+            <span><small>コース長</small><strong>{Number(courseLengthKm || recommendation.kilometres).toFixed(1)}km</strong></span>
+          </div>
+
+          <nav className="pre-event-mobile-tabs" aria-label="設定する項目">
+            <button type="button" aria-current={mobileStep === 'course' ? 'step' : undefined} className={mobileStep === 'course' ? 'is-active' : ''} onClick={() => openMobileStep('course')}><Route size={17} /><span><b>コース</b><small>艇種・ゲート</small></span></button>
+            <button type="button" aria-current={mobileStep === 'position' ? 'step' : undefined} className={mobileStep === 'position' ? 'is-active' : ''} onClick={() => openMobileStep('position')}><MapPinned size={17} /><span><b>本部船</b><small>位置</small></span></button>
+            <button type="button" aria-current={mobileStep === 'wind' ? 'step' : undefined} className={mobileStep === 'wind' ? 'is-active' : ''} onClick={() => openMobileStep('wind')}><Compass size={17} /><span><b>風・長さ</b><small>推奨値</small></span></button>
+          </nav>
+
+          <section className={`pre-event-step-panel ${mobileStep === 'course' ? 'is-mobile-active' : ''}`} data-mobile-panel="course">
             <header><b>1</b><span><strong>艇種とコース</strong><small>分からなければ推奨を選択</small></span></header>
             <div className="pre-event-field-grid">
               <label><span>競技ヨットクラス</span><select value={className} onChange={(event) => changeClass(event.target.value as SailingClass)}>{CLASS_PROFILES.map((profile) => <option key={profile.className}>{profile.className}</option>)}</select></label>
@@ -118,7 +137,7 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
             </div>
           </section>
 
-          <section>
+          <section className={`pre-event-step-panel ${mobileStep === 'position' ? 'is-mobile-active' : ''}`} data-mobile-panel="position">
             <header><b>2</b><span><strong>本部船の位置</strong><small>スタートラインのRC側です</small></span></header>
             <button type="button" className="pre-event-location" onClick={useCurrentLocation}><LocateFixed size={16} />スマホの現在地を使う</button>
             <div className="pre-event-field-grid">
@@ -128,7 +147,7 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
             {locationError && <p className="pre-event-error" role="alert">{locationError}</p>}
           </section>
 
-          <section>
+          <section className={`pre-event-step-panel ${mobileStep === 'wind' ? 'is-mobile-active' : ''}`} data-mobile-panel="wind">
             <header><b>3</b><span><strong>風向・風速</strong><small>風が吹いてくる方向・真方位</small></span></header>
             <div className="pre-event-field-grid">
               <label><span>風向（°T）</span><input type="number" min="0" max="359" inputMode="numeric" value={windDirection} onChange={(event) => setWindDirection(Math.min(359, Math.max(0, Number(event.target.value))))} /></label>
@@ -137,7 +156,7 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
             <label className="pre-event-wind-slider"><span><Wind size={15} />{formatWindSpeedDual(windSpeed)}</span><input type="range" min="1" max="25" step="0.5" value={windSpeed} onChange={(event) => changeWindSpeed(Number(event.target.value))} /></label>
           </section>
 
-          <section className="pre-event-result">
+          <section className={`pre-event-result pre-event-step-panel ${mobileStep === 'wind' ? 'is-mobile-active' : ''}`} data-mobile-panel="wind-result">
             <span>艇種・風速からの推奨コース長</span>
             <strong>{recommendation.kilometres.toFixed(1)} km</strong>
             <small>{recommendation.nauticalMiles.toFixed(2)} NM・目標時間 {CLASS_PROFILES.find((profile) => profile.className === className)?.targetMinutes}分</small>
@@ -156,6 +175,11 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
           onSignalBoatPositionChange={setSignalPosition}
         />
       </div>
+
+      <footer className="pre-event-mobile-action">
+        <span><small>{className}・{selectedPreset.displayCode}・{lowerGate ? 'ゲートあり' : 'ゲートなし'}</small><strong>{Number(courseLengthKm || recommendation.kilometres).toFixed(1)} km</strong></span>
+        <button type="button" disabled={!parsedPosition} onClick={() => onIssueEvent(plan)}><Sailboat size={18} />大会URLを発行</button>
+      </footer>
     </main>
   )
 }
