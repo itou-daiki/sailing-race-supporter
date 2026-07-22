@@ -42,7 +42,7 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
     () => recommendedCourseLength(className, windSpeed, undefined, selectedPreset.code as CourseTemplate),
     [className, selectedPreset.code, windSpeed],
   )
-  const [courseLengthKm, setCourseLengthKm] = useState(() => recommendedCourseLength('470', 8, undefined, 'O2').kilometres.toFixed(1))
+  const [courseLengthKm, setCourseLengthKm] = useState(() => recommendedCourseLength('470', 8, undefined, 'O2').kilometres.toFixed(2))
   const [locationError, setLocationError] = useState<string>()
   const [coastCheck, setCoastCheck] = useState<{ pathKey: string; assessment: CoastClearanceAssessment }>({
     pathKey: '',
@@ -84,20 +84,20 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
     setClassName(nextClass)
     setCourseCode(nextCode)
     setLowerGate(preset.route.some((point) => point.includes('S/')))
-    setCourseLengthKm(recommendedCourseLength(nextClass, windSpeed, undefined, preset.code as CourseTemplate).kilometres.toFixed(1))
+    setCourseLengthKm(recommendedCourseLength(nextClass, windSpeed, undefined, preset.code as CourseTemplate).kilometres.toFixed(2))
   }
 
   const changeCourse = (nextCode: CoursePresetCode) => {
     const preset = coursePresetForClass(className, nextCode)
     setCourseCode(nextCode)
     setLowerGate(preset.route.some((point) => point.includes('S/')))
-    setCourseLengthKm(recommendedCourseLength(className, windSpeed, undefined, preset.code as CourseTemplate).kilometres.toFixed(1))
+    setCourseLengthKm(recommendedCourseLength(className, windSpeed, undefined, preset.code as CourseTemplate).kilometres.toFixed(2))
   }
 
   const changeWindSpeed = (nextSpeed: number) => {
     const normalized = Math.min(40, Math.max(1, nextSpeed))
     setWindSpeed(normalized)
-    setCourseLengthKm(recommendedCourseLength(className, normalized, undefined, selectedPreset.code as CourseTemplate).kilometres.toFixed(1))
+    setCourseLengthKm(recommendedCourseLength(className, normalized, undefined, selectedPreset.code as CourseTemplate).kilometres.toFixed(2))
   }
 
   const setSignalPosition = (position: LngLat) => {
@@ -260,8 +260,8 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
               <div><dt>フリーVMG</dt><dd>{recommendation.legSpeedsKnots.downwindVmg.toFixed(1)} kt <small>{Math.round(recommendation.legDistanceShare.downwind * 100)}%</small></dd></div>
             </dl>
             <p className="pre-event-total-distance"><span>推定総航程</span><b>{recommendation.kilometres.toFixed(1)} km / {recommendation.nauticalMiles.toFixed(2)} NM</b><small>スタートからフィニッシュまで艇が帆走する概算距離</small></p>
-            <label className="pre-event-length"><span>地図に使う推定総航程（km）</span><input type="number" min="0.5" max="30" step="0.1" value={courseLengthKm} onChange={(event) => setCourseLengthKm(event.target.value)} /></label>
-            <button type="button" className="pre-event-use-recommendation" onClick={() => setCourseLengthKm(recommendation.kilometres.toFixed(1))}>推奨総航程 {recommendation.kilometres.toFixed(1)} km に戻す</button>
+            <label className="pre-event-length"><span>地図に使う推定総航程（km）</span><input type="number" min="0.5" max="30" step="0.01" value={courseLengthKm} onChange={(event) => setCourseLengthKm(event.target.value)} /></label>
+            <button type="button" className="pre-event-use-recommendation" onClick={() => setCourseLengthKm(recommendation.kilometres.toFixed(2))}>推奨総航程 {recommendation.kilometres.toFixed(1)} km に戻す</button>
             <button type="button" disabled={!canIssueEvent} onClick={() => onIssueEvent(plan)}><Sailboat size={18} />この配置を引き継いで大会URLを発行</button>
           </section>
         </aside>

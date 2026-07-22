@@ -41,7 +41,7 @@ describe('PreEventCoursePlanner mobile navigation', () => {
       className: '470',
       courseCode: 'O2',
       windSpeed: 4,
-      targetLengthMetres: Number(recommendedCourseLength('470', 4, undefined, 'O2').kilometres.toFixed(1)) * 1_000,
+      targetLengthMetres: Number(recommendedCourseLength('470', 4, undefined, 'O2').kilometres.toFixed(2)) * 1_000,
     }))
   })
 })
