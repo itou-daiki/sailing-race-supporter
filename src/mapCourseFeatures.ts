@@ -178,6 +178,11 @@ export function buildCourseFeatures(marks: readonly CourseMark[], route?: readon
       ? `${Math.round(metres)} m · ${(metres / 1_852).toFixed(2)} NM`
       : `${(metres / 1_000).toFixed(2)} km · ${(metres / 1_852).toFixed(2)} NM`
   )
+  const formatCompactLegDistance = (metres: number) => (
+    metres < 1_000
+      ? `${Math.round(metres)} m`
+      : `${(metres / 1_000).toFixed(2)} km`
+  )
   const includedLegs = new Set<string>()
   const segmentOccurrences = new Map<string, number>()
   for (let index = 1; index < ordered.length; index += 1) {
@@ -214,7 +219,12 @@ export function buildCourseFeatures(marks: readonly CourseMark[], route?: readon
     includedLegs.add(key)
     legLabelFeatures.push({
       type: 'Feature',
-      properties: { kind: 'leg-distance', label: formatLegDistance(metres), metres: Math.round(metres) },
+      properties: {
+        kind: 'leg-distance',
+        label: formatLegDistance(metres),
+        compactLabel: formatCompactLegDistance(metres),
+        metres: Math.round(metres),
+      },
       geometry: { type: 'Point', coordinates: [...midpoint(from, to)] },
     })
   }

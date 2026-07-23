@@ -793,8 +793,7 @@ select:focus-visible {
 }
 
 .pre-event-map .leaflet-control-container {
-  position: relative;
-  z-index: 3;
+  position: static;
 }
 
 .pre-event-map .leaflet-control-zoom {
@@ -855,8 +854,25 @@ select:focus-visible {
   text-shadow: -2px -2px 0 #fff, 2px -2px 0 #fff, -2px 2px 0 #fff, 2px 2px 0 #fff;
 }
 
+.pre-event-course-label > span {
+  padding: 2px 5px;
+  background: rgba(255, 255, 255, 0.84);
+  border: 1px solid rgba(139, 190, 221, 0.78);
+  border-radius: 6px;
+  box-shadow: 0 2px 6px rgba(9, 39, 62, 0.1);
+  white-space: nowrap;
+}
+
+.pre-event-course-label.is-compact {
+  font-size: 9px;
+}
+
 .pre-event-course-label.is-angle {
   color: #633b99;
+}
+
+.pre-event-course-label.is-angle > span {
+  border-color: rgba(170, 144, 201, 0.72);
 }
 
 .pre-event-map__compat-error {
@@ -9319,14 +9335,47 @@ select:focus-visible {
     grid-template-rows: 53px 58px auto minmax(0, 1fr);
   }
 
+  .app-shell.has-mobile-owner-actions {
+    padding-bottom: calc(116px + env(safe-area-inset-bottom));
+  }
+
   .brand-lockup > div:last-child small {
     display: none;
   }
 
   .brand-lockup strong {
-    max-width: 142px;
+    max-width: 94px;
     overflow: hidden;
+    font-size: 11px;
+    letter-spacing: -0.035em;
+    line-height: 1.05;
     text-overflow: ellipsis;
+    white-space: normal;
+  }
+
+  .floating-owner-actions {
+    right: 0;
+    bottom: calc(64px + env(safe-area-inset-bottom));
+    left: 0;
+    min-height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 4px 10px;
+    background: rgba(255, 255, 255, 0.97);
+    border-top: 1px solid #bdd5e3;
+    box-shadow: 0 -5px 16px rgba(9, 39, 62, 0.09);
+    backdrop-filter: blur(12px);
+  }
+
+  .floating-owner-actions:empty {
+    display: none;
+  }
+
+  .floating-owner-actions > button {
+    min-height: 44px;
+    justify-content: center;
+    box-shadow: none;
   }
 
   .race-tabs button:not(.is-active) small {
@@ -9611,8 +9660,9 @@ select:focus-visible {
   .mark-map-label {
     min-width: 44px;
     min-height: 44px;
+    flex-direction: column;
     gap: 3px;
-    padding: 3px 4px;
+    padding: 3px;
   }
 
   .mark-map-label > strong {
@@ -9623,6 +9673,11 @@ select:focus-visible {
 
   .mark-map-label > span small {
     font-size: 6.5px;
+    line-height: 1.05;
+  }
+
+  .mark-map-label > span {
+    align-items: center;
   }
 
   .boat-marker {

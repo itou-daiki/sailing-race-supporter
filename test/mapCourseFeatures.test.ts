@@ -81,6 +81,7 @@ describe('course map geometry', () => {
     ])
     expect(features.legLabels.features.length).toBeGreaterThan(0)
     expect(features.legLabels.features.every((feature) => String(feature.properties?.label).includes('NM'))).toBe(true)
+    expect(features.legLabels.features.every((feature) => !String(feature.properties?.compactLabel).includes('NM'))).toBe(true)
     expect(features.turnLabels.features.some((feature) => String(feature.properties?.label).startsWith('∠'))).toBe(true)
   })
 

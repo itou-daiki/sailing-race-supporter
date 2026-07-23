@@ -378,14 +378,31 @@ export function MapView({
         id: 'leg-distance-label',
         type: 'symbol',
         source: 'leg-labels',
-        layout: { 'text-field': ['get', 'label'], 'text-size': 12, 'text-allow-overlap': true, 'text-ignore-placement': true },
+        layout: {
+          'text-field': ['step', ['zoom'], ['get', 'compactLabel'], 13.8, ['get', 'label']],
+          'text-size': ['interpolate', ['linear'], ['zoom'], 10, 9.5, 14, 11.5],
+          'text-variable-anchor': ['top', 'bottom', 'left', 'right'],
+          'text-radial-offset': 0.65,
+          'text-padding': 6,
+          'text-allow-overlap': false,
+          'text-ignore-placement': false,
+        },
         paint: { 'text-color': '#075f9f', 'text-halo-color': '#ffffff', 'text-halo-width': 3, 'text-halo-blur': 0.5 },
       })
       map.addLayer({
         id: 'turn-angle-label',
         type: 'symbol',
         source: 'turn-labels',
-        layout: { 'text-field': ['get', 'label'], 'text-size': 12, 'text-offset': [0, 1.8], 'text-allow-overlap': true, 'text-ignore-placement': true },
+        minzoom: 12.8,
+        layout: {
+          'text-field': ['get', 'label'],
+          'text-size': ['interpolate', ['linear'], ['zoom'], 12.8, 9.5, 15, 11.5],
+          'text-variable-anchor': ['top-left', 'top-right', 'bottom-left', 'bottom-right'],
+          'text-radial-offset': 1.25,
+          'text-padding': 7,
+          'text-allow-overlap': false,
+          'text-ignore-placement': false,
+        },
         paint: { 'text-color': '#5f36a0', 'text-halo-color': '#ffffff', 'text-halo-width': 3, 'text-halo-blur': 0.5 },
       })
       map.addLayer({
@@ -545,10 +562,14 @@ export function MapView({
         const windLabel = document.createElement('span')
         const bearingLabel = document.createElement('b')
         bearingLabel.textContent = formatTrueBearing(reading.observation.directionDegrees)
+        const [knotsLabel, metresPerSecondLabel] = formatWindSpeedDual(reading.observation.speedKnots).split(' / ')
         const speedLabel = document.createElement('small')
-        speedLabel.textContent = formatWindSpeedDual(reading.observation.speedKnots)
+        speedLabel.textContent = knotsLabel
+        const metricSpeedLabel = document.createElement('small')
+        metricSpeedLabel.textContent = metresPerSecondLabel
         windLabel.appendChild(bearingLabel)
         windLabel.appendChild(speedLabel)
+        windLabel.appendChild(metricSpeedLabel)
         element.appendChild(windLabel)
       }
       element.addEventListener('click', (event) => {
@@ -557,8 +578,23 @@ export function MapView({
         setPendingMapPosition(undefined)
         onSelectMark(mark.id)
       })
-      const gateOffset: [number, number] = mark.gateSide === 'S' ? [-24, -12] : mark.gateSide === 'P' ? [24, 12] : [0, 0]
-      return new maplibregl.Marker({ element, anchor: 'center', offset: gateOffset })
+      const compactMap = map.getContainer().clientWidth <= 520
+      const labelOffset: [number, number] = mark.gateSide === 'S'
+        ? [-34, compactMap ? -24 : -14]
+        : mark.gateSide === 'P'
+          ? [34, compactMap ? -24 : 14]
+          : compactMap && mark.shortLabel === 'PIN'
+            ? [-30, 22]
+            : compactMap && mark.shortLabel === 'RC'
+              ? [30, 22]
+              : compactMap && mark.shortLabel === 'F'
+                ? [-30, 26]
+                : compactMap && mark.shortLabel === 'FIN'
+                  ? [30, 26]
+                  : compactMap
+                    ? [0, -14]
+                    : [0, 0]
+      return new maplibregl.Marker({ element, anchor: 'center', offset: labelOffset })
         .setLngLat([...(mark.actual ?? mark.target)])
         .addTo(map)
     })

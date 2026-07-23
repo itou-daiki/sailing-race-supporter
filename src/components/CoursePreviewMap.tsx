@@ -34,14 +34,72 @@ function toLatLng(position: readonly number[]): L.LatLngTuple {
   return [position[1], position[0]]
 }
 
-function textIcon(className: string, text: string, size: L.PointTuple = [120, 28]): L.DivIcon {
+interface LabelBox {
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+
+function boxesOverlap(first: LabelBox, second: LabelBox): boolean {
+  return first.left < second.right
+    && first.right > second.left
+    && first.top < second.bottom
+    && first.bottom > second.top
+}
+
+function chooseLabelOffset(
+  map: LeafletMap,
+  position: L.LatLngExpression,
+  size: L.PointTuple,
+  occupied: LabelBox[],
+): L.PointTuple {
+  const point = map.latLngToContainerPoint(position)
+  const container = map.getContainer()
+  const candidates: L.PointTuple[] = [
+    [0, -16],
+    [0, 16],
+    [-42, 0],
+    [42, 0],
+    [-42, -22],
+    [42, -22],
+    [-42, 22],
+    [42, 22],
+    [0, -38],
+    [0, 38],
+  ]
+  const boxFor = ([offsetX, offsetY]: L.PointTuple): LabelBox => ({
+    left: point.x + offsetX - size[0] / 2,
+    top: point.y + offsetY - size[1] / 2,
+    right: point.x + offsetX + size[0] / 2,
+    bottom: point.y + offsetY + size[1] / 2,
+  })
+  const inViewport = (box: LabelBox) => (
+    box.left >= 4
+    && box.top >= 4
+    && box.right <= container.clientWidth - 4
+    && box.bottom <= container.clientHeight - 4
+  )
+  const chosen = candidates.find((candidate) => {
+    const box = boxFor(candidate)
+    return inViewport(box) && occupied.every((other) => !boxesOverlap(box, other))
+  }) ?? candidates.reduce((best, candidate) => {
+    const score = occupied.filter((other) => boxesOverlap(boxFor(candidate), other)).length
+      + (inViewport(boxFor(candidate)) ? 0 : 100)
+    return score < best.score ? { candidate, score } : best
+  }, { candidate: candidates[0], score: Number.POSITIVE_INFINITY }).candidate
+  occupied.push(boxFor(chosen))
+  return chosen
+}
+
+function textIcon(className: string, text: string, size: L.PointTuple = [120, 28], offset: L.PointTuple = [0, 0]): L.DivIcon {
   const element = document.createElement('span')
   element.textContent = text
   return L.divIcon({
     className,
     html: element,
     iconSize: size,
-    iconAnchor: [size[0] / 2, size[1] / 2],
+    iconAnchor: [size[0] / 2 - offset[0], size[1] / 2 - offset[1]],
   })
 }
 
@@ -141,7 +199,7 @@ export function CoursePreviewMap({
         minZoom: 6,
         opacity: 0.82,
       }).addTo(map)
-      L.control.zoom({ position: 'bottomright' }).addTo(map)
+      L.control.zoom({ position: containerRef.current.clientWidth <= 520 ? 'topright' : 'bottomright' }).addTo(map)
       L.control.attribution({ position: 'bottomright', prefix: false }).addTo(map)
       courseLayerRef.current = L.layerGroup().addTo(map)
       markerLayerRef.current = L.layerGroup().addTo(map)
@@ -174,6 +232,18 @@ export function CoursePreviewMap({
 
     const drawCourse = () => {
       layer.clearLayers()
+      const compactLabels = map.getContainer().clientWidth <= 520 && map.getZoom() < 14.5
+      const occupiedLabels: LabelBox[] = marks.map((mark) => {
+        const point = map.latLngToContainerPoint(toLatLng(mark.actual ?? mark.target))
+        const width = mark.shortLabel === 'RC' ? 62 : mark.shortLabel === 'FIN' ? 50 : 40
+        const height = mark.shortLabel === 'RC' ? 50 : 40
+        return {
+          left: point.x - width / 2 - 4,
+          top: point.y - height / 2 - 4,
+          right: point.x + width / 2 + 4,
+          bottom: point.y + height / 2 + 4,
+        }
+      })
       features.startLine.features.forEach((feature) => {
         const positions = feature.geometry.coordinates.map(toLatLng)
         L.polyline(positions, { color: '#ffffff', weight: 9, opacity: 0.96, interactive: false }).addTo(layer)
@@ -205,15 +275,23 @@ export function CoursePreviewMap({
         L.polyline(feature.geometry.coordinates.map(toLatLng), { color: '#7b4bb7', dashArray: '6 5', weight: 4, interactive: false }).addTo(layer)
       })
       features.legLabels.features.forEach((feature) => {
-        L.marker(toLatLng(feature.geometry.coordinates), {
-          icon: textIcon('pre-event-course-label is-distance', String(feature.properties?.label ?? '')),
+        const position = toLatLng(feature.geometry.coordinates)
+        const size: L.PointTuple = compactLabels ? [78, 24] : [120, 28]
+        const label = compactLabels ? feature.properties?.compactLabel : feature.properties?.label
+        const offset = chooseLabelOffset(map, position, size, occupiedLabels)
+        L.marker(position, {
+          icon: textIcon(`pre-event-course-label is-distance${compactLabels ? ' is-compact' : ''}`, String(label ?? ''), size, offset),
           interactive: false,
           keyboard: false,
         }).addTo(layer)
       })
+      if (map.getContainer().clientWidth <= 520 && map.getZoom() < 13.75) return
       features.turnLabels.features.forEach((feature) => {
-        L.marker(toLatLng(feature.geometry.coordinates), {
-          icon: textIcon('pre-event-course-label is-angle', String(feature.properties?.label ?? ''), [70, 24]),
+        const position = toLatLng(feature.geometry.coordinates)
+        const size: L.PointTuple = [58, 22]
+        const offset = chooseLabelOffset(map, position, size, occupiedLabels)
+        L.marker(position, {
+          icon: textIcon('pre-event-course-label is-angle', String(feature.properties?.label ?? ''), size, offset),
           interactive: false,
           keyboard: false,
         }).addTo(layer)
@@ -226,7 +304,7 @@ export function CoursePreviewMap({
       map.off('zoomend', drawCourse)
       layer.clearLayers()
     }
-  }, [features, mapReady])
+  }, [features, mapReady, marks])
 
   useEffect(() => {
     const map = mapRef.current

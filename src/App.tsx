@@ -1923,7 +1923,7 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${canFinalizeRace || (locked && eventAccess?.isOwner) ? 'has-mobile-owner-actions' : ''}`}>
       <header className="app-header">
         <div className="brand-lockup">
           <div className="brand-mark"><Anchor size={22} /></div>
