@@ -208,8 +208,9 @@ export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
     } else {
       nodes.push({ key: 'mark-2', label: '2マーク', nodeType: 'single', target: mark2 })
     }
-    nodes.push({ key: 'mark-3p', label: '下ゲート 3P', nodeType: 'single', target: destinationPoint(lowerRoundingCenter, gateWidth / 2, wind + 90) })
-    appendFinishLine(lowerRoundingCenter, wind + 135, finishDistance)
+    const mark3p = destinationPoint(lowerRoundingCenter, gateWidth / 2, wind + 90)
+    nodes.push({ key: 'mark-3p', label: '下ゲート 3P', nodeType: 'single', target: mark3p })
+    appendFinishLine(mark3p, wind + 135, finishDistance)
     return nodes
   } else if (!isSnipe && (input.courseCode === 'L2' || input.courseCode === 'L3')) {
     pushGateOrSingle('mark-2', '下ゲート 2', innerGateCenter)
@@ -229,8 +230,11 @@ export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
   }
 
   pushGateOrSingle('mark-3', '下ゲート 3', lowerRoundingCenter)
+  const finalRoundingPosition = !isSnipe && input.courseCode === 'O2' && input.lowerGate
+    ? destinationPoint(lowerRoundingCenter, gateWidth / 2, wind + 90)
+    : lowerRoundingCenter
   appendFinishLine(
-    lowerRoundingCenter,
+    finalRoundingPosition,
     !isSnipe && input.courseCode === 'O2' ? wind + 135 : wind + 180,
     finishDistance,
   )

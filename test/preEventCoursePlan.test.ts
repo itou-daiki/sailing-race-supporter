@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { distanceMetres, recommendedCourseLength } from '../src/course'
+import { distanceMetres, midpoint, recommendedCourseLength } from '../src/course'
 import type { EventCreationPlan } from '../src/eventClient'
+import { buildCourseFeatures } from '../src/mapCourseFeatures'
 import { buildPreEventCourseMarks } from '../src/preEventCoursePlan'
 
 function plan(overrides: Partial<EventCreationPlan> = {}): EventCreationPlan {
@@ -46,6 +47,18 @@ describe('pre-event course plan', () => {
     expect(distanceMetres(longPlan.signalBoatPosition, longMark!.target)).toBeGreaterThan(
       distanceMetres(shortPlan.signalBoatPosition, shortMark!.target) * 1.8,
     )
+  })
+
+  it('shows the O2 final leg as 0.15 NM from 3P to the finish-line midpoint', () => {
+    const marks = buildPreEventCourseMarks(plan())
+    const mark3p = marks.find((mark) => mark.shortLabel === '3P')!
+    const finishMark = marks.find((mark) => mark.shortLabel === 'F')!
+    const finishBoat = marks.find((mark) => mark.shortLabel === 'FIN')!
+    const finishCenter = midpoint(finishMark.target, finishBoat.target)
+    const features = buildCourseFeatures(marks, ['Start', '1', '2', '3S/3P', '2', '3P', 'Finish'])
+
+    expect(distanceMetres(mark3p.target, finishCenter)).toBeCloseTo(0.15 * 1_852, 0)
+    expect(features.legLabels.features.map((feature) => feature.properties?.label)).toContain('278 m · 0.15 NM')
   })
 
   it('uses RC and one F mark without a separate finish boat in shared practice mode', () => {

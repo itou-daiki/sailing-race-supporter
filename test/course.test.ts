@@ -85,19 +85,16 @@ describe('course calculations', () => {
       upperGate: false,
       finishLineMode: 'separate',
     })
-    const gate = midpoint(
-      plan.find((node) => node.key === 'mark-3s')!.target,
-      plan.find((node) => node.key === 'mark-3p')!.target,
-    )
+    const finalRoundingMark = plan.find((node) => node.key === 'mark-3p')!
     const finishMark = plan.find((node) => node.key === 'finish-mark')!
     const finishBoat = plan.find((node) => node.key === 'finish-boat')!
     const finishCenter = midpoint(finishMark.target, finishBoat.target)
 
-    expect(distanceMetres(gate, finishCenter)).toBeCloseTo(0.15 * 1_852, 0)
+    expect(distanceMetres(finalRoundingMark.target, finishCenter)).toBeCloseTo(0.15 * 1_852, 0)
     expect(distanceMetres(finishMark.target, finishBoat.target)).toBeCloseTo(50, 0)
-    expect(bearingDegrees(gate, finishCenter)).toBeCloseTo(135, 1)
+    expect(bearingDegrees(finalRoundingMark.target, finishCenter)).toBeCloseTo(135, 1)
     expect(Math.abs(headingDifferenceDegrees(
-      bearingDegrees(gate, finishCenter),
+      bearingDegrees(finalRoundingMark.target, finishCenter),
       bearingDegrees(finishMark.target, finishBoat.target),
     ))).toBeCloseTo(90, 1)
   })
@@ -232,6 +229,9 @@ describe('course calculations', () => {
     const mark1 = plan.find((node) => node.key === 'mark-1')!
     const mark2 = plan.find((node) => node.key === 'mark-2')!
     const mark3 = plan.find((node) => node.key === 'mark-3p')!
+    const finishMark = plan.find((node) => node.key === 'finish-mark')!
+    const finishBoat = plan.find((node) => node.key === 'finish-boat')!
+    const finishCenter = midpoint(finishMark.target, finishBoat.target)
     const outer = generateCoursePlan({
       center: [131.5221959, 33.2786648],
       windDirection: 350,
@@ -244,6 +244,12 @@ describe('course calculations', () => {
     expect(bearingDegrees(mark1.target, mark2.target)).toBeCloseTo(230, 1)
     expect(mark2.target).toEqual(outer.find((node) => node.key === 'mark-2')!.target)
     expect(mark3.target).toEqual(outer.find((node) => node.key === 'mark-3p')!.target)
+    expect(distanceMetres(mark3.target, finishCenter)).toBeCloseTo(0.15 * 1_852, 0)
+    expect(bearingDegrees(mark3.target, finishCenter)).toBeCloseTo(125, 1)
+    expect(Math.abs(headingDifferenceDegrees(
+      bearingDegrees(mark3.target, finishCenter),
+      bearingDegrees(finishMark.target, finishBoat.target),
+    ))).toBeCloseTo(90, 1)
   })
 
   it('uses mark 2 instead of mark 4 for the windward-leeward lower gate', () => {
