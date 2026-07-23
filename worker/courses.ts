@@ -4,6 +4,10 @@ import { buildGateConfiguration } from '../shared/gates.js'
 import { json, readJson } from './http.js'
 import type { AppEnv } from './index.js'
 import { assertSameOrigin, hasRecentAuthentication, requireSession, sha256Base64Url } from './security.js'
+import {
+  isValidCustomFinishDistanceMetres,
+  resolveFinishDistanceMetres,
+} from '../shared/finishDistance.js'
 
 interface CourseNodeInput {
   markId?: string
@@ -22,6 +26,7 @@ interface CourseRevisionInput {
   upperGate?: boolean
   secondGate?: boolean
   finishLineMode?: 'separate' | 'shared-rc'
+  finishDistanceMetres?: number
   nodes?: CourseNodeInput[]
 }
 
@@ -207,8 +212,8 @@ export async function handleCourseRequest(request: Request, env: AppEnv): Promis
     return json({ error: 'コース案を作成する権限がありません' }, { status: 403 })
   }
   const race = await env.DB.prepare(
-    'SELECT status, race_area_id FROM races WHERE id = ? AND regatta_id = ? LIMIT 1',
-  ).bind(raceId, access.eventId).first<{ status: string; race_area_id: string }>()
+    'SELECT status, race_area_id, class_name FROM races WHERE id = ? AND regatta_id = ? LIMIT 1',
+  ).bind(raceId, access.eventId).first<{ status: string; race_area_id: string; class_name: string }>()
   if (!race) return json({ error: 'レースが見つかりません' }, { status: 404 })
   if (collectionMatch && request.method === 'GET') {
     const rows = await env.DB.prepare(
@@ -251,6 +256,9 @@ export async function handleCourseRequest(request: Request, env: AppEnv): Promis
   if (body.finishLineMode !== undefined && body.finishLineMode !== 'separate' && body.finishLineMode !== 'shared-rc') {
     return json({ error: 'フィニッシュライン方式を確認してください' }, { status: 400 })
   }
+  if (body.finishDistanceMetres !== undefined && !isValidCustomFinishDistanceMetres(body.finishDistanceMetres)) {
+    return json({ error: 'フィニッシュ距離は0.05〜0.50 NMで指定してください' }, { status: 400 })
+  }
   if (!Array.isArray(body.nodes) || body.nodes.length < 3 || body.nodes.length > 30) {
     return json({ error: 'コース点は3〜30個で指定してください' }, { status: 400 })
   }
@@ -269,7 +277,17 @@ export async function handleCourseRequest(request: Request, env: AppEnv): Promis
     }
     nodes.push({ markId: node.markId, label: node.label.trim(), nodeType: node.nodeType, rounding: node.rounding?.slice(0, 20) ?? null, target: node.target })
   }
-  let gateConfiguration: ReturnType<typeof buildGateConfiguration> & { finishLineMode: 'separate' | 'shared-rc' }
+  const finishLineMode = body.finishLineMode === 'shared-rc' ? 'shared-rc' : 'separate'
+  const finishDistanceMetres = resolveFinishDistanceMetres(
+    courseCode,
+    race.class_name,
+    finishLineMode,
+    body.finishDistanceMetres,
+  )
+  let gateConfiguration: ReturnType<typeof buildGateConfiguration> & {
+    finishLineMode: 'separate' | 'shared-rc'
+    finishDistanceMetres?: number
+  }
   try {
     gateConfiguration = {
       ...buildGateConfiguration({
@@ -277,7 +295,8 @@ export async function handleCourseRequest(request: Request, env: AppEnv): Promis
         upper: body.upperGate === true,
         second: body.secondGate === true,
       }, nodes),
-      finishLineMode: body.finishLineMode === 'shared-rc' ? 'shared-rc' : 'separate',
+      finishLineMode,
+      ...(finishDistanceMetres !== undefined ? { finishDistanceMetres } : {}),
     }
   } catch (reason) {
     return json({ error: reason instanceof Error ? reason.message : 'ゲート構成を確認してください' }, { status: 400 })

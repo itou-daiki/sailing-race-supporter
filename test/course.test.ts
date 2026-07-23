@@ -99,6 +99,33 @@ describe('course calculations', () => {
     ))).toBeCloseTo(90, 1)
   })
 
+  it('uses a host-specified O2 final-leg distance in both time recommendation and map geometry', () => {
+    const customFinishDistanceMetres = 0.25 * 1_852
+    const standard = recommendedCourseLength('470', 8, 50, 'O2', 'separate')
+    const custom = recommendedCourseLength('470', 8, 50, 'O2', 'separate', customFinishDistanceMetres)
+    const plan = generateCoursePlan({
+      center: [131.5221959, 33.2786648],
+      windDirection: 0,
+      windSpeed: 8,
+      totalLengthMetres: custom.kilometres * 1_000,
+      courseCode: 'O2',
+      className: '470',
+      lowerGate: true,
+      upperGate: false,
+      finishLineMode: 'separate',
+      finishDistanceMetres: customFinishDistanceMetres,
+    })
+    const mark3p = plan.find((node) => node.key === 'mark-3p')!
+    const finishCenter = midpoint(
+      plan.find((node) => node.key === 'finish-mark')!.target,
+      plan.find((node) => node.key === 'finish-boat')!.target,
+    )
+
+    expect(distanceMetres(mark3p.target, finishCenter)).toBeCloseTo(customFinishDistanceMetres, 0)
+    expect(custom.kilometres).toBeGreaterThan(standard.kilometres)
+    expect(custom.firstLegKilometres).toBeLessThan(standard.firstLegKilometres)
+  })
+
   it('reuses RC as the finish boat and puts one F mark 50 metres downwind', () => {
     const plan = generateCoursePlan({
       center: [131.5221959, 33.2786648],

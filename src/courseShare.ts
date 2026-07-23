@@ -1,5 +1,6 @@
 import type { CoursePresetCode } from '../shared/coursePresets'
 import type { LngLat, SailingClass } from './domain'
+import { isValidCustomFinishDistanceMetres } from '../shared/finishDistance'
 
 export interface SharedCoursePayload {
   version: 1
@@ -10,6 +11,7 @@ export interface SharedCoursePayload {
   windSpeed: number
   lowerGate: boolean
   finishLineMode: 'separate' | 'shared-rc'
+  finishDistanceMetres?: number
   targetLengthMetres: number
   targetMinutes: number
   distanceBasis: 'target-time' | 'wind-standard'
@@ -59,6 +61,7 @@ export function decodeSharedCourse(encoded: string): SharedCoursePayload | undef
       || typeof value.windSpeed !== 'number' || value.windSpeed <= 0 || value.windSpeed > 80
       || typeof value.lowerGate !== 'boolean'
       || (value.finishLineMode !== 'separate' && value.finishLineMode !== 'shared-rc')
+      || (value.finishDistanceMetres !== undefined && !isValidCustomFinishDistanceMetres(value.finishDistanceMetres))
       || typeof value.targetLengthMetres !== 'number' || value.targetLengthMetres < 500 || value.targetLengthMetres > 100_000
       || typeof value.targetMinutes !== 'number' || value.targetMinutes < 15 || value.targetMinutes > 180
       || (value.distanceBasis !== 'target-time' && value.distanceBasis !== 'wind-standard')

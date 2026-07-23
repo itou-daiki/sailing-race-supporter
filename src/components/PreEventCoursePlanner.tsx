@@ -15,6 +15,16 @@ import { buildPreEventCourseMarks } from '../preEventCoursePlan'
 import { buildCourseFeatures } from '../mapCourseFeatures'
 import { assessCoastClearance, findCoastClearSignalPosition, type CoastClearanceAssessment } from '../coastClearance'
 import { buildSharedCourseUrl, sharedCourseFromHash, type SharedCoursePayload } from '../courseShare'
+import {
+  WORLD_SAILING_TRAPEZOID_FINISH_DISTANCE_METRES,
+  finishDistanceMode as inferFinishDistanceMode,
+  isValidCustomFinishDistanceMetres,
+  metresToNauticalMiles,
+  nauticalMilesToMetres,
+  supportsTrapezoidFinishDistance,
+  type FinishDistanceMode,
+} from '../../shared/finishDistance'
+import { FinishDistanceControl } from './FinishDistanceControl'
 
 const MINIMUM_COAST_CLEARANCE_METRES = 300
 const LOCAL_MARK_POSITIONS_KEY = 'srs:pre-event-mark-positions'
@@ -58,6 +68,14 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
   const [courseCode, setCourseCode] = useState<CoursePresetCode>(importedCourseCode ?? 'O2')
   const [lowerGate, setLowerGate] = useState(importedCourse?.lowerGate ?? true)
   const [finishLineMode, setFinishLineMode] = useState<'separate' | 'shared-rc'>(importedCourse?.finishLineMode ?? 'separate')
+  const [finishDistanceSelection, setFinishDistanceSelection] = useState<FinishDistanceMode>(() => (
+    inferFinishDistanceMode(importedCourse?.finishDistanceMetres)
+  ))
+  const [customFinishDistanceNm, setCustomFinishDistanceNm] = useState(() => (
+    importedCourse?.finishDistanceMetres
+      ? metresToNauticalMiles(importedCourse.finishDistanceMetres).toFixed(2)
+      : '0.15'
+  ))
   const [longitude, setLongitude] = useState(String(importedCourse?.signalBoatPosition[0] ?? DEFAULT_RACE_AREA_CENTER.longitude))
   const [latitude, setLatitude] = useState(String(importedCourse?.signalBoatPosition[1] ?? DEFAULT_RACE_AREA_CENTER.latitude))
   const [windDirection, setWindDirection] = useState(importedCourse?.windDirection ?? 350)
@@ -65,11 +83,22 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
   const [distanceBasis, setDistanceBasis] = useState<'target-time' | 'wind-standard'>(importedCourse?.distanceBasis ?? 'target-time')
   const [targetMinutes, setTargetMinutes] = useState(importedCourse?.targetMinutes ?? defaultTargetMinutes(importedCourse?.className ?? '470'))
   const selectedPreset = coursePresetForClass(className, courseCode)
+  const customFinishDistanceMetres = nauticalMilesToMetres(Number(customFinishDistanceNm))
+  const finishDistanceInputValid = finishDistanceSelection === 'world-sailing-standard'
+    || isValidCustomFinishDistanceMetres(customFinishDistanceMetres)
+  const selectedFinishDistanceMetres = finishDistanceSelection === 'custom' && finishDistanceInputValid
+    ? customFinishDistanceMetres
+    : WORLD_SAILING_TRAPEZOID_FINISH_DISTANCE_METRES
+  const finishDistanceSupported = finishLineMode === 'separate'
+    && supportsTrapezoidFinishDistance(selectedPreset.code, className)
+  const finishDistanceMetres = finishDistanceSupported
+    ? selectedFinishDistanceMetres
+    : undefined
   const standardTargetMinutes = defaultTargetMinutes(className)
   const effectiveTargetMinutes = distanceBasis === 'target-time' ? targetMinutes : standardTargetMinutes
   const recommendation = useMemo(
-    () => recommendedCourseLength(className, windSpeed, effectiveTargetMinutes, selectedPreset.code as CourseTemplate, finishLineMode),
-    [className, effectiveTargetMinutes, finishLineMode, selectedPreset.code, windSpeed],
+    () => recommendedCourseLength(className, windSpeed, effectiveTargetMinutes, selectedPreset.code as CourseTemplate, finishLineMode, finishDistanceMetres),
+    [className, effectiveTargetMinutes, finishDistanceMetres, finishLineMode, selectedPreset.code, windSpeed],
   )
   const [courseLengthKm, setCourseLengthKm] = useState(() => importedCourse
     ? (importedCourse.targetLengthMetres / 1_000).toFixed(2)
@@ -113,9 +142,10 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
     windSpeed,
     lowerGate,
     finishLineMode,
+    finishDistanceMetres,
     targetLengthMetres: Math.max(500, Number(courseLengthKm) * 1_000 || recommendation.kilometres * 1_000),
     targetMinutes: effectiveTargetMinutes,
-  }), [className, courseLengthKm, effectiveTargetMinutes, finishLineMode, lowerGate, parsedPosition, recommendation.kilometres, selectedPreset.code, windDirection, windSpeed])
+  }), [className, courseLengthKm, effectiveTargetMinutes, finishDistanceMetres, finishLineMode, lowerGate, parsedPosition, recommendation.kilometres, selectedPreset.code, windDirection, windSpeed])
   const marks = useMemo(() => buildPreEventCourseMarks(plan).map((mark) => {
     const recorded = localMarkPositions[`${selectedPreset.code}:${mark.shortLabel}`]
     return recorded ? { ...mark, actual: recorded } : mark
@@ -137,8 +167,14 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
     className,
     windSpeed,
     finishLineMode,
+    finishDistanceMetres,
   ) / 1_000
-  const canIssueEvent = Boolean(parsedPosition && coastClearance.status === 'safe' && !relocatingCourse)
+  const canIssueEvent = Boolean(
+    parsedPosition
+    && coastClearance.status === 'safe'
+    && !relocatingCourse
+    && (!finishDistanceSupported || finishDistanceInputValid),
+  )
 
   const changeClass = (nextClass: SailingClass) => {
     const nextCode = normalizeCoursePresetCode(nextClass, courseCode)
@@ -147,38 +183,67 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
     setCourseCode(nextCode)
     setLowerGate(preset.route.some((point) => point.includes('S/')))
     const nextMinutes = distanceBasis === 'target-time' ? targetMinutes : defaultTargetMinutes(nextClass)
-    setCourseLengthKm(recommendedCourseLength(nextClass, windSpeed, nextMinutes, preset.code as CourseTemplate, finishLineMode).kilometres.toFixed(2))
+    setCourseLengthKm(recommendedCourseLength(nextClass, windSpeed, nextMinutes, preset.code as CourseTemplate, finishLineMode, selectedFinishDistanceMetres).kilometres.toFixed(2))
   }
 
   const changeCourse = (nextCode: CoursePresetCode) => {
     const preset = coursePresetForClass(className, nextCode)
     setCourseCode(nextCode)
     setLowerGate(preset.route.some((point) => point.includes('S/')))
-    setCourseLengthKm(recommendedCourseLength(className, windSpeed, effectiveTargetMinutes, preset.code as CourseTemplate, finishLineMode).kilometres.toFixed(2))
+    setCourseLengthKm(recommendedCourseLength(className, windSpeed, effectiveTargetMinutes, preset.code as CourseTemplate, finishLineMode, selectedFinishDistanceMetres).kilometres.toFixed(2))
   }
 
   const changeWindSpeed = (nextSpeed: number) => {
     const normalized = Math.min(40, Math.max(1, nextSpeed))
     setWindSpeed(normalized)
-    setCourseLengthKm(recommendedCourseLength(className, normalized, effectiveTargetMinutes, selectedPreset.code as CourseTemplate, finishLineMode).kilometres.toFixed(2))
+    setCourseLengthKm(recommendedCourseLength(className, normalized, effectiveTargetMinutes, selectedPreset.code as CourseTemplate, finishLineMode, finishDistanceMetres).kilometres.toFixed(2))
   }
 
   const changeFinishLineMode = (nextMode: 'separate' | 'shared-rc') => {
     setFinishLineMode(nextMode)
-    setCourseLengthKm(recommendedCourseLength(className, windSpeed, effectiveTargetMinutes, selectedPreset.code as CourseTemplate, nextMode).kilometres.toFixed(2))
+    setCourseLengthKm(recommendedCourseLength(className, windSpeed, effectiveTargetMinutes, selectedPreset.code as CourseTemplate, nextMode, selectedFinishDistanceMetres).kilometres.toFixed(2))
+  }
+
+  const changeFinishDistanceSelection = (nextMode: FinishDistanceMode) => {
+    const nextDistance = nextMode === 'custom' && isValidCustomFinishDistanceMetres(customFinishDistanceMetres)
+      ? customFinishDistanceMetres
+      : WORLD_SAILING_TRAPEZOID_FINISH_DISTANCE_METRES
+    setFinishDistanceSelection(nextMode)
+    setCourseLengthKm(recommendedCourseLength(
+      className,
+      windSpeed,
+      effectiveTargetMinutes,
+      selectedPreset.code as CourseTemplate,
+      finishLineMode,
+      nextDistance,
+    ).kilometres.toFixed(2))
+  }
+
+  const changeCustomFinishDistance = (nextValue: string) => {
+    setCustomFinishDistanceNm(nextValue)
+    const nextDistance = nauticalMilesToMetres(Number(nextValue))
+    if (!isValidCustomFinishDistanceMetres(nextDistance)) return
+    setCourseLengthKm(recommendedCourseLength(
+      className,
+      windSpeed,
+      effectiveTargetMinutes,
+      selectedPreset.code as CourseTemplate,
+      finishLineMode,
+      nextDistance,
+    ).kilometres.toFixed(2))
   }
 
   const changeDistanceBasis = (nextBasis: 'target-time' | 'wind-standard') => {
     const nextMinutes = nextBasis === 'target-time' ? targetMinutes : standardTargetMinutes
     setDistanceBasis(nextBasis)
-    setCourseLengthKm(recommendedCourseLength(className, windSpeed, nextMinutes, selectedPreset.code as CourseTemplate, finishLineMode).kilometres.toFixed(2))
+    setCourseLengthKm(recommendedCourseLength(className, windSpeed, nextMinutes, selectedPreset.code as CourseTemplate, finishLineMode, finishDistanceMetres).kilometres.toFixed(2))
   }
 
   const changeTargetMinutes = (nextMinutes: number) => {
     const normalized = Math.min(180, Math.max(15, nextMinutes))
     setTargetMinutes(normalized)
     if (distanceBasis === 'target-time') {
-      setCourseLengthKm(recommendedCourseLength(className, windSpeed, normalized, selectedPreset.code as CourseTemplate, finishLineMode).kilometres.toFixed(2))
+      setCourseLengthKm(recommendedCourseLength(className, windSpeed, normalized, selectedPreset.code as CourseTemplate, finishLineMode, finishDistanceMetres).kilometres.toFixed(2))
     }
   }
 
@@ -287,11 +352,11 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
 
   useEffect(() => {
     if (coastClearance.status !== 'unsafe' || !parsedPosition || relocatingCourse) return
-    const adjustmentKey = [parsedPosition.join(','), selectedPreset.code, windDirection, courseLengthKm, lowerGate, finishLineMode].join('|')
+    const adjustmentKey = [parsedPosition.join(','), selectedPreset.code, windDirection, courseLengthKm, lowerGate, finishLineMode, finishDistanceMetres].join('|')
     if (automaticAdjustmentKeyRef.current === adjustmentKey) return
     automaticAdjustmentKeyRef.current = adjustmentKey
     void relocateCourseOffshore()
-  }, [coastClearance.status, courseLengthKm, finishLineMode, lowerGate, parsedPosition, relocateCourseOffshore, relocatingCourse, selectedPreset.code, windDirection])
+  }, [coastClearance.status, courseLengthKm, finishDistanceMetres, finishLineMode, lowerGate, parsedPosition, relocateCourseOffshore, relocatingCourse, selectedPreset.code, windDirection])
 
   const coastClearanceDisplay = relocatingCourse
     ? { status: 'checking' as const, label: '300m確保へ沖側に補正中' }
@@ -333,6 +398,7 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
       windSpeed,
       lowerGate,
       finishLineMode,
+      finishDistanceMetres,
       targetLengthMetres: plan.targetLengthMetres,
       targetMinutes: effectiveTargetMinutes,
       distanceBasis,
@@ -413,7 +479,15 @@ export function PreEventCoursePlanner({ onIssueEvent, onOpenEvents }: PreEventCo
               <button type="button" role="radio" aria-checked={finishLineMode === 'separate'} className={finishLineMode === 'separate' ? 'is-selected' : ''} onClick={() => changeFinishLineMode('separate')}>別に設置（FIN艇＋F）</button>
               <button type="button" role="radio" aria-checked={finishLineMode === 'shared-rc'} className={finishLineMode === 'shared-rc' ? 'is-selected' : ''} onClick={() => changeFinishLineMode('shared-rc')}>本船兼用（RC＋F）</button>
             </div>
-            <p className="pre-event-course-summary"><strong>{finishLineMode === 'separate' ? '大会向け・独立フィニッシュ' : '練習向け・FIN艇不要'}</strong><span>{finishLineMode === 'separate' ? '3マークから0.15 NM先に緑のFIN–Fラインを設定します。' : 'RCから風下へFマークを置き、緑のフィニッシュラインを作ります。'}</span></p>
+            {finishDistanceSupported && (
+              <FinishDistanceControl
+                mode={finishDistanceSelection}
+                customNauticalMiles={customFinishDistanceNm}
+                onModeChange={changeFinishDistanceSelection}
+                onCustomNauticalMilesChange={changeCustomFinishDistance}
+              />
+            )}
+            <p className="pre-event-course-summary"><strong>{finishLineMode === 'separate' ? '大会向け・独立フィニッシュ' : '練習向け・FIN艇不要'}</strong><span>{finishLineMode === 'separate' ? finishDistanceSupported ? `3マークから${metresToNauticalMiles(finishDistanceMetres!).toFixed(2)} NM（約${Math.round(finishDistanceMetres!)} m）先にFIN–Fラインを設定します。` : '最終マークから独立したFIN–Fラインを設定します。' : 'RCから風下へFマークを置き、緑のフィニッシュラインを作ります。'}</span></p>
           </section>
 
           <section className={`pre-event-step-panel ${mobileStep === 'position' ? 'is-mobile-active' : ''}`} data-mobile-panel="position">

@@ -17,6 +17,7 @@ import { makeRaceSignalEvent } from './signals'
 import type { GateGeometry } from '../shared/gates'
 import type { OperationMode } from '../shared/operationModes'
 import type { FinishLineMode } from '../shared/courseGeometry'
+import { isValidCustomFinishDistanceMetres } from '../shared/finishDistance'
 
 export interface EventSummary {
   id: string
@@ -77,7 +78,7 @@ export interface CourseRevisionSummary {
   windDirection?: number
   windSpeed?: number
   targetLengthMetres?: number
-  gateConfig: { lower?: boolean; upper?: boolean; second?: boolean; finishLineMode?: FinishLineMode; gates?: GateGeometry[] }
+  gateConfig: { lower?: boolean; upper?: boolean; second?: boolean; finishLineMode?: FinishLineMode; finishDistanceMetres?: number; gates?: GateGeometry[] }
   status: string
   basedOnRevision?: number
   createdBy?: string
@@ -136,6 +137,7 @@ export interface CreateEventInput {
   windSpeed?: number
   lowerGate?: boolean
   finishLineMode?: FinishLineMode
+  finishDistanceMetres?: number
   targetLengthMetres?: number
   targetMinutes?: number
 }
@@ -148,6 +150,7 @@ export interface EventCreationPlan {
   windSpeed: number
   lowerGate: boolean
   finishLineMode?: FinishLineMode
+  finishDistanceMetres?: number
   targetLengthMetres: number
   targetMinutes: number
 }
@@ -499,7 +502,7 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
     races: response.races.map((race) => {
       const latest = (response.raceCorrections ?? []).find((correction) => correction.race_id === race.id)
       let corrections: { courseCode?: string; warningAt?: string; targetMinutes?: number } = {}
-      let courseConfig: { finishLineMode?: FinishLineMode } = {}
+      let courseConfig: { finishLineMode?: FinishLineMode; finishDistanceMetres?: number } = {}
       try {
         if (latest) corrections = JSON.parse(latest.patch_json) as typeof corrections
       } catch { /* Invalid historical patches do not replace the finalized base record. */ }
@@ -550,6 +553,9 @@ export async function loadEventBootstrap(eventReference: string): Promise<EventB
         className: race.class_name,
         courseCode: corrections.courseCode ?? race.course_code,
         finishLineMode: courseConfig.finishLineMode === 'shared-rc' ? 'shared-rc' : 'separate',
+        finishDistanceMetres: isValidCustomFinishDistanceMetres(courseConfig.finishDistanceMetres)
+          ? courseConfig.finishDistanceMetres
+          : undefined,
         status: race.status,
         warningAt: corrections.warningAt ?? race.warning_at,
         targetMinutes: corrections.targetMinutes ?? race.target_minutes,
@@ -777,6 +783,7 @@ export async function saveCourseRevision(
     upperGate: boolean
     secondGate?: boolean
     finishLineMode?: FinishLineMode
+    finishDistanceMetres?: number
     nodes: Array<{ markId: string; label: string; nodeType: string; rounding?: string; target: readonly [number, number] }>
   },
 ): Promise<{ revisionId: string; revision: number; createdAt: string }> {
@@ -804,9 +811,14 @@ interface CourseRevisionRow {
 function parseGateConfig(value: string): CourseRevisionSummary['gateConfig'] {
   try {
     const parsed = JSON.parse(value) as unknown
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? parsed as CourseRevisionSummary['gateConfig']
-      : {}
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const config = parsed as CourseRevisionSummary['gateConfig']
+    return {
+      ...config,
+      finishDistanceMetres: isValidCustomFinishDistanceMetres(config.finishDistanceMetres)
+        ? config.finishDistanceMetres
+        : undefined,
+    }
   } catch {
     return {}
   }

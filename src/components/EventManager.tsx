@@ -63,6 +63,16 @@ import { OwnerRecoveryKitPanel } from './OwnerRecoveryKitPanel'
 import { RaceAreaPicker } from './RaceAreaPicker'
 import { firstLegLengthMetresFromTotal, recommendedCourseLength, type CourseTemplate } from '../course'
 import type { EventCreationPlan } from '../eventClient'
+import {
+  WORLD_SAILING_TRAPEZOID_FINISH_DISTANCE_METRES,
+  finishDistanceMode as inferFinishDistanceMode,
+  isValidCustomFinishDistanceMetres,
+  metresToNauticalMiles,
+  nauticalMilesToMetres,
+  supportsTrapezoidFinishDistance,
+  type FinishDistanceMode,
+} from '../../shared/finishDistance'
+import { FinishDistanceControl } from './FinishDistanceControl'
 
 interface EventManagerProps {
   session: SessionState
@@ -152,6 +162,14 @@ export function EventManager({
   const [courseCode, setCourseCode] = useState(initialCreationPlan?.courseCode ?? 'O2')
   const [lowerGate, setLowerGate] = useState(initialCreationPlan?.lowerGate ?? true)
   const [finishLineMode, setFinishLineMode] = useState<'separate' | 'shared-rc'>(initialCreationPlan?.finishLineMode ?? 'separate')
+  const [finishDistanceSelection, setFinishDistanceSelection] = useState<FinishDistanceMode>(() => (
+    inferFinishDistanceMode(initialCreationPlan?.finishDistanceMetres)
+  ))
+  const [customFinishDistanceNm, setCustomFinishDistanceNm] = useState(() => (
+    initialCreationPlan?.finishDistanceMetres
+      ? metresToNauticalMiles(initialCreationPlan.finishDistanceMetres).toFixed(2)
+      : '0.15'
+  ))
   const [windDirection, setWindDirection] = useState(initialCreationPlan?.windDirection ?? 350)
   const [windSpeed, setWindSpeed] = useState(initialCreationPlan?.windSpeed ?? 8)
   const [targetMinutes, setTargetMinutes] = useState(initialCreationPlan?.targetMinutes ?? 50)
@@ -171,10 +189,24 @@ export function EventManager({
       : undefined
   }, [centerLatitude, centerLongitude])
   const selectedCoursePreset = coursePresetForClass(className, courseCode)
+  const customFinishDistanceMetres = nauticalMilesToMetres(Number(customFinishDistanceNm))
+  const finishDistanceInputValid = finishDistanceSelection === 'world-sailing-standard'
+    || isValidCustomFinishDistanceMetres(customFinishDistanceMetres)
+  const selectedFinishDistanceMetres = finishDistanceSelection === 'custom' && finishDistanceInputValid
+    ? customFinishDistanceMetres
+    : WORLD_SAILING_TRAPEZOID_FINISH_DISTANCE_METRES
+  const finishDistanceSupported = finishLineMode === 'separate'
+    && supportsTrapezoidFinishDistance(selectedCoursePreset.code, className)
+  const finishDistanceMetres = finishDistanceSupported
+    ? selectedFinishDistanceMetres
+    : undefined
   const basicDetailsReady = name.trim().length >= 2 && Boolean(startsOn) && endsOn >= startsOn && raceCount >= 1 && raceCount <= 20
   const warningTime = new Date(firstWarningAt)
   const warningDay = firstWarningAt.slice(0, 10)
-  const racePlanReady = !Number.isNaN(warningTime.getTime()) && warningDay >= startsOn && warningDay <= endsOn
+  const racePlanReady = !Number.isNaN(warningTime.getTime())
+    && warningDay >= startsOn
+    && warningDay <= endsOn
+    && (!finishDistanceSupported || finishDistanceInputValid)
   const [invites, setInvites] = useState<InviteRecord[]>([])
   const [inviteRole, setInviteRole] = useState('mark-boat')
   const [inviteAreaId, setInviteAreaId] = useState('')
@@ -293,30 +325,59 @@ export function EventManager({
     setClassName(nextClass)
     setCourseCode(nextCode)
     setLowerGate(coursePresetForClass(nextClass, nextCode).route.some((point) => point.includes('S/')))
-    setTargetLengthKm(recommendedCourseLength(nextClass, windSpeed, targetMinutes, nextCode as CourseTemplate, finishLineMode).kilometres.toFixed(1))
+    setTargetLengthKm(recommendedCourseLength(nextClass, windSpeed, targetMinutes, nextCode as CourseTemplate, finishLineMode, selectedFinishDistanceMetres).kilometres.toFixed(1))
   }
 
   const changeCourse = (nextCode: string) => {
     setCourseCode(nextCode)
     setLowerGate(coursePresetForClass(className, nextCode).route.some((point) => point.includes('S/')))
-    setTargetLengthKm(recommendedCourseLength(className, windSpeed, targetMinutes, nextCode as CourseTemplate, finishLineMode).kilometres.toFixed(1))
+    setTargetLengthKm(recommendedCourseLength(className, windSpeed, targetMinutes, nextCode as CourseTemplate, finishLineMode, selectedFinishDistanceMetres).kilometres.toFixed(1))
   }
 
   const changeWindSpeed = (nextSpeed: number) => {
     const normalized = Math.min(40, Math.max(1, nextSpeed))
     setWindSpeed(normalized)
-    setTargetLengthKm(recommendedCourseLength(className, normalized, targetMinutes, courseCode as CourseTemplate, finishLineMode).kilometres.toFixed(1))
+    setTargetLengthKm(recommendedCourseLength(className, normalized, targetMinutes, courseCode as CourseTemplate, finishLineMode, finishDistanceMetres).kilometres.toFixed(1))
   }
 
   const changeFinishLineMode = (nextMode: 'separate' | 'shared-rc') => {
     setFinishLineMode(nextMode)
-    setTargetLengthKm(recommendedCourseLength(className, windSpeed, targetMinutes, courseCode as CourseTemplate, nextMode).kilometres.toFixed(1))
+    setTargetLengthKm(recommendedCourseLength(className, windSpeed, targetMinutes, courseCode as CourseTemplate, nextMode, selectedFinishDistanceMetres).kilometres.toFixed(1))
+  }
+
+  const changeFinishDistanceSelection = (nextMode: FinishDistanceMode) => {
+    const nextDistance = nextMode === 'custom' && isValidCustomFinishDistanceMetres(customFinishDistanceMetres)
+      ? customFinishDistanceMetres
+      : WORLD_SAILING_TRAPEZOID_FINISH_DISTANCE_METRES
+    setFinishDistanceSelection(nextMode)
+    setTargetLengthKm(recommendedCourseLength(
+      className,
+      windSpeed,
+      targetMinutes,
+      courseCode as CourseTemplate,
+      finishLineMode,
+      nextDistance,
+    ).kilometres.toFixed(1))
+  }
+
+  const changeCustomFinishDistance = (nextValue: string) => {
+    setCustomFinishDistanceNm(nextValue)
+    const nextDistance = nauticalMilesToMetres(Number(nextValue))
+    if (!isValidCustomFinishDistanceMetres(nextDistance)) return
+    setTargetLengthKm(recommendedCourseLength(
+      className,
+      windSpeed,
+      targetMinutes,
+      courseCode as CourseTemplate,
+      finishLineMode,
+      nextDistance,
+    ).kilometres.toFixed(1))
   }
 
   const changeTargetMinutes = (nextMinutes: number) => {
     const normalized = Math.min(180, Math.max(15, nextMinutes))
     setTargetMinutes(normalized)
-    setTargetLengthKm(recommendedCourseLength(className, windSpeed, normalized, courseCode as CourseTemplate, finishLineMode).kilometres.toFixed(1))
+    setTargetLengthKm(recommendedCourseLength(className, windSpeed, normalized, courseCode as CourseTemplate, finishLineMode, finishDistanceMetres).kilometres.toFixed(1))
   }
 
   const changeStartsOn = (nextDate: string) => {
@@ -335,7 +396,11 @@ export function EventManager({
     }
     if (!racePlanReady) {
       setCreationStep(2)
-      setError('1Rの予告予定は大会の開催期間内で指定してください')
+      setError(
+        finishDistanceSupported && !finishDistanceInputValid
+          ? 'フィニッシュ距離は0.05〜0.50 NMで指定してください'
+          : '1Rの予告予定は大会の開催期間内で指定してください',
+      )
       return
     }
     if (!center) {
@@ -348,7 +413,7 @@ export function EventManager({
     const enteredTargetLengthKm = Number(targetLengthKm)
     const targetLengthMetres = Number.isFinite(enteredTargetLengthKm) && enteredTargetLengthKm >= 0.5
       ? enteredTargetLengthKm * 1_000
-      : recommendedCourseLength(className, windSpeed, targetMinutes, courseCode as CourseTemplate, finishLineMode).kilometres * 1_000
+      : recommendedCourseLength(className, windSpeed, targetMinutes, courseCode as CourseTemplate, finishLineMode, finishDistanceMetres).kilometres * 1_000
     try {
       const created = await createEvent({
         name: name.trim(),
@@ -365,6 +430,7 @@ export function EventManager({
         windSpeed,
         lowerGate,
         finishLineMode,
+        finishDistanceMetres,
         targetLengthMetres,
         targetMinutes,
       })
@@ -1014,14 +1080,26 @@ export function EventManager({
                     <button type="button" role="radio" aria-checked={finishLineMode === 'separate'} className={finishLineMode === 'separate' ? 'is-selected' : ''} onClick={() => changeFinishLineMode('separate')}>別に設置（FIN艇＋F）</button>
                     <button type="button" role="radio" aria-checked={finishLineMode === 'shared-rc'} className={finishLineMode === 'shared-rc' ? 'is-selected' : ''} onClick={() => changeFinishLineMode('shared-rc')}>本船兼用（RC＋F）</button>
                   </div>
+                  {finishDistanceSupported && (
+                    <FinishDistanceControl
+                      mode={finishDistanceSelection}
+                      customNauticalMiles={customFinishDistanceNm}
+                      onModeChange={changeFinishDistanceSelection}
+                      onCustomNauticalMilesChange={changeCustomFinishDistance}
+                    />
+                  )}
                   <div className="event-form-grid">
                     <label className="event-field"><span>初期風向（°T）</span><input type="number" min="0" max="359" value={windDirection} onChange={(event) => setWindDirection(Math.min(359, Math.max(0, Number(event.target.value))))} /></label>
                     <label className="event-field"><span>初期風速（kt）</span><input type="number" min="1" max="40" step="0.1" value={windSpeed} onChange={(event) => changeWindSpeed(Number(event.target.value))} /></label>
                     <label className="event-field"><span>目標レース時間（分）</span><input type="number" min="15" max="180" step="1" value={targetMinutes} onChange={(event) => changeTargetMinutes(Number(event.target.value))} /><small>艇種・風速と合わせて推奨距離を計算</small></label>
-                    <label className="event-field"><span>初期推定総航程（km）</span><input type="number" min="0.5" max="30" step="0.1" value={targetLengthKm} onChange={(event) => setTargetLengthKm(event.target.value)} /><small>第1レグ 約{(firstLegLengthMetresFromTotal(Number(targetLengthKm) * 1_000, selectedCoursePreset.code as CourseTemplate, className, windSpeed, finishLineMode) / 1_000).toFixed(2)} km・艇種、風速、コースから算出</small></label>
+                    <label className="event-field"><span>初期推定総航程（km）</span><input type="number" min="0.5" max="30" step="0.1" value={targetLengthKm} onChange={(event) => setTargetLengthKm(event.target.value)} /><small>第1レグ 約{(firstLegLengthMetresFromTotal(Number(targetLengthKm) * 1_000, selectedCoursePreset.code as CourseTemplate, className, windSpeed, finishLineMode, finishDistanceMetres) / 1_000).toFixed(2)} km・艇種、風速、コースから算出</small></label>
                   </div>
                 </section>
-                {!racePlanReady && <div className="event-step-readiness is-warning">予告予定を大会の開催期間内にしてください</div>}
+                {!racePlanReady && <div className="event-step-readiness is-warning">
+                  {finishDistanceSupported && !finishDistanceInputValid
+                    ? 'フィニッシュ距離を0.05〜0.50 NMで入力してください'
+                    : '予告予定を大会の開催期間内にしてください'}
+                </div>}
                 <div className="event-wizard-actions"><button type="button" onClick={() => setCreationStep(1)}>戻る</button><button type="button" className="event-wizard-next" disabled={!racePlanReady} onClick={() => { setError(undefined); setCreationStep(3) }}>次へ：海面と確認</button></div>
               </section>}
 
@@ -1057,7 +1135,7 @@ export function EventManager({
                     <div><dt>運営体制</dt><dd>{operationModeOption(operationMode).label}</dd></div>
                     <div><dt>初期コース</dt><dd>{selectedCoursePreset.optionLabel}</dd></div>
                     <div><dt>ゲート</dt><dd>{lowerGate ? 'あり（S・P）' : 'なし（単一マーク）'}</dd></div>
-                    <div><dt>フィニッシュ</dt><dd>{finishLineMode === 'separate' ? '別に設置（FIN艇＋F）' : '本船兼用（RC＋F・風下方向）'}</dd></div>
+                    <div><dt>フィニッシュ</dt><dd>{finishLineMode === 'separate' ? finishDistanceSupported ? `別設置・3マークから${metresToNauticalMiles(finishDistanceMetres!).toFixed(2)} NM（約${Math.round(finishDistanceMetres!)} m）` : '別に設置（FIN艇＋F）' : '本船兼用（RC＋F・風下方向）'}</dd></div>
                     <div><dt>初期風</dt><dd>{windDirection}°T・{windSpeed.toFixed(1)} kt</dd></div>
                     <div><dt>目標時間</dt><dd>{targetMinutes}分</dd></div>
                     <div><dt>推定総航程</dt><dd>{Number(targetLengthKm).toFixed(1)} km</dd></div>

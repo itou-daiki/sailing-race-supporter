@@ -30,8 +30,15 @@ describe('course-only sharing', () => {
     expect(sharedCourseFromHash(new URL(url).hash)).toEqual(payload)
   })
 
+  it('round-trips an optional custom finish distance while accepting old links without it', () => {
+    const custom = { ...payload, finishLineMode: 'separate' as const, finishDistanceMetres: 0.25 * 1_852 }
+    expect(decodeSharedCourse(encodeSharedCourse(custom))).toEqual(custom)
+    expect(decodeSharedCourse(encodeSharedCourse(payload))).toEqual(payload)
+  })
+
   it('rejects malformed or out-of-range shared data', () => {
     expect(decodeSharedCourse('not-base64')).toBeUndefined()
     expect(decodeSharedCourse(encodeSharedCourse({ ...payload, windDirection: 400 }))).toBeUndefined()
+    expect(decodeSharedCourse(encodeSharedCourse({ ...payload, finishDistanceMetres: 20 }))).toBeUndefined()
   })
 })

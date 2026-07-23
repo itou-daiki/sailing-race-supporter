@@ -61,6 +61,19 @@ describe('pre-event course plan', () => {
     expect(features.legLabels.features.map((feature) => feature.properties?.label)).toContain('278 m · 0.15 NM')
   })
 
+  it('shows a custom O2 final leg from 3P on the map', () => {
+    const marks = buildPreEventCourseMarks(plan({ finishDistanceMetres: 0.25 * 1_852 }))
+    const mark3p = marks.find((mark) => mark.shortLabel === '3P')!
+    const finishCenter = midpoint(
+      marks.find((mark) => mark.shortLabel === 'F')!.target,
+      marks.find((mark) => mark.shortLabel === 'FIN')!.target,
+    )
+    const features = buildCourseFeatures(marks, ['Start', '1', '2', '3S/3P', '2', '3P', 'Finish'])
+
+    expect(distanceMetres(mark3p.target, finishCenter)).toBeCloseTo(0.25 * 1_852, 0)
+    expect(features.legLabels.features.map((feature) => feature.properties?.label)).toContain('463 m · 0.25 NM')
+  })
+
   it('uses RC and one F mark without a separate finish boat in shared practice mode', () => {
     const marks = buildPreEventCourseMarks(plan({ finishLineMode: 'shared-rc' }))
 

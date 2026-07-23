@@ -88,6 +88,16 @@ import { canRecordOverallWind, isRaceOfficerRole, operationRoleLabel, roleCan } 
 import type { OperationMode } from '../shared/operationModes'
 import { deriveOperationalGuidance } from './operationalGuidance'
 import { shortCourseMarkLabel } from './courseMarkLabels'
+import {
+  WORLD_SAILING_TRAPEZOID_FINISH_DISTANCE_METRES,
+  finishDistanceMode as inferFinishDistanceMode,
+  isValidCustomFinishDistanceMetres,
+  metresToNauticalMiles,
+  nauticalMilesToMetres,
+  supportsTrapezoidFinishDistance,
+  type FinishDistanceMode,
+} from '../shared/finishDistance'
+import { FinishDistanceControl } from './components/FinishDistanceControl'
 
 const DETAIL_KEY = 'srs-board-detail-v2'
 const SCALE_KEY = 'srs-board-scale'
@@ -299,6 +309,8 @@ export default function App() {
   const [courseTemplate, setCourseTemplate] = useState<CourseTemplate>('O2')
   const [lowerGate, setLowerGate] = useState(true)
   const [finishLineMode, setFinishLineMode] = useState<'separate' | 'shared-rc'>('separate')
+  const [finishDistanceSelection, setFinishDistanceSelection] = useState<FinishDistanceMode>('world-sailing-standard')
+  const [customFinishDistanceNm, setCustomFinishDistanceNm] = useState('0.15')
   const [upperGate, setUpperGate] = useState(false)
   const [secondGate, setSecondGate] = useState(false)
   const [gateWidthMetres, setGateWidthMetres] = useState(130)
@@ -661,6 +673,16 @@ export default function App() {
     () => coursePresetForClass(selectedClass, courseTemplate),
     [courseTemplate, selectedClass],
   )
+  const customFinishDistanceMetres = nauticalMilesToMetres(Number(customFinishDistanceNm))
+  const finishDistanceInputValid = finishDistanceSelection === 'world-sailing-standard'
+    || isValidCustomFinishDistanceMetres(customFinishDistanceMetres)
+  const finishDistanceSupported = finishLineMode === 'separate'
+    && supportsTrapezoidFinishDistance(selectedCoursePreset.code, selectedClass)
+  const configuredFinishDistanceMetres = finishDistanceSupported
+    ? finishDistanceSelection === 'custom' && finishDistanceInputValid
+      ? customFinishDistanceMetres
+      : WORLD_SAILING_TRAPEZOID_FINISH_DISTANCE_METRES
+    : undefined
   const raceAreaCenter = useMemo<LngLat | undefined>(() => {
     const area = eventResources.areas.find((candidate) => candidate.id === activeRace.raceAreaId)
     return area?.centerLng !== undefined && area.centerLat !== undefined
@@ -677,12 +699,20 @@ export default function App() {
         center: fallbackCenter,
         windDirection: courseWindDirection,
         windSpeed: courseWindSpeed,
-        totalLengthMetres: recommendedCourseLength(activeRace.className, courseWindSpeed, activeRace.targetMinutes, activeCoursePreset.code as CourseTemplate).kilometres * 1_000,
+        totalLengthMetres: recommendedCourseLength(
+          activeRace.className,
+          courseWindSpeed,
+          activeRace.targetMinutes,
+          activeCoursePreset.code as CourseTemplate,
+          activeRace.finishLineMode ?? 'separate',
+          activeRace.finishDistanceMetres,
+        ).kilometres * 1_000,
         courseCode: activeCoursePreset.code as CourseTemplate,
         className: activeRace.className,
         lowerGate: activeCoursePreset.route.some((point) => point.includes('S/')),
         upperGate: false,
         finishLineMode: activeRace.finishLineMode ?? 'separate',
+        finishDistanceMetres: activeRace.finishDistanceMetres,
       })
       return preview.map((node) => {
         const physical = eventResources.marks.find((mark) => mark.label === node.label)
@@ -720,12 +750,20 @@ export default function App() {
             startLine,
             windDirection: courseWindDirection,
             windSpeed: courseWindSpeed,
-            totalLengthMetres: recommendedCourseLength(activeRace.className, courseWindSpeed, activeRace.targetMinutes, activeCoursePreset.code as CourseTemplate).kilometres * 1_000,
+            totalLengthMetres: recommendedCourseLength(
+              activeRace.className,
+              courseWindSpeed,
+              activeRace.targetMinutes,
+              activeCoursePreset.code as CourseTemplate,
+              activeRace.finishLineMode ?? 'separate',
+              activeRace.finishDistanceMetres,
+            ).kilometres * 1_000,
             courseCode: activeCoursePreset.code as CourseTemplate,
             className: activeRace.className,
             lowerGate: activeCoursePreset.route.some((point) => point.includes('S/')),
             upperGate: false,
             finishLineMode: activeRace.finishLineMode ?? 'separate',
+            finishDistanceMetres: activeRace.finishDistanceMetres,
           }).filter((node) => node.nodeType === 'finish' && !usableSourceMarks.some((mark) => (
             mark.shortLabel === shortCourseMarkLabel(node.label)
           )))
@@ -758,7 +796,14 @@ export default function App() {
     note: draftMarkCorrection.note,
     committeeBoatId: draftMarkCorrection.committeeBoatId,
   } : undefined)
-  const recommendation = recommendedCourseLength(selectedClass, courseWindSpeed, activeRace.targetMinutes, selectedCoursePreset.code as CourseTemplate, finishLineMode)
+  const recommendation = recommendedCourseLength(
+    selectedClass,
+    courseWindSpeed,
+    activeRace.targetMinutes,
+    selectedCoursePreset.code as CourseTemplate,
+    finishLineMode,
+    configuredFinishDistanceMetres,
+  )
   const startPinMark = marks.find((mark) => mark.label === 'スタート・ピン')
   const startSignalMark = marks.find((mark) => mark.label === 'シグナルボート')
   const recordedStartEndpoints = Number(Boolean(startPinMark?.actual)) + Number(Boolean(startSignalMark?.actual))
@@ -1510,6 +1555,12 @@ export default function App() {
     setCourseTemplate(normalizeCoursePresetCode(selectedClass, supported))
     setLowerGate(activeRace.marks.some((mark) => mark.label.startsWith('下ゲート') || mark.label.startsWith('内側ゲート')) || activeRace.courseCode.includes('ゲート'))
     setFinishLineMode(activeRace.finishLineMode ?? 'separate')
+    setFinishDistanceSelection(inferFinishDistanceMode(activeRace.finishDistanceMetres))
+    setCustomFinishDistanceNm(
+      activeRace.finishDistanceMetres
+        ? metresToNauticalMiles(activeRace.finishDistanceMetres).toFixed(2)
+        : '0.15',
+    )
     setUpperGate(activeRace.marks.some((mark) => mark.label.startsWith('上ゲート')))
     setSecondGate(activeRace.marks.some((mark) => mark.label.startsWith('中ゲート')))
     setGateWidthMetres(130)
@@ -1524,6 +1575,9 @@ export default function App() {
           const savedWidth = revisions[0]?.gateConfig.gates?.[0]?.widthMetres
           if (savedWidth && Number.isFinite(savedWidth)) setGateWidthMetres(Math.round(savedWidth))
           setFinishLineMode(revisions[0]?.gateConfig.finishLineMode === 'shared-rc' ? 'shared-rc' : 'separate')
+          const savedFinishDistance = revisions[0]?.gateConfig.finishDistanceMetres
+          setFinishDistanceSelection(inferFinishDistanceMode(savedFinishDistance))
+          setCustomFinishDistanceNm(savedFinishDistance ? metresToNauticalMiles(savedFinishDistance).toFixed(2) : '0.15')
         })
         .catch((reason) => setCourseSaveError(reason instanceof Error ? reason.message : 'コース版履歴を取得できません'))
         .finally(() => setCourseHistoryLoading(false))
@@ -1539,6 +1593,8 @@ export default function App() {
       setRaces((current) => current.map((race) => race.id === activeRace.id ? {
         ...race,
         courseCode: restored.courseCode,
+        finishLineMode: source.gateConfig.finishLineMode === 'shared-rc' ? 'shared-rc' : 'separate',
+        finishDistanceMetres: source.gateConfig.finishDistanceMetres,
       } : race))
       void sendRealtimeOperation('course', {
         action: 'refresh',
@@ -1558,6 +1614,10 @@ export default function App() {
 
   const saveCourse = async () => {
     if (locked) return
+    if (finishDistanceSupported && !finishDistanceInputValid) {
+      setCourseSaveError('フィニッシュ距離は0.05〜0.50 NMで入力してください')
+      return
+    }
     setCourseSaving(true)
     setCourseSaveError(undefined)
     const startLine = startPinPosition && startSignalPosition
@@ -1579,6 +1639,7 @@ export default function App() {
       secondGate,
       gateWidthMetres,
       finishLineMode,
+      finishDistanceMetres: configuredFinishDistanceMetres,
     })
     const allPhysicalMarks = new Map<string, { id: string; label: string }>()
     marks.forEach((mark) => allPhysicalMarks.set(mark.label, mark))
@@ -1617,6 +1678,7 @@ export default function App() {
           upperGate,
           secondGate,
           finishLineMode,
+          finishDistanceMetres: configuredFinishDistanceMetres,
           nodes: plannedMarks.map((mark) => ({
             markId: mark.id,
             label: mark.label,
@@ -1638,6 +1700,7 @@ export default function App() {
         ...race,
         courseCode: courseTemplate,
         finishLineMode,
+        finishDistanceMetres: configuredFinishDistanceMetres,
         marks: plannedMarks,
       } : race))
       setSettingsOpen(false)
@@ -2262,7 +2325,16 @@ export default function App() {
               <Waves size={17} /> 潮流を現在地と共有
             </button>
             <label className="switch-row"><span><strong>風下／内側ゲート</strong><small>{courseTemplate === 'I2' ? '4S / 4Pを使用' : courseTemplate === 'L2' || courseTemplate === 'L3' ? '2S / 2Pを使用' : '3S / 3Pを使用'}</small></span><input type="checkbox" checked={lowerGate} disabled={!canChangeCourse} onChange={(event) => setLowerGate(event.target.checked)} /></label>
-            <label><span>フィニッシュライン</span><select value={finishLineMode} disabled={!canChangeCourse} onChange={(event) => setFinishLineMode(event.target.value as 'separate' | 'shared-rc')}><option value="separate">別に設置（FIN艇＋Fマーク）</option><option value="shared-rc">本船兼用（RC＋Fマーク・FIN艇不要）</option></select><small>{finishLineMode === 'separate' ? 'トラペゾイドは3マークから0.15 NM先に、最終レグと直角の緑ラインを作ります。' : 'RCから風下方向へ50 mの緑ラインを作ります。練習やワンオペ向けです。'}</small></label>
+            <label><span>フィニッシュライン</span><select value={finishLineMode} disabled={!canChangeCourse} onChange={(event) => setFinishLineMode(event.target.value as 'separate' | 'shared-rc')}><option value="separate">別に設置（FIN艇＋Fマーク）</option><option value="shared-rc">本船兼用（RC＋Fマーク・FIN艇不要）</option></select><small>{finishLineMode === 'separate' ? finishDistanceSupported ? `3マークから${metresToNauticalMiles(configuredFinishDistanceMetres!).toFixed(2)} NM（約${Math.round(configuredFinishDistanceMetres!)} m）先に、最終レグと直角の緑ラインを作ります。` : '最終マークの先に、最終レグと直角の緑ラインを作ります。' : 'RCから風下方向へ50 mの緑ラインを作ります。練習やワンオペ向けです。'}</small></label>
+            {finishDistanceSupported && (
+              <FinishDistanceControl
+                mode={finishDistanceSelection}
+                customNauticalMiles={customFinishDistanceNm}
+                disabled={!canChangeCourse}
+                onModeChange={setFinishDistanceSelection}
+                onCustomNauticalMilesChange={setCustomFinishDistanceNm}
+              />
+            )}
             <label className="switch-row"><span><strong>上ゲート</strong><small>1S / 1Pを使用</small></span><input type="checkbox" checked={upperGate} disabled={!canChangeCourse} onChange={(event) => setUpperGate(event.target.checked)} /></label>
             {(courseTemplate === 'O2' || courseTemplate === 'I2' || courseTemplate === 'T2' || courseTemplate === 'トライアングル') && <label className="switch-row"><span><strong>中ゲート</strong><small>2マークを2S / 2Pへ切替</small></span><input type="checkbox" checked={secondGate} disabled={!canChangeCourse} onChange={(event) => setSecondGate(event.target.checked)} /></label>}
             {(lowerGate || upperGate || secondGate) && <label><span>計画ゲート幅（m・全ゲート共通）</span><input type="number" min="40" max="600" step="5" value={gateWidthMetres} disabled={!canChangeCourse} onChange={(event) => setGateWidthMetres(Math.min(600, Math.max(40, Number(event.target.value) || 40)))} /></label>}
@@ -2291,6 +2363,9 @@ export default function App() {
                     <span>第{revision.revision}版{index === 0 && <em>現在</em>}</span>
                     <strong>{revision.courseCode}</strong>
                     <small>{revision.createdBy ?? '運営メンバー'}・{formatCourseRevisionTime(revision.createdAt)}・{revision.nodeCount}点</small>
+                    {revision.gateConfig.finishDistanceMetres !== undefined && (
+                      <small>3マーク→FIN: {metresToNauticalMiles(revision.gateConfig.finishDistanceMetres).toFixed(2)} NM（約{Math.round(revision.gateConfig.finishDistanceMetres)} m）</small>
+                    )}
                     {revision.gateConfig.gates?.map((gate) => <small className="course-history-gate" key={gate.key}>
                       {gate.label}: {Math.round(gate.widthMetres)}m / {formatTrueBearing(gate.bearingDegreesTrue, { padInteger: 3 })}（S→P）・中央 {gate.center[1].toFixed(5)}, {gate.center[0].toFixed(5)}
                     </small>)}
@@ -2309,7 +2384,7 @@ export default function App() {
             <button type="button" className="sheet-secondary" onClick={() => { setSettingsOpen(false); setEventManagerOpen(true) }}><Anchor size={17} /> 大会を発行・選択・共有</button>
             {session.mode === 'authenticated' && <button type="button" className="sheet-secondary" onClick={() => { setSettingsOpen(false); setLogsOpen(true) }}><ScrollText size={17} /> 大会・レース別の運営ログ</button>}
             <button type="button" className="sheet-secondary" onClick={() => { setSettingsOpen(false); setResumeEventIssuanceAfterAuth(false); setAuthOpen(true) }}><ShieldCheck size={17} /> 本人確認・パスキー</button>
-            <button type="button" className="sheet-primary" onClick={() => void saveCourse()} disabled={courseSaving || !canChangeCourse}>{courseSaving ? '推奨位置を計算・保存中…' : useRecordedStartLine ? '④ 推奨マーク位置を保存・全員へ共有' : '④ 計画ラインから保存・全員へ共有'}</button>
+            <button type="button" className="sheet-primary" onClick={() => void saveCourse()} disabled={courseSaving || !canChangeCourse || (finishDistanceSupported && !finishDistanceInputValid)}>{courseSaving ? '推奨位置を計算・保存中…' : useRecordedStartLine ? '④ 推奨マーク位置を保存・全員へ共有' : '④ 計画ラインから保存・全員へ共有'}</button>
           </aside>
         </div>
       )}

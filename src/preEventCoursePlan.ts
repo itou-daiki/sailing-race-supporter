@@ -10,7 +10,14 @@ import {
 
 export function buildPreEventCourseMarks(plan: EventCreationPlan): CourseMark[] {
   const courseCode = plan.courseCode as CourseTemplate
-  const lineLength = recommendedStartLineLength(plan.targetLengthMetres, courseCode, plan.className, plan.windSpeed, plan.finishLineMode)
+  const lineLength = recommendedStartLineLength(
+    plan.targetLengthMetres,
+    courseCode,
+    plan.className,
+    plan.windSpeed,
+    plan.finishLineMode,
+    plan.finishDistanceMetres,
+  )
   const pin = destinationPoint(plan.signalBoatPosition, lineLength, plan.windDirection - 90)
   return generateCoursePlan({
     center: plan.signalBoatPosition,
@@ -23,6 +30,7 @@ export function buildPreEventCourseMarks(plan: EventCreationPlan): CourseMark[] 
     lowerGate: plan.lowerGate,
     upperGate: false,
     finishLineMode: plan.finishLineMode,
+    finishDistanceMetres: plan.finishDistanceMetres,
   }).map((node) => ({
     id: `preview-${node.key}`,
     label: node.label,

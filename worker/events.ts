@@ -17,6 +17,10 @@ import {
   type FinishLineMode,
 } from '../shared/courseGeometry.js'
 import { recommendedCourseLength, type SupportedSailingClass } from '../shared/classPerformance.js'
+import {
+  isValidCustomFinishDistanceMetres,
+  resolveFinishDistanceMetres,
+} from '../shared/finishDistance.js'
 
 const CLASSES = new Set(['OP', 'ILCA 4', 'ILCA 6', 'ILCA 7', '420', '470', 'スナイプ'])
 const COURSES = new Set(['O2', 'I2', 'L2', 'L3', 'W2', 'T2', 'トライアングル'])
@@ -47,6 +51,7 @@ interface CreateEventInput {
   windSpeed?: number
   lowerGate?: boolean
   finishLineMode?: FinishLineMode
+  finishDistanceMetres?: number
   targetLengthMetres?: number
   targetMinutes?: number
 }
@@ -163,18 +168,41 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
     return json({ error: 'フィニッシュライン方式を確認してください' }, { status: 400 })
   }
   const finishLineMode: FinishLineMode = body.finishLineMode === 'shared-rc' ? 'shared-rc' : 'separate'
+  if (body.finishDistanceMetres !== undefined && !isValidCustomFinishDistanceMetres(body.finishDistanceMetres)) {
+    return json({ error: 'フィニッシュ距離は0.05〜0.50 NMで指定してください' }, { status: 400 })
+  }
+  const finishDistanceMetres = resolveFinishDistanceMetres(
+    courseCode,
+    className,
+    finishLineMode,
+    body.finishDistanceMetres,
+  )
   const defaultTargetMinutes = className === '420' ? 45 : className === 'スナイプ' ? 60 : 50
   const targetMinutes = typeof body.targetMinutes === 'number' && Number.isFinite(body.targetMinutes)
     ? Math.round(Math.min(180, Math.max(15, body.targetMinutes)))
     : defaultTargetMinutes
   const recommendedLengthMetres = Math.round(
-    recommendedCourseLength(className as SupportedSailingClass, windSpeed, targetMinutes, courseCode as CourseTemplate, finishLineMode).kilometres * 1_000,
+    recommendedCourseLength(
+      className as SupportedSailingClass,
+      windSpeed,
+      targetMinutes,
+      courseCode as CourseTemplate,
+      finishLineMode,
+      finishDistanceMetres,
+    ).kilometres * 1_000,
   )
   const targetLengthMetres = typeof body.targetLengthMetres === 'number' && Number.isFinite(body.targetLengthMetres)
     ? Math.round(Math.min(30_000, Math.max(500, body.targetLengthMetres)))
     : recommendedLengthMetres
   const courseTemplate = courseCode as CourseTemplate
-  const startLineLength = recommendedStartLineLength(targetLengthMetres, courseTemplate, className, windSpeed, finishLineMode)
+  const startLineLength = recommendedStartLineLength(
+    targetLengthMetres,
+    courseTemplate,
+    className,
+    windSpeed,
+    finishLineMode,
+    finishDistanceMetres,
+  )
   const startPin = destinationPoint(signalBoatPosition, startLineLength, windDirection - 90)
   const initialCoursePlan = generateCoursePlan({
     center,
@@ -188,6 +216,7 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
     upperGate: false,
     secondGate: false,
     finishLineMode,
+    finishDistanceMetres,
   })
   const now = new Date().toISOString()
   const eventId = crypto.randomUUID()
@@ -280,6 +309,7 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
         initialCourseNodes,
       ),
       finishLineMode,
+      ...(finishDistanceMetres !== undefined ? { finishDistanceMetres } : {}),
     }
     statements.push(env.DB.prepare(
       `INSERT INTO races
@@ -358,7 +388,7 @@ async function createEvent(request: Request, env: AppEnv): Promise<Response> {
     entityId: eventId,
     after: {
       name, slug, startsOn, endsOn, raceCount, className, courseCode, operationMode,
-      lowerGate, finishLineMode, windDirection, windSpeed, targetLengthMetres, signalBoatPosition,
+      lowerGate, finishLineMode, finishDistanceMetres, windDirection, windSpeed, targetLengthMetres, signalBoatPosition,
       ownerRecovery: ownerRecoveryId ? 'issued-pending-confirmation' : 'two-or-more-passkeys',
     },
   })

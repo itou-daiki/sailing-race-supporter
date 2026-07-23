@@ -60,6 +60,28 @@ describe('PreEventCoursePlanner mobile navigation', () => {
     expect(onIssueEvent).toHaveBeenCalledWith(expect.objectContaining({ finishLineMode: 'shared-rc' }))
   })
 
+  it('lets the host enter a custom trapezoid finish distance and includes it in issuance', async () => {
+    const onIssueEvent = vi.fn()
+    const { container } = render(<PreEventCoursePlanner onIssueEvent={onIssueEvent} onOpenEvents={vi.fn()} />)
+
+    fireEvent.click(within(container).getByRole('radio', { name: /手動で指定/u }))
+    fireEvent.change(within(container).getByRole('spinbutton', { name: '3マークからフィニッシュまでの距離' }), {
+      target: { value: '0.25' },
+    })
+    expect(within(container).getByText(/0\.25 NM（約463 m）先/u)).toBeInTheDocument()
+    fireEvent.click(within(container).getByRole('radio', { name: '本船兼用（RC＋F）' }))
+    fireEvent.click(within(container).getByRole('radio', { name: '別に設置（FIN艇＋F）' }))
+    expect(within(container).getByRole('spinbutton', { name: '3マークからフィニッシュまでの距離' })).toHaveValue(0.25)
+
+    const issueButton = within(container).getAllByRole('button', { name: '大会URLを発行' }).at(-1)!
+    await waitFor(() => expect(issueButton).toBeEnabled())
+    fireEvent.click(issueButton)
+    expect(onIssueEvent).toHaveBeenCalledWith(expect.objectContaining({
+      finishLineMode: 'separate',
+      finishDistanceMetres: 0.25 * 1_852,
+    }))
+  })
+
   it('switches between a custom target time and the class wind-speed standard', async () => {
     const onIssueEvent = vi.fn()
     const { container } = render(<PreEventCoursePlanner onIssueEvent={onIssueEvent} onOpenEvents={vi.fn()} />)

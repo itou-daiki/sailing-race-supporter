@@ -1,4 +1,5 @@
 import { geodesicMidpoint } from './geo.js'
+import { resolveFinishDistanceMetres } from './finishDistance.js'
 
 const EARTH_RADIUS_METRES = 6_371_008.8
 const toRadians = (degrees: number) => (degrees * Math.PI) / 180
@@ -29,6 +30,7 @@ export interface CoursePlanInput {
   startLineLengthMetres?: number
   windSpeed?: number
   finishLineMode?: FinishLineMode
+  finishDistanceMetres?: number
 }
 
 export interface CourseSailingDistanceModel {
@@ -60,17 +62,18 @@ export function courseSailingDistanceModel(
   className?: string,
   windSpeed = 8,
   finishLineMode: FinishLineMode = 'separate',
+  finishDistanceMetres?: number,
 ): CourseSailingDistanceModel {
   const standardLeewardFinish = windSpeed >= 12 ? 0.1 * 1_852 : 0.05 * 1_852
   if (courseCode === 'O2' && className !== 'スナイプ') {
     return finishLineMode === 'shared-rc'
       ? { closeHauledLegs: 1.91, reachLegs: 1.3, downwindLegs: 1.82, fixedFinishDistanceMetres: 0, finishPointOfSail: 'reach' }
-      : { closeHauledLegs: 1.91, reachLegs: 0.67, downwindLegs: 1.82, fixedFinishDistanceMetres: 0.15 * 1_852, finishPointOfSail: 'reach' }
+      : { closeHauledLegs: 1.91, reachLegs: 0.67, downwindLegs: 1.82, fixedFinishDistanceMetres: resolveFinishDistanceMetres(courseCode, className, finishLineMode, finishDistanceMetres)!, finishPointOfSail: 'reach' }
   }
   if (courseCode === 'I2') {
     return finishLineMode === 'shared-rc'
       ? { closeHauledLegs: 1.91, reachLegs: 1.3, downwindLegs: 1.82, fixedFinishDistanceMetres: 0, finishPointOfSail: 'reach' }
-      : { closeHauledLegs: 1.91, reachLegs: 0.67, downwindLegs: 1.82, fixedFinishDistanceMetres: 0.15 * 1_852, finishPointOfSail: 'reach' }
+      : { closeHauledLegs: 1.91, reachLegs: 0.67, downwindLegs: 1.82, fixedFinishDistanceMetres: resolveFinishDistanceMetres(courseCode, className, finishLineMode, finishDistanceMetres)!, finishPointOfSail: 'reach' }
   }
   if (courseCode === 'O2') {
     return { closeHauledLegs: 1.86, reachLegs: 1.72, downwindLegs: 0.86, fixedFinishDistanceMetres: standardLeewardFinish, finishPointOfSail: 'downwind' }
@@ -101,8 +104,9 @@ export function firstLegLengthMetresFromTotal(
   className?: string,
   windSpeed = 8,
   finishLineMode: FinishLineMode = 'separate',
+  finishDistanceMetres?: number,
 ): number {
-  const model = courseSailingDistanceModel(courseCode, className, windSpeed, finishLineMode)
+  const model = courseSailingDistanceModel(courseCode, className, windSpeed, finishLineMode, finishDistanceMetres)
   const scaledLegs = model.closeHauledLegs + model.reachLegs + model.downwindLegs
   return Math.max(250, (totalLengthMetres - model.fixedFinishDistanceMetres) / scaledLegs)
 }
@@ -113,8 +117,9 @@ export function recommendedStartLineLength(
   className?: string,
   windSpeed = 8,
   finishLineMode: FinishLineMode = 'separate',
+  finishDistanceMetres?: number,
 ): number {
-  const leg = firstLegLengthMetresFromTotal(totalLengthMetres, courseCode, className, windSpeed, finishLineMode)
+  const leg = firstLegLengthMetresFromTotal(totalLengthMetres, courseCode, className, windSpeed, finishLineMode, finishDistanceMetres)
   return Math.min(600, Math.max(180, leg * 0.35))
 }
 
@@ -122,7 +127,7 @@ export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
   const wind = ((input.windDirection % 360) + 360) % 360
   const center = input.startLine ? geodesicMidpoint(input.startLine.pin, input.startLine.signal) : input.center
   const finishLineMode = input.finishLineMode ?? 'separate'
-  const leg = Math.min(3_000, firstLegLengthMetresFromTotal(input.totalLengthMetres, input.courseCode, input.className, input.windSpeed, finishLineMode))
+  const leg = Math.min(3_000, firstLegLengthMetresFromTotal(input.totalLengthMetres, input.courseCode, input.className, input.windSpeed, finishLineMode, input.finishDistanceMetres))
   const gateWidth = input.gateWidthMetres ?? Math.min(180, Math.max(70, leg * 0.12))
   const lineLength = input.startLineLengthMetres ?? Math.min(600, Math.max(180, leg * 0.35))
   const upwind = destinationPoint(center, leg, wind)
@@ -156,7 +161,13 @@ export function generateCoursePlan(input: CoursePlanInput): CoursePlanNode[] {
       { key: 'finish-boat', label: 'フィニッシュ艇', nodeType: 'finish', target: destinationPoint(finishCenter, 25, lineBearing) },
     )
   }
-  const finishDistance = courseSailingDistanceModel(input.courseCode, input.className, input.windSpeed, finishLineMode).fixedFinishDistanceMetres
+  const finishDistance = courseSailingDistanceModel(
+    input.courseCode,
+    input.className,
+    input.windSpeed,
+    finishLineMode,
+    input.finishDistanceMetres,
+  ).fixedFinishDistanceMetres
 
   if (input.upperGate) {
     nodes.push(

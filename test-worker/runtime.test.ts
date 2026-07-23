@@ -170,6 +170,7 @@ describe('Cloudflare Workers runtime integration', () => {
         signalBoatPosition: { longitude: 139.4651, latitude: 35.2817 },
         windDirection: 310,
         windSpeed: 6.5,
+        finishDistanceMetres: 0.25 * 1_852,
         targetLengthMetres: 6_500,
       }),
     })
@@ -194,11 +195,17 @@ describe('Cloudflare Workers runtime integration', () => {
          WHERE regatta_id = ? AND user_id = ? LIMIT 1`,
       ).bind(issued.event.id, ownerId).first<{ display_name: string; role: string; assignment: string }>(),
       env.DB.prepare(
-        `SELECT revision.wind_direction, revision.wind_speed, revision.target_length_metres
+        `SELECT revision.wind_direction, revision.wind_speed, revision.target_length_metres,
+                revision.gate_config_json
          FROM course_revisions revision
          JOIN races race ON race.id = revision.race_id
          WHERE race.regatta_id = ? AND race.race_order = 1 AND revision.revision = 1`,
-      ).bind(issued.event.id).first<{ wind_direction: number; wind_speed: number; target_length_metres: number }>(),
+      ).bind(issued.event.id).first<{
+        wind_direction: number
+        wind_speed: number
+        target_length_metres: number
+        gate_config_json: string
+      }>(),
       env.DB.prepare(
         `SELECT node.target_lng, node.target_lat
          FROM course_nodes node
@@ -220,7 +227,11 @@ describe('Cloudflare Workers runtime integration', () => {
     expect(markCount?.count).toBeGreaterThanOrEqual(8)
     expect(boatCount?.count).toBe(5)
     expect(ownerMember).toEqual({ display_name: '大会発行テスト管理者', role: 'owner', assignment: '大会管理者' })
-    expect(initialCourseRevision).toEqual({ wind_direction: 310, wind_speed: 6.5, target_length_metres: 6_500 })
+    expect(initialCourseRevision).toMatchObject({ wind_direction: 310, wind_speed: 6.5, target_length_metres: 6_500 })
+    expect(JSON.parse(initialCourseRevision?.gate_config_json ?? '{}')).toMatchObject({
+      finishLineMode: 'separate',
+      finishDistanceMetres: 0.25 * 1_852,
+    })
     expect(signalBoatNode).toEqual({ target_lng: 139.4651, target_lat: 35.2817 })
     expect(initialCourseNodes.results).toEqual([
       { label: 'スタート・ピン', node_type: 'start' },
@@ -350,6 +361,27 @@ describe('Cloudflare Workers runtime integration', () => {
     expect(invalidFinishModeResponse.status).toBe(400)
     await expect(invalidFinishModeResponse.json()).resolves.toMatchObject({
       error: 'フィニッシュライン方式を確認してください',
+    })
+
+    const invalidFinishDistanceResponse = await exports.default.fetch('https://example.test/api/events', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        Cookie: `srs_session=${sessionToken}`,
+        Origin: 'https://example.test',
+      },
+      body: JSON.stringify({
+        name: '不正フィニッシュ距離確認',
+        startsOn: '2026-07-19',
+        endsOn: '2026-07-19',
+        className: '470',
+        courseCode: 'O2',
+        finishDistanceMetres: 20,
+      }),
+    })
+    expect(invalidFinishDistanceResponse.status).toBe(400)
+    await expect(invalidFinishDistanceResponse.json()).resolves.toMatchObject({
+      error: 'フィニッシュ距離は0.05〜0.50 NMで指定してください',
     })
 
     const listResponse = await exports.default.fetch('https://example.test/api/events', {

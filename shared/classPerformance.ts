@@ -67,12 +67,13 @@ export function recommendedCourseLength(
   targetMinutes?: number,
   courseCode: CourseTemplate = className === 'スナイプ' ? 'W2' : 'O2',
   finishLineMode: FinishLineMode = 'separate',
+  finishDistanceMetres?: number,
 ): CourseLengthRecommendation {
   const profile = CLASS_PERFORMANCE_PROFILES.find((item) => item.className === className)
   if (!profile) throw new Error(`Unsupported sailing class: ${className}`)
 
   const factor = windSpeedFactor(windKnots)
-  const distanceModel = courseSailingDistanceModel(courseCode, className, windKnots, finishLineMode)
+  const distanceModel = courseSailingDistanceModel(courseCode, className, windKnots, finishLineMode, finishDistanceMetres)
   const upwindSpeed = profile.upwindKnotsAt8 * factor
   const downwindSpeed = profile.downwindKnotsAt8 * factor
   const reachSpeed = profile.reachKnotsAt8 * factor
